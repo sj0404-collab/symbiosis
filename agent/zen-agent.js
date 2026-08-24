@@ -5426,6 +5426,33 @@ function parseJsonToolCall(text) {
       } else if (/^[a-z0-9_]{2,64}$/i.test(body)) {
         // A bare name means "call this with no arguments".
         return { tool: body.toLowerCase(), args: {} };
+      } else {
+        // Laguna and a few compatible models emit the legacy XML-like form:
+        // <tool_call>edit_file<arg_key>path</arg_key><arg_value>…</arg_value></tool_call>
+        // It is not XML we execute: accept only a tool identifier plus complete,
+        // named key/value pairs, then let the regular schema validator decide
+        // whether that tool and its arguments are permitted.
+        const name = body.match(/^\s*([a-z0-9_]{2,64})(?=\s*<arg_key>)/i);
+        const args = {};
+        const pairs = /<arg_key>\s*([^<\s][^<]*?)\s*<\/arg_key>\s*<arg_value>([\s\S]*?)<\/arg_value>/gi;
+        let pair, count = 0;
+        while ((pair = pairs.exec(body)) !== null) {
+          const key = pair[1].trim();
+          // Do not let a malformed tag silently overwrite an earlier argument.
+          if (!/^[a-zA-Z_][a-zA-Z0-9_]{0,63}$/.test(key) || Object.prototype.hasOwnProperty.call(args, key)) return null;
+          args[key] = pair[2]
+            .replace(/&lt;/g, '<').replace(/&gt;/g, '>')
+            .replace(/&amp;/g, '&').replace(/&quot;/g, '\"');
+          count++;
+        }
+        if (name && count) {
+          // Reject arbitrary prose or stray markup outside recognised pairs.
+          const remainder = body
+            .replace(/^\s*[a-z0-9_]{2,64}\s*/i, '')
+            .replace(/<arg_key>\s*[^<\s][^<]*?\s*<\/arg_key>\s*<arg_value>[\s\S]*?<\/arg_value>/gi, '')
+            .trim();
+          if (!remainder) return { tool: name[1].toLowerCase(), args };
+        }
       }
     }
   }
@@ -5732,7 +5759,9 @@ ${correction}` });
         promptTokens: String(res.usage?.prompt_tokens ?? TELEMETRY.estimatedInputTokens ?? 0),
         completionTokens: String(res.usage?.completion_tokens ?? 0),
         totalTokens: String(res.usage?.total_tokens ?? 0),
-        preview: String(res.text || '').slice(0, 400)
+        // The hub must never show a raw fallback tool payload as chat prose.
+        // handleToolCall below will turn a recognised payload into a tool card.
+        preview: String(res.text || '').replace(/<tool_call>[\s\S]*$/i, '').replace(/TOOL_JSON\s*:\s*\{[\s\S]*$/i, '').slice(0, 400)
       });
       auditEvent('model_response', { step: TELEMETRY.step, model: res.model || currentModel, outputChars: String(res.text || '').length, usage: res.usage || {}, toolCalls: Array.isArray(res.toolCalls) ? res.toolCalls.length : 0 });
       stopTelemetryTicker(telemetryTimer);
