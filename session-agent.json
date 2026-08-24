@@ -1,7 +1,13 @@
 {
-  "state": "ended",
-  "startedAt": "2026-08-19T12:53:05Z",
-  "runId": "32225293280",
-  "runNumber": "26",
+  "kind": "CLI-агент",
+  "os": "windows",
+  "url": "https://valuation-hawaiian-anderson-underground.trycloudflare.com",
+  "agentUrl": "https://valuation-hawaiian-anderson-underground.trycloudflare.com/hub?token=zen-d6a73c58cd2a42b2838d6ac8",
+  "agentToken": "zen-d6a73c58cd2a42b2838d6ac8",
+  "branch": "agent-work-windows",
+  "startedAt": "2026-08-24T18:44:26Z",
+  "state": "live",
+  "runId": "32764040285",
+  "runNumber": "27",
   "repo": "sj0404-collab/symbiosis"
 }
