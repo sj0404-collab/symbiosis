@@ -1,7 +1,13 @@
 {
-  "state": "ended",
-  "startedAt": "2026-08-25T08:35:17Z",
-  "runId": "32827171614",
-  "runNumber": "28",
+  "kind": "CLI-агент",
+  "os": "windows",
+  "url": "https://stamp-truth-backed-variable.trycloudflare.com",
+  "agentUrl": "https://stamp-truth-backed-variable.trycloudflare.com/hub?token=zen-663347e8185f402fa2246dfa",
+  "agentToken": "zen-663347e8185f402fa2246dfa",
+  "branch": "agent-work-windows",
+  "startedAt": "2026-08-25T08:48:07Z",
+  "state": "live",
+  "runId": "32828398276",
+  "runNumber": "29",
   "repo": "sj0404-collab/symbiosis"
 }
