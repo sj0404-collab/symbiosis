@@ -1,7 +1,13 @@
 {
-  "state": "ended",
-  "startedAt": "2026-08-24T20:16:01Z",
-  "runId": "32764040285",
-  "runNumber": "27",
+  "kind": "CLI-агент",
+  "os": "windows",
+  "url": "https://prefix-plasma-reductions-culture.trycloudflare.com",
+  "agentUrl": "https://prefix-plasma-reductions-culture.trycloudflare.com/hub?token=zen-ee4e754ffec241dbb1ea9136",
+  "agentToken": "zen-ee4e754ffec241dbb1ea9136",
+  "branch": "agent-work-windows",
+  "startedAt": "2026-08-25T08:33:30Z",
+  "state": "live",
+  "runId": "32827171614",
+  "runNumber": "28",
   "repo": "sj0404-collab/symbiosis"
 }
