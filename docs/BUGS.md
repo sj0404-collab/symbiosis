@@ -223,6 +223,69 @@ was up.
 
 ---
 
+## v21 — the launcher showed one game and would not open the rest
+
+**Reported:** «одну игру видит а остальные не видит а раз не видит то и не
+открывает либо проблема в том что лаунчер не прокручивается влево вправо может
+поэтому не видит».
+
+The guess in the report — that the rail does not scroll — is the one thing that
+was **not** wrong.
+
+### Cause (mine)
+
+`renderLauncher()` built the carousel out of `visibleGames()`, and that function
+applies the search box and the filter chips of the **Список** tab:
+
+```js
+RAIL_LIST = visibleGames();   // поиск и FILTER — принадлежности «Списка»
+```
+
+Type anything into «Найти игру…», or leave a chip on «Сейв», and the carousel
+shrank to whatever survived the filter. The other games were not off-screen —
+they were not in the rail at all, so the dock's «Запустить» could not reach them
+either.
+
+Worse, `FILTER = 'fresh'` produced an **empty** rail and the message «нет игр —
+откройте Список и добавьте папку» with a full library sitting behind it.
+
+Scrolling was never broken: with 8 games the rail scrolls 623 px and ‹ › both
+work. What made it *look* broken is the presentation — the scrollbar is hidden
+(`scrollbar-width:none`) and only ~1.5 slides fit (`padding: 8px 18vw`, `.slide`
+is `min(42vw, 220px)`), so a single tile on screen is the normal appearance of a
+carousel holding many games.
+
+### Fix
+
+`railGames()` returns the whole library; the search box and the chips stay in
+«Список», which is the tab they belong to. Both go through the same
+`sortGames()`, so the two tabs cannot drift apart in order. The dock prints
+`3 / 12`, so the size of the library is on screen and one tile can never again be
+read as «одна игра».
+
+### Proof
+
+Measured in Chromium against the real page — one library of 8 games, six states:
+
+```
+                                  rail slides   list rows
+search "номер 3" in Список              1            1    <- the report
+filter Сейв (one game has a save)       1            1    <- the report
+filter Не играли                        0            0    <- "нет игр" over 8 games
+after the fix, every state              8            as filtered
+```
+
+`tests/LauncherRailTest.kt` models the logic and then checks the shipped page:
+it fails on the old file (4 checks) and passes on the new one. It also asserts
+that `docs/library.html` and `patch/android/assets/library.html` are
+byte-identical — the APK is served the second one, so a fix applied to only the
+first would never reach the phone.
+
+**Files:** `docs/library.html`, `patch/android/assets/library.html`,
+`tests/LauncherRailTest.kt`
+
+---
+
 ## Open / unproven
 
 - **Crash a few seconds into Blade Chimera (NSP).** Not reproduced; no device logs. The

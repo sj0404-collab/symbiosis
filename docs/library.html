@@ -259,6 +259,9 @@
   .dock-body { flex:1 1 auto; min-height:0; overflow:auto; }
   .dock h2 { margin:0 0 2px; font-size:18px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
   .dock .who { color:var(--dim); font-size:12px; margin-bottom:6px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  /* Сколько игр в библиотеке всего: без этого карусель из одной плитки
+     читается как «у меня одна игра», а полосы прокрутки у рельса нет. */
+  .dock .pos { color:var(--cyan); font-size:12px; font-weight:700; margin-bottom:6px; }
   .facts { display:flex; flex-wrap:wrap; gap:6px; margin:6px 0; }
   .fact {
     border:1px solid var(--line); border-radius:10px;
@@ -481,6 +484,15 @@ let FILTER = localStorage.getItem('eden-filter') || 'all';
 let LAUNCH_I = 0;
 let RAIL_LIST = [];
 
+function sortGames(list) {
+  return list.sort((a,b) => {
+    if (SORT === 'recent') return (b.lastPlayed||0) - (a.lastPlayed||0) || (a.title||'').localeCompare(b.title||'','ru');
+    if (SORT === 'play') return (b.playSeconds||0) - (a.playSeconds||0) || (a.title||'').localeCompare(b.title||'','ru');
+    return (a.title||'').localeCompare(b.title||'','ru');
+  });
+}
+
+// «Список»: поиск и чипы-фильтры относятся только к этой вкладке.
 function visibleGames() {
   const qEl = $('q');
   const q = qEl ? (qEl.value || '').trim().toLowerCase() : '';
@@ -489,12 +501,16 @@ function visibleGames() {
   if (FILTER === 'save') list = list.filter(g => g.hasSave);
   if (FILTER === 'mod') list = list.filter(g => (g.addons||[]).some(a => a && a.enabled !== false));
   if (FILTER === 'fresh') list = list.filter(g => !g.playSeconds && !g.lastPlayed);
-  list.sort((a,b) => {
-    if (SORT === 'recent') return (b.lastPlayed||0) - (a.lastPlayed||0) || (a.title||'').localeCompare(b.title||'','ru');
-    if (SORT === 'play') return (b.playSeconds||0) - (a.playSeconds||0) || (a.title||'').localeCompare(b.title||'','ru');
-    return (a.title||'').localeCompare(b.title||'','ru');
-  });
-  return list;
+  return sortGames(list);
+}
+
+// «Лаунчер»: вся библиотека, всегда.
+//
+// Раньше здесь стоял visibleGames(), и вкладка «Список» могла урезать
+// карусель до одной игры: остальные становились недоступны для запуска из
+// лаунчера, а «не прокручивается» выглядело как «их тут нет».
+function railGames() {
+  return sortGames(GAMES.slice());
 }
 
 function progressOf(g) {
@@ -751,7 +767,7 @@ function openShots(g) {
 function renderLauncher() {
   const rail = $('rail'), dock = $('dock');
   if (!rail || !dock) return;
-  RAIL_LIST = visibleGames();
+  RAIL_LIST = railGames();
   if (!RAIL_LIST.length) {
     rail.innerHTML = '';
     dock.innerHTML = '<div class="empty">нет игр — откройте Список и добавьте папку</div>';
@@ -831,6 +847,7 @@ function paintDock() {
     <div class="dock-head">
       <h2>${esc(g.title || 'без имени')}</h2>
       <div class="who">${esc(g.developer || '')}${g.titleId ? ' · ' + esc(g.titleId) : ''}${g.fileSize ? ' · ' + esc(g.fileSize) : ''}${g.version ? ' · ' + esc(g.version) : ''}</div>
+      <div class="pos">${LAUNCH_I + 1} / ${RAIL_LIST.length}</div>
       <button class="go" id="dock-go">Запустить</button>
     </div>
     <div class="dock-body">
