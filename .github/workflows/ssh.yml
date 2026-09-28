@@ -75,7 +75,7 @@ jobs:
 
       # setup-android puts sdkmanager on PATH. Without it the step failed with
       # "sdkmanager: command not found" and took the whole session with it.
-      - uses: android-actions/setup-android@v3
+      - uses: android-actions/setup-android@v4
         if: inputs.prepare_build
 
       - name: Install NDK and CMake
