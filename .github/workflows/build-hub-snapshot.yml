@@ -1,0 +1,160 @@
+name: Build from the hub snapshot
+
+# Rebuilds THIS repository from the latest work-backup snapshot published by
+# the NPM-Hub session runner (zen-panel@work-backup) instead of the branch
+# HEAD: the session state carries uncommitted edits and untracked files, and
+# that exact state is what gets built here.
+#
+# Manual dispatch only - this answers "build what I had open in the hub",
+# it is not a CI gate.
+
+on:
+  workflow_dispatch:
+    inputs:
+      stamp:
+        description: "Snapshot stamp (e.g. 20260928T122041); empty = latest"
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+
+concurrency:
+  group: hub-snapshot-${{ github.repository }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Restore hub snapshot state and build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      SNAP_REPO_NAME: symbiosis
+    steps:
+      - name: Restore the repo state from the newest hub snapshot
+        run: |
+          set -euo pipefail
+          BRANCH="work-backup"
+          RAW="https://raw.githubusercontent.com/sj0404-collab/zen-panel/$BRANCH"
+          STAMP="${{ inputs.stamp }}"
+          if [ -z "$STAMP" ]; then
+            STAMP=$(curl -fsSL --retry 3 "$RAW/latest.json" | python3 -c 'import json,sys; print(json.load(sys.stdin)["stamp"])')
+          fi
+          echo "snapshot stamp: $STAMP"; echo "STAMP=$STAMP" >> "$GITHUB_ENV"
+          BASE="$RAW/snapshots/$STAMP"
+          curl -fsSL --retry 3 -o latest-snap.json "$RAW/snapshots/$STAMP/latest.json" 2>/dev/null             || curl -fsSL --retry 3 -o latest-snap.json "$RAW/latest.json"
+          REL=$(python3 - <<'PYRG'
+          import json, os
+          d = json.load(open('latest-snap.json'))
+          name = os.environ['SNAP_REPO_NAME']
+          hit = [r for r in d.get('repos', []) if (r.get('remote') or '').rstrip('/').endswith('/' + name + '.git')]
+          print(hit[0]['rel'] if hit else '')
+          PYRG
+          )
+          if [ -z "$REL" ]; then
+            echo "::error title=not in snapshot::@@@REPO@@ is not present in the newest hub snapshot ($STAMP)."
+            echo "Open it in a hub session, wait ~5 min for the backup loop, or pass an older stamp that contains it."
+            exit 1
+          fi
+          echo "snapshot repo rel: $REL"
+          curl -fsSL --retry 3 -o big-blobs.json "$BASE/big-blobs.json" 2>/dev/null || echo '{"blobs":[]}' > big-blobs.json
+
+          # A snapshot file rides either plain under repos/$REL or, if bigger
+          # than the blob limit, as chunks under blobs/<i>/part.NNN.
+          fetch_file() {
+            local rel="$1" dest="$2"
+            if curl -fsSL --retry 3 -o "$dest" "$BASE/$rel" 2>/dev/null; then
+              echo "✓ $rel"; return 0
+            fi
+            local info
+            info=$(python3 - "$rel" <<'PYBB'
+          import json, sys
+          d = json.load(open('big-blobs.json'))
+          for i, b in enumerate(d.get('blobs', []), 1):
+              if b.get('rel') == sys.argv[1]:
+                  print("|".join([str(i), str(len(b['parts'])), b['sha256']]))
+                  break
+          PYBB
+            )
+            [ -n "$info" ] || return 1
+            local idx nparts sha i part
+            idx=$(echo "$info"  | cut -d'|' -f1)
+            nparts=$(echo "$info" | cut -d'|' -f2)
+            sha=$(echo "$info"  | cut -d'|' -f3)
+            : > "$dest"
+            for i in $(seq 0 $((nparts - 1))); do
+              printf -v part 'part.%03d' "$i"
+              curl -fsSL --retry 3 "$BASE/blobs/$idx/$part" >> "$dest"
+            done
+            echo "✓ $rel ($nparts blob parts)"
+            echo "$sha  $dest" | sha256sum -c - >/dev/null
+          }
+
+          mkdir -p snap src
+          HAS_BUNDLE=0 HAS_WIP=0
+          if fetch_file "repos/$REL/repo.bundle"       snap/repo.bundle;      then HAS_BUNDLE=1; fi
+          if fetch_file "repos/$REL/wip.patch"         snap/wip.patch;        then HAS_WIP=1; fi
+          fetch_file "repos/$REL/untracked.tar.gz"  snap/untracked.tar.gz  || true
+          fetch_file "repos/$REL/worktree.tar.gz"   snap/worktree.tar.gz   || true
+          fetch_file "repos/$REL/meta.json"          snap/meta.json         || true
+
+          if [ "$HAS_BUNDLE" = "1" ]; then
+            git clone --quiet snap/repo.bundle src
+          else
+            tar -xzf snap/worktree.tar.gz -C src
+            ( cd src && git init -q && git add -A &&               GIT_AUTHOR_NAME=SNAP GIT_AUTHOR_EMAIL=snap@host               GIT_COMMITTER_NAME=SNAP GIT_COMMITTER_EMAIL=snap@host               git commit -qm "worktree of the snapshot" )
+            HAS_WIP=0   # the worktree archive already carries the dirty edits
+          fi
+          if [ "$HAS_WIP" = "1" ]; then
+            ( cd src && git apply --verbose ../snap/wip.patch || git apply --3way ../snap/wip.patch )
+          fi
+          if [ -s snap/untracked.tar.gz ]; then tar -xzf snap/untracked.tar.gz -C src; fi
+          # One synthetic commit keeps git-driven versioning sane (commit
+          # count, describe) and makes the restored state itself the input.
+          ( cd src && git add -A && git -c user.name=hub-snapshot               -c user.email=snap@host commit -qm "hub snapshot $STAMP" || true )
+          echo "── restored state ──"
+          git -C src log --oneline -3 || true
+          git -C src status --porcelain | head -5 || true
+          python3 - <<'PYMETA' || true
+          import json
+          m = json.load(open('snap/meta.json'))
+          print('meta head:', (m.get('head') or '?')[:12], '| branch:', m.get('branch'), '| dirty:', m.get('dirty'))
+          PYMETA
+      - name: Docs preflight (packaged pages must exist)
+        working-directory: src
+        run: |
+          for f in index.html library.html desks.html panel.html icon.svg manifest.webmanifest; do
+            [ -s "docs/$f" ] || { echo "::error::docs/$f missing or empty"; exit 1; }
+          done
+      - name: Type-check against the stubs
+        working-directory: src
+        run: |
+          curl -sL -o /tmp/kc.zip \
+            https://github.com/JetBrains/kotlin/releases/download/v2.0.21/kotlin-compiler-2.0.21.zip
+          unzip -q /tmp/kc.zip -d /tmp
+          export PATH="/tmp/kotlinc/bin:$PATH"
+          grep -q 'var error: CharSequence?' panel-app/stubs/android_widget.kt
+          grep -q 'shouldInterceptRequest' panel-app/stubs/android_webkit.kt
+          kotlinc panel-app/stubs/*.kt \
+                  panel-app/app/src/main/java/dev/symbiosis/panel/*.kt \
+                  -d /tmp/stubout
+      - name: Build the panel APK
+        working-directory: src/panel-app
+        run: |
+          gradle wrapper --gradle-version 8.7 --no-daemon
+          ./gradlew assembleRelease --no-daemon --stacktrace
+      - name: Collect APKs
+        run: |
+          mkdir -p dist
+          find src/panel-app -name '*.apk' -path '*release*' -exec cp -v {} dist/ +
+          ls -la dist/
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: symbiosis-snapshot-apk-${{ env.STAMP }}
+          path: dist/
+          if-no-files-found: error
+      - name: Build report
+        run: |
+          echo "### symbiosis panel-app built from hub snapshot $STAMP" >> "$GITHUB_STEP_SUMMARY"
+          ls -la dist/ >> "$GITHUB_STEP_SUMMARY"
