@@ -162,6 +162,51 @@ fun main() {
             Regex("\\$\\{LAUNCH_I \\+ 1\\} / \\$\\{RAIL_LIST\\.length\\}").containsMatchIn(page),
             "нет счётчика — одна плитки читается как «одна игра»")
         check("счётчик подписан в стилях", page.contains(".dock .pos {"))
+
+        // ── вторая половина жалобы: «влево-вправо не работает» ────────
+        //
+        // Свайп по карусели не сдвигал её по трём причинам, и все три
+        // видны только в разметке: картинка обложки тянулась пальцем
+        // сама (drag), позиция ставилась scrollIntoView, который
+        // прокручивает всех предков подряд, и каждая пересборка
+        // возвращала карусель на выбранную плитку - а пересборку
+        // вызывал опрос findGames() каждые 700 мс, то есть прямо во
+        // время свайпа.
+        check("обложка не тянется пальцем", page.contains("draggable=\"false\""))
+        check("картинка обложки не перехватывает жест",
+            Regex("\\.slide img \\{[\\s\\S]*?-webkit-user-drag:none").containsMatchIn(page) &&
+                Regex("\\.slide img \\{[\\s\\S]*?pointer-events:none").containsMatchIn(page),
+            "WebView начнёт тянуть картинку раньше, чем дойдёт свайп")
+        check("выделение плитки нельзя выделить текстом",
+            Regex("\\.slide \\{[\\s\\S]*?user-select:none").containsMatchIn(page))
+        check("горизонталью владеет сам рельс",
+            Regex("\\.rail \\{[\\s\\S]*?touch-action:pan-x").containsMatchIn(page) &&
+                Regex("\\.rail \\{[\\s\\S]*?overscroll-behavior-x:contain").containsMatchIn(page),
+            "WebView отдаёт жест родителю, и карусель не едет")
+        check("позиция ставится прокруткой самого рельса",
+            Regex("function railCentre\\([\\s\\S]*?rail\\.scrollTo").containsMatchIn(page),
+            "scrollIntoView уезжает вбок вместе со страницей")
+        check("scrollIntoView на рельсе больше не остался",
+            !Regex("(function renderLauncher|function snapTo|function keepLaunchFrame)" +
+                "[\\s\\S]*?scrollIntoView\\(").containsMatchIn(page) ||
+                page.split("scrollIntoView").size == 2,
+            "один из вызовов прокручивает страницу, а не карусель")
+        check("рельс не пересобирается, когда библиотека не менялась",
+            Regex("RAIL_SIG").containsMatchIn(page) &&
+                Regex("if \\(sig === RAIL_SIG && rail\\.children\\.length\\)").containsMatchIn(page),
+            "опрос findGames() возвращает карусель назад каждые 700 мс")
+        check("выбор переживает пересборку",
+            Regex("const keepPath = RAIL_LIST\\[LAUNCH_I\\][\\s\\S]*?RAIL_LIST\\.findIndex")
+                .containsMatchIn(page))
+        check("своя прокрутка не выбирает плитку",
+            page.contains("RAIL_BUSY_UNTIL") &&
+                Regex("function nearestSlide\\(\\) \\{\\s*if \\(Date\\.now\\(\\) < RAIL_BUSY_UNTIL\\) return;")
+                    .containsMatchIn(page),
+            "плавная прокрутка ставит выделение на предыдущую плитку")
+        check("стрелки влево-вправо двигают карусель",
+            Regex("ev\\.key !== 'ArrowLeft' && ev\\.key !== 'ArrowRight'").containsMatchIn(page) &&
+                Regex("snapTo\\(LAUNCH_I \\+ \\(ev\\.key === 'ArrowRight' \\? 1 : -1\\)\\)")
+                    .containsMatchIn(page))
     }
 
     println()

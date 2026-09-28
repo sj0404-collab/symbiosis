@@ -286,6 +286,123 @@ first would never reach the phone.
 
 ---
 
+## v22 — the launcher sees one game out of a console dump
+
+**Reported:** «почини чтобы видел игры все от приставки а то то ли свайп
+влево-вправо не работает то ли игр видит только одну и всё».
+
+Both halves were true, and they were two separate bugs that look identical
+from the outside: with a single tile on screen, "the rail does not scroll" and
+"the library has one game" cannot be told apart.
+
+### Cause 1 — the importer looked one level down (mine)
+
+`GameHelper` walked the selected folder at **depth 1** unless the folder
+dialog's "recursive search" switch was ticked, and the switch is off by
+default:
+
+```kotlin
+val scanDepth = if (gameDir.deepScan) 3 else 1
+```
+
+A console dump is normally kept one folder per game — `Games/Blade Chimera/game.nsp`,
+or `Switch/Blade Chimera [0100B7B00F2E800]/Exefs/main`. At depth 1 the walk
+sees only the files lying loose in the chosen root, so a library of twenty
+games contributes however many happen to sit in the top directory. On a
+device where exactly one did, that is the report verbatim.
+
+The same number was written twice. `GameFolderScanner.depthFor()` had its own
+`if (deepScan) 3 else 1`, and `listGames()` defaulted to `maxDepth = 1` — the
+folder screen and the library were three separate copies of a rule, which is
+how the counter came to promise games the importer then refused.
+
+### Fix
+
+`depthFor()` is the single answer, and its shallow answer is **3**: the folder
+itself plus two levels, which is `Games/Title/game.nsp` and
+`Switch/Title [id]/Exefs/main` alike. The switch still buys the two deeper
+levels. `GameHelper` asks the scanner instead of computing its own; the
+importer now also refuses to enter the data root's layout directories
+(`nand`, `load`, `cache`, …), which the previous fix had only guaranteed for
+the one-level walk. `MAX_DIRECTORIES` was always the real bound.
+
+### Cause 2 — the rail fought the finger (mine)
+
+Three things, all visible only in the shipped page:
+
+- **The cover was draggable.** `.slide img` had no `draggable="false"`, no
+  `-webkit-user-drag:none` and no `user-select:none`, so on Android a long
+  press on a cover started a native image drag that pre-empted the swipe.
+- **Positioning used `scrollIntoView`**, which scrolls *every* scrollable
+  ancestor. The page is the document; the rail is a `div`. Now `railCentre()`
+  computes `offsetLeft` and calls `rail.scrollTo`.
+- **The rail was rebuilt 20 times a minute.** `findGames()` polls
+  `loadGames()` every 700 ms, and each call replaced `rail.innerHTML` and
+  re-centred on the selected tile — a rebuild landing mid-flick threw the
+  carousel back to where it started. The rail is now only rebuilt when the
+  set of paths changes (`RAIL_SIG`), the selection survives a rebuild by
+  path, and the scroll listener cannot override a programmatic scroll
+  (`RAIL_BUSY_UNTIL`). Arrow keys step the rail, since it has no focusable
+  field of its own.
+
+### Also fixed on the way
+
+- **No keys no longer means "no games".** `getGames()` used to answer
+  `emptyList()` and clear `cachedGameList` when keys were absent, and the
+  panel's `rememberedGames()` did the same — so a library scanned yesterday
+  became "no games" today. Both now return the remembered list; the status
+  strip still says «Клюки ✕», which is the true part.
+- **An empty scan clears the list.** `GamesFragment` collected
+  `if (it.isNotEmpty()) setAdapter(it)`, so a scan that found nothing left the
+  *previous* list on screen under a "no games" notice.
+- **The importer honours the layout rule v19 promised.** v19 fixed the
+  hang by refusing to descend into `nand` / `load` / `cache` — but it only
+  taught `GameFolderScanner` that, not `addGamesRecursive`. At depth 1 that
+  was invisible, because the data root's own children are already one level
+  down. The moment the importer goes deeper it walks the same tree v19 called
+  a hang, so it now checks the directory name too. The invariant now lives in
+  one place and both walkers read it.
+
+### Why a deeper walk is not what crashed the device
+
+patch2's `GameHelper` raises the depth and `build2.yml` records why they
+stopped: the scan was tried at 24, then 8, and a build at the native 3
+crashed exactly the same. The crash that mattered was the build flavour —
+six device crashes, all `assembleLegacy`, all `-DYUZU_LEGACY=ON` on a Mali-G57,
+where upstream's own mainline APK runs on the same phone. Raising the depth
+was never the variable, so it was abandoned for a reason that has since been
+answered. Note also that `build2.yml` triggers on `patch2/**`: it builds a
+different tree from the one here, and nothing in this fix touches it.
+
+### Proof — `tests/DeepLibraryTest.kt`, `tests/LauncherRailTest.kt`
+
+Both fail on the old tree and pass on the new one:
+
+```
+DeepLibraryTest    on HEAD: 11 checks failed   after the fix: all checks passed
+LauncherRailTest   on HEAD: 10 checks failed   after the fix: all checks passed
+```
+
+`DeepLibraryTest` models the two walks over an in-memory tree and pins the
+property that actually broke — the counter and the importer must agree, and
+neither may enter a layout directory — then reads the shipped sources, which
+is what catches the two copies of the depth rule drifting apart again.
+`LauncherRailTest` already checked the data (v21); it now also checks the
+gesture, which nothing was asserting.
+
+**Files:** `patch/android/utils/GameFolderScanner.kt`,
+`patch/android/utils/GameHelper.kt`, `patch/android/utils/LivePanel.kt`,
+`patch/android/ui/GamesFragment.kt`, `docs/library.html`,
+`patch/android/assets/library.html`, `tests/DeepLibraryTest.kt`,
+`tests/LauncherRailTest.kt`, `tests/GameCountTest.kt`
+
+**Unproven:** no Android device was available to measure a real swipe. The
+gesture fixes are argued from the page and from how a WebView handles image
+drag; they are not a measurement. `CarouselRecyclerView` — the native
+landscape list — is upstream and was not touched.
+
+---
+
 ## Open / unproven
 
 - **Crash a few seconds into Blade Chimera (NSP).** Not reproduced; no device logs. The

@@ -40,6 +40,36 @@ object GameHelper {
 
     private lateinit var preferences: SharedPreferences
 
+    /**
+     * The last list the emulator managed to read, from memory or from disk.
+     *
+     * Never walks a folder and never parses a ROM header: it is what the
+     * status strip, the panel and a start without keys may show without
+     * turning into a full scan. Returns an empty list only when there has
+     * never been a successful one.
+     */
+    fun rememberedGames(): List<Game> {
+        val live = runCatching { cachedGameList }.getOrDefault(emptyList())
+        if (live.isNotEmpty()) return live
+        // Локальная переменная, а не поле preferences: этот метод зовёт
+        // WebView с потока JavaScript, а getGames() - с фоновой корутины,
+        // и оба писали бы одно и то же поле. Значение у них всё равно
+        // одинаковое, но общий lateinit зачем-то трогать из двух потоков.
+        val stored = runCatching {
+            val prefs = PreferenceManager.getDefaultSharedPreferences(
+                YuzuApplication.appContext
+            )
+            prefs.getStringSet(KEY_GAMES, emptySet()) ?: emptySet()
+        }.getOrDefault(emptySet())
+        val games = stored.mapNotNull { raw ->
+            runCatching { Json.decodeFromString<Game>(raw) }.getOrNull()
+        }
+        if (games.isNotEmpty()) {
+            cachedGameList = games.toMutableList()
+        }
+        return games
+    }
+
     fun getGames(): List<Game> {
         val games = mutableListOf<Game>()
         val context = YuzuApplication.appContext
@@ -83,8 +113,17 @@ object GameHelper {
         val keysOk = runCatching { NativeLibrary.areKeysPresent() }.getOrDefault(false)
         if (!keysOk) {
             hasScanned = true
-            cachedGameList = mutableListOf()
-            return emptyList()
+            // Раньше здесь стояло `cachedGameList = mutableListOf()` и
+            // `return emptyList()`. Это стирало ровно то, что нужно было
+            // показать: игры, найденные прошлым обходом, у которых уже есть
+            // название, путь и обложка. Ключи потом подкладывают за минуту,
+            // а список до этого - пустой: «приложение не видит мои игры»,
+            // хотя три запуска назад видело двадцать.
+            //
+            // Обход пропущен (ниже он и был бы), prefs не перезаписаны -
+            // `return` до записи кэша. Отдаём то, что уже известно, и
+            // оставляем полосу состояния говорить правду про ключи.
+            return rememberedGames()
         }
 
 
@@ -107,7 +146,13 @@ object GameHelper {
             val gameDirUri = gameDir.uriString.toUri()
             val isValid = FileUtil.isTreeUriValid(gameDirUri)
             if (isValid) {
-                val scanDepth = if (gameDir.deepScan) 3 else 1
+                // Глубина берётся у сканера, а не вычисляется здесь.
+                //
+                // Здесь стояло `if (deepScan) 3 else 1`, у GameFolderScanner -
+                // то же самое, написанное отдельно. Две копии одного числа
+                // разошлись, и счётчик папки рапортовал об одной игре там,
+                // где импортёр молчал о трёх. Теперь число одно.
+                val scanDepth = GameFolderScanner.depthFor(gameDir.deepScan)
 
                 addGamesRecursive(
                     games,
@@ -195,12 +240,20 @@ object GameHelper {
 
         files.forEach {
             if (it.isDirectory) {
-                addGamesRecursive(
-                    games,
-                    FileUtil.listFiles(it.uri),
-                    depth - 1,
-                    mountedContainerUris
-                )
+                // Каталоги раскладки - не библиотека, сколько бы уровней
+                // обход в них ни зашёл. nand, load и cache создаёт сам
+                // SharedDataDirectory.ensureLayout, и если папка игр
+                // оказалась родителем корня данных, обход уходил в них и
+                // либо вяз, либо насчитывал себе тысячи игр. Счётчик папок
+                // их пропускал, импортёр - нет.
+                if (!GameFolderScanner.isLayoutName(GameFolderScanner.displayNameOf(it.uri.toString()))) {
+                    addGamesRecursive(
+                        games,
+                        FileUtil.listFiles(it.uri),
+                        depth - 1,
+                        mountedContainerUris
+                    )
+                }
             } else {
                 val extension = FileUtil.getExtension(it.uri).lowercase()
                 val filePath = it.uri.toString()

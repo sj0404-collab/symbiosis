@@ -225,6 +225,13 @@
     -webkit-overflow-scrolling:touch;
     padding:8px 18vw;
     scrollbar-width:none;
+    /* Рельс владеет горизонталью сам.
+       Без touch-action WebView решает, кому отдать жест, и на 8 ГБ
+       с Mali это решал родительский скролл: свайп влево-вправо уходил
+       мимо карусели. overscroll-behavior не даёт доскакать до края и
+       утянуть за собой всю страницу. */
+    touch-action:pan-x;
+    overscroll-behavior-x:contain;
   }
   .rail::-webkit-scrollbar { display:none; }
   .slide {
@@ -237,9 +244,16 @@
     color:var(--pink); font-size:42px; font-weight:700;
     transform:scale(.88); opacity:.55;
     transition:transform .18s ease, opacity .18s ease, box-shadow .18s ease;
+    /* Обложка - картинка, а картинка в WebView тянется пальцем сама.
+       Именно из-за этого свайп по карусели не сдвигал её, хотя полоса
+       прокрутки была на месте. */
+    user-select:none; -webkit-user-select:none; -webkit-touch-callout:none;
   }
   .slide.on { transform:scale(1); opacity:1; box-shadow:0 12px 40px rgba(0,0,0,.45); }
-  .slide img { width:100%; height:100%; object-fit:cover; display:block; }
+  .slide img {
+    width:100%; height:100%; object-fit:cover; display:block;
+    pointer-events:none; -webkit-user-drag:none; -webkit-touch-callout:none;
+  }
   .navb {
     position:absolute; top:50%; transform:translateY(-50%);
     z-index:3; width:40px; height:40px; border-radius:20px;
@@ -483,6 +497,8 @@ let FILTER = localStorage.getItem('eden-filter') || 'all';
 
 let LAUNCH_I = 0;
 let RAIL_LIST = [];
+// Состав плиток последней сборки: пустая строка - «ещё не собирали».
+let RAIL_SIG = '';
 
 function sortGames(list) {
   return list.sort((a,b) => {
@@ -764,17 +780,56 @@ function openShots(g) {
 }
 
 
+// Полосы прокрутки у рельса нет, а прокручивать его приходится жестом или
+// кнопками. Позицию считаем сами: scrollIntoView прокручивает всех предков
+// подряд, и страница уезжала вбок вместе с каруселью.
+function railCentre(el, smooth) {
+  const rail = $('rail');
+  if (!rail || !el) return;
+  const left = Math.max(0, el.offsetLeft - (rail.clientWidth - el.offsetWidth) / 2);
+  if (typeof rail.scrollTo === 'function') {
+    rail.scrollTo({ left: left, behavior: smooth ? 'smooth' : 'auto' });
+  } else {
+    rail.scrollLeft = left;
+  }
+}
+
+// Пока карусель едет сама, её события прокрутки не выбирают новую плитку:
+// плавная прокрутка на 8 ГБ идёт дольше, чем кажется, и слушатель
+// успевал поставить выделение на предыдущую.
+let RAIL_BUSY_UNTIL = 0;
+
 function renderLauncher() {
   const rail = $('rail'), dock = $('dock');
   if (!rail || !dock) return;
+  const keepPath = RAIL_LIST[LAUNCH_I] ? RAIL_LIST[LAUNCH_I].path : '';
   RAIL_LIST = railGames();
+  if (keepPath) {
+    const same = RAIL_LIST.findIndex(g => g.path === keepPath);
+    LAUNCH_I = same >= 0 ? same : 0;
+  }
   if (!RAIL_LIST.length) {
     rail.innerHTML = '';
+    RAIL_SIG = '';
     dock.innerHTML = '<div class="empty">нет игр — откройте Список и добавьте папку</div>';
     return;
   }
   if (LAUNCH_I >= RAIL_LIST.length) LAUNCH_I = 0;
   if (LAUNCH_I < 0) LAUNCH_I = RAIL_LIST.length - 1;
+
+  // Тот же набор игр - не пересобирать рельс заново.
+  //
+  // loadGames() зовётся из опроса findGames() каждые 700 мс, и каждый раз
+  // пересобирал innerHTML и возвращал карусель на выбранную плитку. Палец
+  // был на середине свайпа - рельс под ним менялся и возвращался назад.
+  // Пересобираем только когда изменился сам состав библиотеки.
+  const sig = RAIL_LIST.map(g => g.path).join('\n');
+  if (sig === RAIL_SIG && rail.children.length) {
+    paintDock();
+    return;
+  }
+  RAIL_SIG = sig;
+
   rail.innerHTML = RAIL_LIST.map((g, i) => {
     const gi = GAMES.indexOf(g);
     return `<div class="slide${i===LAUNCH_I?' on':''}" data-ri="${i}" id="cvl-${gi}">▶</div>`;
@@ -791,10 +846,7 @@ function renderLauncher() {
     const gi = GAMES.indexOf(g);
     setTimeout(() => fillCover(gi, g.path), 40 * i);
   });
-  requestAnimationFrame(() => {
-    const el = rail.querySelector('.slide.on');
-    if (el) el.scrollIntoView({ inline: 'center', block: 'nearest', behavior: 'auto' });
-  });
+  requestAnimationFrame(() => railCentre(rail.querySelector('.slide.on'), false));
 }
 
 function fillCover(gi, path) {
@@ -802,7 +854,9 @@ function fillCover(gi, path) {
   if (!el || !path) return;
   const fn = (N() && typeof N().cover === 'function') ? 'cover' : 'icon';
   const b64 = call(fn, path);
-  if (b64) el.innerHTML = '<img alt="" src="data:image/jpeg;base64,' + b64 + '">';
+  // draggable=false обязателен: без него WebView начинает тянуть картинку
+  // пальцем раньше, чем до неё дойдёт свайп, и карусель не едет.
+  if (b64) el.innerHTML = '<img alt="" draggable="false" src="data:image/jpeg;base64,' + b64 + '">';
 }
 
 function snapTo(i) {
@@ -813,11 +867,15 @@ function snapTo(i) {
   if (!rail) return;
   rail.querySelectorAll('.slide').forEach(el => el.classList.toggle('on', +el.dataset.ri === LAUNCH_I));
   const el = rail.querySelector('.slide.on');
-  if (el) el.scrollIntoView({ inline: 'center', block: 'nearest', behavior: 'smooth' });
+  if (el) {
+    RAIL_BUSY_UNTIL = Date.now() + 450;
+    railCentre(el, true);
+  }
   paintDock();
 }
 
 function nearestSlide() {
+  if (Date.now() < RAIL_BUSY_UNTIL) return;
   const rail = $('rail');
   if (!rail) return;
   const mid = rail.scrollLeft + rail.clientWidth / 2;
@@ -1388,10 +1446,7 @@ function showTab(id) {
   if (id === 'conv') loadConverter();
   if (id === 'launch') {
     if (!$('rail') || !$('rail').children.length) renderLauncher();
-    else {
-      const el = $('rail').querySelector('.slide.on');
-      if (el) el.scrollIntoView({ inline: 'center', block: 'nearest', behavior: 'auto' });
-    }
+    else railCentre($('rail').querySelector('.slide.on'), false);
   }
   try { localStorage.setItem('eden-tab', id); } catch (e) {}
 }
@@ -1489,10 +1544,7 @@ if (railEl) {
 }
 
 function keepLaunchFrame() {
-  const rail = $('rail');
-  if (!rail) return;
-  const el = rail.querySelector('.slide.on');
-  if (el) el.scrollIntoView({ inline: 'center', block: 'nearest', behavior: 'auto' });
+  railCentre($('rail') && $('rail').querySelector('.slide.on'), false);
 }
 let rotT = 0;
 window.addEventListener('resize', () => {
@@ -1506,6 +1558,19 @@ window.addEventListener('orientationchange', () => {
 
 if ($('ln-prev')) $('ln-prev').onclick = () => snapTo(LAUNCH_I - 1);
 if ($('ln-next')) $('ln-next').onclick = () => snapTo(LAUNCH_I + 1);
+
+// «Влево-вправо» с клавиатуры: у лаунчера нет сфокусированного поля, и без
+// этого стрелки на аппаратной клавиатуре или в Bluetooth-игре не двигали
+// карусель вообще.
+document.addEventListener('keydown', ev => {
+  if (ev.key !== 'ArrowLeft' && ev.key !== 'ArrowRight') return;
+  const view = $('view-launch');
+  if (!view || !view.classList.contains('on')) return;
+  const el = document.activeElement;
+  if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA')) return;
+  ev.preventDefault();
+  snapTo(LAUNCH_I + (ev.key === 'ArrowRight' ? 1 : -1));
+});
 
 let SPACE = 'symbiosis';
 

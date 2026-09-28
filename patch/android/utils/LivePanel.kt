@@ -82,28 +82,21 @@ object LivePanel {
     fun keysPresent(): Boolean =
         runCatching { NativeLibrary.areKeysPresent() }.getOrDefault(false)
 
-    fun rememberedGames(): List<Game> {
-        if (!keysPresent()) return emptyList()
-
-        val live = runCatching { GameHelper.cachedGameList }.getOrDefault(emptyList())
-        if (live.isNotEmpty()) return live
-        val fromPrefs = runCatching {
-            val ctx = org.yuzu.yuzu_emu.YuzuApplication.appContext
-            val stored = androidx.preference.PreferenceManager
-                .getDefaultSharedPreferences(ctx)
-                .getStringSet(GameHelper.KEY_GAMES, emptySet())
-                ?: emptySet()
-            stored.mapNotNull { raw ->
-                runCatching {
-                    kotlinx.serialization.json.Json.decodeFromString<Game>(raw)
-                }.getOrNull()
-            }
-        }.getOrDefault(emptyList())
-        if (fromPrefs.isNotEmpty()) {
-            GameHelper.cachedGameList = fromPrefs.toMutableList()
-        }
-        return fromPrefs
-    }
+    /**
+     * The library as the last successful scan left it.
+     *
+     * Reads the cache and the persisted copy, never a folder - a page that
+     * asks for the list must not be able to start a walk of the disk.
+     *
+     * It used to answer an empty list whenever keys were missing, so a
+     * library that was scanned yesterday became "no games" today, and the
+     * one thing the panel can say about it is on the status strip: «Ключи
+     * ✕». Games whose title, path and cover are already known are shown;
+     * what cannot be done without keys is written next to them, not instead
+     * of them.
+     */
+    fun rememberedGames(): List<Game> =
+        runCatching { GameHelper.rememberedGames() }.getOrDefault(emptyList())
 
     fun gamesJson(): String {
         val arr = JSONArray()

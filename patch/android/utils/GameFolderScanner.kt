@@ -125,13 +125,10 @@ object GameFolderScanner {
     /**
      * Scans every configured game folder.
      *
-     * Always descends into subdirectories, regardless of the folder's
-     * `deep_scan` flag. That flag governs what the emulator's own library
-     * importer does; using it here made the count depend on a setting the user
-     * cannot see from this screen, and let the count disagree with the file
-     * list beside it. A storage summary that says "14 games" must mean the same
-     * fourteen files the list can show. [MAX_DIRECTORIES] keeps a pathological
-     * tree from turning that into a hang.
+     * Descends into subdirectories up to [depthFor] and no further, and uses
+     * the same rule the library importer does, so the count and the list
+     * cannot disagree. [MAX_DIRECTORIES] keeps a pathological tree from
+     * turning that into a hang.
      */
     fun scan(context: Context, stillWanted: () -> Boolean = { true }): List<Folder> {
         val dirs = runCatching { NativeConfig.getGameDirs() }.getOrNull() ?: return emptyList()
@@ -141,14 +138,30 @@ object GameFolderScanner {
     }
 
     /**
-     * How deep the library looks: GameHelper uses 3 with deep scan on and 1
-     * without, counting the folder itself as one level.
+     * How deep the library looks, counting the folder itself as one level.
      *
-     * Matching it matters. This used to walk the whole tree regardless, so a
-     * game two directories down was counted here and ignored by the importer,
-     * and the strip claimed a game the list could never show.
+     * Both this and the emulator's own importer ([GameHelper]) ask here, so
+     * the number cannot drift between the two again.
+     *
+     * It used to be 3 with deep scan on and **1** without, and 1 is what
+     * broke console dumps. A dump is normally kept one folder per game -
+     * `Games/Blade Chimera/game.nsp`, or `Switch/Blade Chimera
+     * [0100XXXXXXXX]/...` - so a folder picked at the top of such a library
+     * yielded exactly the files lying loose in its root, and on a device
+     * where one game sat in the root that is precisely "it sees one game and
+     * that is all". Three levels is the shallow layout of that dump; the
+     * switch still buys the two deeper ones.
+     *
+     * Depth is not the only bound: layout directories are never descended
+     * into, and [MAX_DIRECTORIES] caps the walk.
      */
-    fun depthFor(deepScan: Boolean): Int = if (deepScan) 3 else 1
+    fun depthFor(deepScan: Boolean): Int = if (deepScan) DEEP_SCAN_DEPTH else SHALLOW_SCAN_DEPTH
+
+    /** Enough for `Games/Title/game.nsp` and `Switch/Title [id]/Exefs/main`. */
+    const val SHALLOW_SCAN_DEPTH = 3
+
+    /** What the folder dialog's "recursive search" switch buys on top. */
+    const val DEEP_SCAN_DEPTH = 6
 
     /**
      * Subdirectories [SharedDataDirectory.ensureLayout] creates under the
@@ -350,7 +363,7 @@ object GameFolderScanner {
     fun listGames(
         context: Context,
         uriString: String,
-        maxDepth: Int = 1,
+        maxDepth: Int = SHALLOW_SCAN_DEPTH,
         stillWanted: () -> Boolean = { true }
     ): List<Entry> {
         val resolver = context.applicationContext.contentResolver

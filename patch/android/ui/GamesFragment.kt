@@ -221,15 +221,16 @@ class GamesFragment : Fragment() {
 
         gamesViewModel.isReloading.collect(viewLifecycleOwner) {
             (binding.swipeRefresh as? SwipeRefreshLayout)?.isRefreshing = it
-            binding.noticeText.setVisible(
-                visible = gamesViewModel.games.value.isEmpty() && !it,
-                gone = false
-            )
+            updateEmptyNotice()
         }
         gamesViewModel.games.collect(viewLifecycleOwner) {
-            if (it.isNotEmpty()) {
-                setAdapter(it)
-            }
+            // Раньше здесь стояло `if (it.isNotEmpty())`, и пустой результат
+            // обхода оставлял на экране ПРЕЖНИЙ список: надпись «игр нет»
+            // рисовалась поверх игр, которые на диске уже удалены или
+            // недоступны, и выглядело это как «приложение не обновляет
+            // список». Список и надпись обязаны показывать одно и то же.
+            setAdapter(it)
+            updateEmptyNotice()
         }
         gamesViewModel.shouldSwapData.collect(
             viewLifecycleOwner,
@@ -399,6 +400,15 @@ class GamesFragment : Fragment() {
 
     private var lastSearchText: String = ""
     private var lastFilter: Int = preferences.getInt(PREF_SORT_TYPE, View.NO_ID)
+
+    /** The "no games" notice follows the list, not the spinner. */
+    private fun updateEmptyNotice() {
+        binding.noticeText.setVisible(
+            visible = gamesViewModel.games.value.isEmpty() &&
+                !gamesViewModel.isReloading.value,
+            gone = false
+        )
+    }
 
     private fun setAdapter(games: List<Game>) {
         val currentSearchText = binding.searchText.text.toString()

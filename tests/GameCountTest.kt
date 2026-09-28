@@ -6,12 +6,16 @@
 //
 //   * the scanner accepted nso and kip; Game.extensions upstream is only
 //     xci, nsp, nca, nro
-//   * the scanner walked the whole tree; GameHelper uses depth 3 with deep
-//     scan on and 1 without
+//   * the scanner and the importer walked the tree to different depths
 //
 // Either alone produces a count the library cannot reproduce, which sends the
 // user hunting for a missing game that was never importable. These tests pin
 // both rules against the upstream ones.
+//
+// The shallow depth is 3, not the upstream 1: a console dump is normally kept
+// one folder per game, and a library picked at the top of one yielded only
+// the files lying loose in its root - "it sees one game and that is all".
+// DeepLibraryTest owns that rule; here it is the counting contract.
 
 
 import java.util.Locale
@@ -53,17 +57,20 @@ fun main(){
     val nszOnly = N.D("ed", mutableListOf(N.F("game.nsz", 100L)))
     check("nsz is not launchable", count(nszOnly, LAUNCHABLE, 1).first == 0)
 
-    // Depth: a game one level down, deep scan off.
+    // Depth: a game one folder down, shallow scan on (3) and deep scan off.
     val nested = N.D("ed", mutableListOf(
         N.D("Blade", mutableListOf(N.F("blade.nsp", 2_000_000_000L)))))
-    check("depth 1 misses a nested game, as upstream does", count(nested, LAUNCHABLE, 1).first == 0)
-    check("depth 3 finds it, as deep scan does",            count(nested, LAUNCHABLE, 3).first == 1)
+    check("depth 3 finds a game one folder down, which is what the library asks for",
+        count(nested, LAUNCHABLE, 3).first == 1)
+    check("depth 1 would still miss it, as upstream's shallow scan does",
+        count(nested, LAUNCHABLE, 1).first == 0)
 
-    // Deeper than upstream ever looks.
+    // Deeper than the shallow walk looks, still inside the deep one.
     val deep = N.D("ed", mutableListOf(
         N.D("a", mutableListOf(N.D("b", mutableListOf(N.D("c",
             mutableListOf(N.F("x.nsp", 1L)))))))))
-    check("depth 3 stops where upstream stops", count(deep, LAUNCHABLE, 3).first == 0)
+    check("the shallow walk stops at its own three levels", count(deep, LAUNCHABLE, 3).first == 0)
+    check("the deep walk finds the same dump",                   count(deep, LAUNCHABLE, 6).first == 1)
 
     // A normal library still works.
     val ok = N.D("ed", mutableListOf(
