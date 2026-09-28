@@ -179,10 +179,9 @@ fun main() {
             "WebView начнёт тянуть картинку раньше, чем дойдёт свайп")
         check("выделение плитки нельзя выделить текстом",
             Regex("\\.slide \\{[\\s\\S]*?user-select:none").containsMatchIn(page))
-        check("горизонталью владеет сам рельс",
-            Regex("\\.rail \\{[\\s\\S]*?touch-action:pan-x").containsMatchIn(page) &&
-                Regex("\\.rail \\{[\\s\\S]*?overscroll-behavior-x:contain").containsMatchIn(page),
-            "WebView отдаёт жест родителю, и карусель не едет")
+        check("доскакав до края, страница не уезжает следом",
+            Regex("\\.rail \\{[\\s\\S]*?overscroll-behavior-x:contain").containsMatchIn(page),
+            "WebView дотянет родительскую прокрутку и дёрнет экран")
         check("позиция ставится прокруткой самого рельса",
             Regex("function railCentre\\([\\s\\S]*?rail\\.scrollTo").containsMatchIn(page),
             "scrollIntoView уезжает вбок вместе со страницей")
@@ -207,6 +206,48 @@ fun main() {
             Regex("ev\\.key !== 'ArrowLeft' && ev\\.key !== 'ArrowRight'").containsMatchIn(page) &&
                 Regex("snapTo\\(LAUNCH_I \\+ \\(ev\\.key === 'ArrowRight' \\? 1 : -1\\)\\)")
                     .containsMatchIn(page))
+
+        // ── Жест забирает JS, а не браузер ──────────────────────────────────
+        //
+        // pan-x был поставлен в предыдущей правке и не помог: на этом
+        // телефоне WebView отдавал свайп не рельсу, и страница дёргалась
+        // вместо карусели. Проверяется именно то, чего больше нет.
+        check("встроенная прокрутка больше не разбирает жест",
+            Regex("touch-action\\s*:\\s*none").containsMatchIn(page) &&
+                !Regex("touch-action\\s*:\\s*pan-x").containsMatchIn(page),
+            "pan-x WebView на этом телефоне трактует иначе и отдаёт жест экрану")
+        check("нативный snap убран: он дёргал карусель к плитке посреди свайпа",
+            !page.contains("scroll-snap-type"),
+            "плитка прилипает к пальцу и карусель не едет")
+        check("свайп разбираем сами",
+            Regex("function bindRailSwipe").containsMatchIn(page) &&
+                Regex("rail\\.addEventListener\\('pointerdown'").containsMatchIn(page) &&
+                Regex("rail\\.addEventListener\\('pointermove'").containsMatchIn(page) &&
+                Regex("\\['pointerup', 'pointercancel'\\]\\.forEach").containsMatchIn(page),
+            "жест по-прежнему разбирает браузер")
+        check("движение гасится preventDefault, иначе страница уедет вбок",
+            Regex("pointermove[\\s\\S]*?ev\\.preventDefault\\(\\)").containsMatchIn(page))
+        check("позиция ставится в scrollLeft, а не доверяется браузеру",
+            Regex("pointermove[\\s\\S]*?rail\\.scrollLeft = Math\\.min").containsMatchIn(page))
+        check("отпускание останавливает карусель на плитке",
+            Regex("function railRelease\\(\\)").containsMatchIn(page) &&
+                Regex("snapTo\\(flick \\|\\| railNearestIndex\\(\\)\\)").containsMatchIn(page))
+        check("бросок листает на плитку, а не на пиксель",
+            Regex("RAIL_FLICK_SPEED").containsMatchIn(page) &&
+                Regex("base - Math\\.sign\\(vx\\) \\* steps").containsMatchIn(page),
+            "резкий свайп должен перескакивать плитку, а не ползти")
+        check("вертикальный жест не считается свайпом карусели",
+            Regex("railRelease\\(\\);\\s*//\\s*жест вертикальный").containsMatchIn(page) ||
+                Regex("жест вертикальный").containsMatchIn(page),
+            "палец по вертикали должен уметь листать страницу")
+        check("после свайпа клик не запускает игру",
+            Regex("RAIL_SUPPRESS_CLICK").containsMatchIn(page) &&
+                Regex("addEventListener\\('click',[\\s\\S]*?RAIL_SUPPRESS_CLICK").containsMatchIn(page),
+            "листали карусель - и тут же запустили игру")
+        check("плавная прокрутка не остаётся единственным способом встать на плитку",
+            Regex("function railCentre[\\s\\S]*?setTimeout[\\s\\S]*?rail\\.scrollLeft = left")
+                .containsMatchIn(page),
+            "smooth на 8 ГБ то едет, то молчит: выделение уезжает, карусель нет")
     }
 
     println()

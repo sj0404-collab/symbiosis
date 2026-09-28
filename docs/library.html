@@ -221,16 +221,18 @@
     flex:1; min-width:0; height:100%;
     display:flex; align-items:center; gap:16px;
     overflow-x:auto; overflow-y:hidden;
-    scroll-snap-type:x mandatory;
     -webkit-overflow-scrolling:touch;
     padding:8px 18vw;
     scrollbar-width:none;
-    /* Рельс владеет горизонталью сам.
-       Без touch-action WebView решает, кому отдать жест, и на 8 ГБ
-       с Mali это решал родительский скролл: свайп влево-вправо уходил
-       мимо карусели. overscroll-behavior не даёт доскакать до края и
-       утянуть за собой всю страницу. */
-    touch-action:pan-x;
+    /* Жест забирает сам railSwipe, а не браузер.
+       Пока горизонталь полагалась на встроенную прокрутку, WebView на этом
+       телефоне отдавал свайп мимо карусели: pan - x он понимает иначе, чем
+       десктопный Chromium, и жест уходил в экран, а рельс стоял. Поэтому
+       pan - x убран (с ним жест не доезжал), а остановку на плитке раньше
+       делал scroll-snap, который дёргал карусель прямо во время свайпа.
+       Теперь прокрутку и остановку делает JS, а браузеру запрещено трогать
+       горизонталь здесь - иначе он снова решит, кому достаётся жест. */
+    touch-action:none;
     overscroll-behavior-x:contain;
   }
   .rail::-webkit-scrollbar { display:none; }
@@ -249,6 +251,10 @@
        прокрутки была на месте. */
     user-select:none; -webkit-user-select:none; -webkit-touch-callout:none;
   }
+  /* Плитка в момент перетаскивания не едет за transform - иначе палец
+     тащит картинку, а карусель стоит. Масштаб и прозрачность после
+     отпускания возвращает snapTo. */
+  .rail.dragging .slide { transition:none; }
   .slide.on { transform:scale(1); opacity:1; box-shadow:0 12px 40px rgba(0,0,0,.45); }
   .slide img {
     width:100%; height:100%; object-fit:cover; display:block;
@@ -787,8 +793,15 @@ function railCentre(el, smooth) {
   const rail = $('rail');
   if (!rail || !el) return;
   const left = Math.max(0, el.offsetLeft - (rail.clientWidth - el.offsetWidth) / 2);
-  if (typeof rail.scrollTo === 'function') {
-    rail.scrollTo({ left: left, behavior: smooth ? 'smooth' : 'auto' });
+  if (smooth && typeof rail.scrollTo === 'function') {
+    rail.scrollTo({ left: left, behavior: 'smooth' });
+    // Плавная прокрутка в WebView на 8 ГБ то едет, то молча не делает
+    // ничего: выделение уезжало на соседнюю плитку, а карусель оставалась
+    // там, где палец отпустили. Через 350 мс проверяем и, если не доехало,
+    // ставим плитку в центр сразу.
+    setTimeout(() => {
+      if (rail && Math.abs(rail.scrollLeft - left) > 2) rail.scrollLeft = left;
+    }, 350);
   } else {
     rail.scrollLeft = left;
   }
@@ -1542,6 +1555,94 @@ if (railEl) {
     st = setTimeout(nearestSlide, 80);
   }, {passive:true});
 }
+
+// ── Свайп по рельсу ──────────────────────────────────────────────────────
+//
+// Жест намеренно не отдан встроенной прокрутке. Разбор жеста в WebView на
+// этом телефоне уводил его в экран: карусель стояла, а страница дёргалась.
+// Здесь палец разбираем сами - pointermove с preventDefault, положение
+// ставим в scrollLeft сами и останавливаемся на плитке сами. Побочный
+// эффект, который обязателен: после свайпа не должен срабатывать click по
+// плитке, иначе каталог листается и тут же запускает игру.
+const RAIL_SLIDE_GAP = 16;      // .rail gap, в сумме со шириной плитки это шаг
+const RAIL_TAP_SLOP = 10;       // меньше - это тап, а не перетаскивание
+const RAIL_FLICK_SPEED = 0.45;  // px/мс, после которых свайп считается броском
+const RAIL_FLICK_STEP = 1;      // на сколько плиток уходит бросок
+
+let RAIL_DRAG = null;
+let RAIL_SUPPRESS_CLICK = false;
+
+function railNearestIndex() {
+  const rail = $('rail');
+  if (!rail) return 0;
+  const mid = rail.scrollLeft + rail.clientWidth / 2;
+  let best = 0, dist = Infinity;
+  rail.querySelectorAll('.slide').forEach(el => {
+    const c = el.offsetLeft + el.offsetWidth / 2;
+    const d = Math.abs(c - mid);
+    if (d < dist) { dist = d; best = +el.dataset.ri; }
+  });
+  return best;
+}
+
+function railRelease() {
+  const d = RAIL_DRAG;
+  RAIL_DRAG = null;
+  const rail = $('rail');
+  if (!rail || !d) return;
+  rail.classList.remove('dragging');
+  const moved = Math.abs(d.lastX - d.x0) > RAIL_TAP_SLOP;
+  if (moved) {
+    // Клик по плитке после свайпа запустил бы игру. Флаг живёт до конца
+    // цикла событий, в который прилетит click.
+    RAIL_SUPPRESS_CLICK = true;
+    setTimeout(() => { RAIL_SUPPRESS_CLICK = false; }, 0);
+  }
+  const dt = Math.max(1, d.tLast - d.t0);
+  const vx = (d.lastX - d.x0) / dt;   // px/мс, минус = палец вправо
+  const steps = Math.abs(vx) > RAIL_FLICK_SPEED ? RAIL_FLICK_STEP : 0;
+  const base = d.startI;
+  // Бросок вправо (палец вправо, vx отрицательный) листает к предыдущей
+  // плитке: карусель едет вместе с пальцем, а не навстречу ему.
+  const flick = steps ? base - Math.sign(vx) * steps : 0;
+  snapTo(flick || railNearestIndex());
+}
+
+function bindRailSwipe(rail) {
+  if (!rail || rail.dataset.swipe === 'on') return;
+  rail.dataset.swipe = 'on';
+  rail.addEventListener('pointerdown', ev => {
+    if (!ev.isPrimary) { RAIL_DRAG = null; return; }
+    RAIL_DRAG = { x0: ev.clientX, y0: ev.clientY, lastX: ev.clientX,
+                  startLeft: rail.scrollLeft, startI: LAUNCH_I,
+                  t0: ev.timeStamp, tLast: ev.timeStamp, moved: false };
+    rail.classList.add('dragging');
+    try { rail.setPointerCapture(ev.pointerId); } catch (e) { /* не критично */ }
+  });
+  rail.addEventListener('pointermove', ev => {
+    const d = RAIL_DRAG;
+    if (!d) return;
+    if (Math.abs(ev.clientY - d.y0) > RAIL_TAP_SLOP &&
+        Math.abs(ev.clientY - d.y0) > Math.abs(ev.clientX - d.x0)) {
+      railRelease();          // жест вертикальный - это не наш
+      return;
+    }
+    d.moved = true;
+    d.lastX = ev.clientX;
+    d.tLast = ev.timeStamp;
+    // preventDefault здесь и есть смысл touch-action:none: без него
+    // браузер сам уводит страницу вбок, пока палец тянет карусель.
+    if (ev.cancelable) ev.preventDefault();
+    const max = Math.max(0, rail.scrollWidth - rail.clientWidth);
+    rail.scrollLeft = Math.min(max, Math.max(0, d.startLeft - (ev.clientX - d.x0)));
+  });
+  ['pointerup', 'pointercancel'].forEach(t => rail.addEventListener(t, railRelease));
+  rail.addEventListener('click', ev => {
+    if (RAIL_SUPPRESS_CLICK) { ev.preventDefault(); ev.stopPropagation(); }
+  }, true);
+}
+
+if (railEl) bindRailSwipe(railEl);
 
 function keepLaunchFrame() {
   railCentre($('rail') && $('rail').querySelector('.slide.on'), false);

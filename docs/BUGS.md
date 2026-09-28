@@ -345,6 +345,48 @@ Three things, all visible only in the shipped page:
   (`RAIL_BUSY_UNTIL`). Arrow keys step the rail, since it has no focusable
   field of its own.
 
+### Cause 3 — the gesture was never ours to begin with (mine)
+
+The first attempt treated this as a styling problem and reached for
+`touch-action: pan-x`. On the phone that made it no better: the rail stood
+still and **the screen jerked instead**. `pan-x` tells the UA it may pan
+that element horizontally — it does not promise the element is what gets
+panned. Chromium resolves the touch node against the scroll chain, and on
+this WebView the chain resolved to something other than the rail, so the
+gesture was spent on the viewport.
+
+Measured, not assumed: with the library stubbed in a headless Chromium the
+rail overflows (2424 px of content in a 320 px box), nothing overlays it
+(`elementFromPoint` at the rail's centre is the tile), and the document is
+not wider than the window. The page was correct; the *ownership* of the
+gesture was not.
+
+So the rail takes the gesture itself and stops asking:
+
+- `touch-action: none` on `.rail` — the browser is told not to scroll
+  horizontally there at all, so there is no chain left to resolve wrongly;
+  `pointermove` is cancelled with `preventDefault`, which is what actually
+  keeps the page from sliding sideways under the finger.
+- `pointerdown` / `pointermove` / `pointerup` write `rail.scrollLeft`
+  directly. No native momentum, no native fling, no engine-dependent feel.
+- `scroll-snap-type` is **gone**. It was snapping the nearest tile to centre
+  *during* the drag, which is the jerk: the tile stuck to the finger while
+  the carousel refused to move. The snap now happens once, on release,
+  through `snapTo()`.
+- The release picks the tile by velocity: a flick (`RAIL_FLICK_SPEED`)
+  advances one tile, a slow drag lands on whichever tile ended up centred.
+  A vertical gesture is handed straight back — it is not ours.
+- **A click after a swipe must not launch a game.** The old `click` handler
+  on every tile had no idea a drag had just happened, so paging the
+  carousel could start the game underneath. `RAIL_SUPPRESS_CLICK` eats that
+  one click.
+
+One more thing the measurement turned up: `scrollTo({behavior:'smooth'})`
+lands exactly in desktop Chromium, but it is not something to rely on here —
+`railCentre` now checks 350 ms later and pins the tile if the smooth scroll
+never happened, because otherwise the highlight moves to one tile while the
+carousel stays where the finger left it.
+
 ### Also fixed on the way
 
 - **No keys no longer means "no games".** `getGames()` used to answer
@@ -389,6 +431,21 @@ neither may enter a layout directory — then reads the shipped sources, which
 is what catches the two copies of the depth rule drifting apart again.
 `LauncherRailTest` already checked the data (v21); it now also checks the
 gesture, which nothing was asserting.
+
+The gesture itself was checked behaviourally, on the real page with a
+stubbed bridge and real `PointerEvent`s (headless Chromium; native
+momentum scrolling is compositor-side and cannot be synthesised, but our
+handler is JS and can be):
+
+```
+ok   перетаскивание двигает рельс                      [0 -> 60]
+ok   pointermove гасится preventDefault (жест не уедет в экран)
+ok   после отпускания карусель встала по центру плитки  [плитка@330 vs центр@330]
+ok   бросок пальцем влево листает к следующей плитке     [2 -> 3]
+ok   бросок пальцем вправо листает к предыдущей плитке   [3 -> 2]
+ok   тап выбирает плитку
+ok   клик после свайпа не запускает игру
+```
 
 **Files:** `patch/android/utils/GameFolderScanner.kt`,
 `patch/android/utils/GameHelper.kt`, `patch/android/utils/LivePanel.kt`,
