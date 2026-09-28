@@ -224,16 +224,32 @@ jobs:
       #   control crashes too  -> the crash is Eden on that device, not us
       #   control runs, ours does not -> it is in the eleven files of patch2
       #
+      # ── inputs.* is empty on a push, and empty is not false ──────────
+      #
+      # GitHub casts both sides to a number when it compares: null becomes 0
+      # and false becomes 0, so `inputs.apply_patch == false` was TRUE for
+      # every push. Proof from the run of 2f76f25: "Skip the patch - control
+      # build of plain upstream" passed and "Apply patch2" never appeared.
+      #
+      # So a push-triggered Panel APK was never patched - plain upstream, no
+      # patch2 - and the "Verify the changes shipped" step was skipped for the
+      # same reason, which is why nobody noticed: nothing asserted anything and
+      # the APK still uploaded to gofile.
+      #
+      # The idiom used for upload_to_gofile lower down (event name first, input
+      # second) is the fix: on a push the event name alone decides, and the
+      # input is only consulted for a manual run, where it really exists.
+      #
       # One question, one answer, no more speculation.
       - name: Apply patch2
-        if: inputs.apply_patch != false
+        if: github.event_name != 'workflow_dispatch' || inputs.apply_patch
         run: |
           bash fork/tools/apply_patch2.sh --patch fork/patch2 \
             --eden "$GITHUB_WORKSPACE/eden" \
             --subset "${{ inputs.patch_subset || 'all' }}"
 
       - name: Skip the patch - control build of plain upstream
-        if: inputs.apply_patch == false
+        if: github.event_name == 'workflow_dispatch' && inputs.apply_patch == false
         run: echo "::warning::building UNPATCHED upstream v0.2.1 as a control"
 
       # Cached: an 85 MB download that is identical every run, and when it
@@ -247,7 +263,7 @@ jobs:
           key: kotlinc-2.0.21
 
       - name: Check the folder logic before building
-        if: inputs.apply_patch != false
+        if: github.event_name != 'workflow_dispatch' || inputs.apply_patch
         run: |
           # Twenty seconds here against twenty-five minutes of compiling. All
           # three tests run against plain Kotlin - no Android, no device.
@@ -360,7 +376,7 @@ jobs:
           ccache --show-stats | head -20
 
       - name: Verify the changes shipped
-        if: inputs.apply_patch != false
+        if: github.event_name != 'workflow_dispatch' || inputs.apply_patch
         env:
           PATCH_SUBSET: ${{ inputs.patch_subset || 'all' }}
         run: |
