@@ -42,9 +42,17 @@ jobs:
           fi
           echo "snapshot stamp: $STAMP"; echo "STAMP=$STAMP" >> "$GITHUB_ENV"
           BASE="$RAW/snapshots/$STAMP"
-          REL="hub-work/$SNAP_REPO_NAME/code"
-          if ! curl -fsSL --retry 3 -o snap-meta-check.json "$BASE/repos/$REL/meta.json" 2>/dev/null; then
-            echo "::error title=not in snapshot::$SNAP_REPO_NAME is not present in the newest hub snapshot ($STAMP)."
+          curl -fsSL --retry 3 -o latest-snap.json "$RAW/snapshots/$STAMP/latest.json" 2>/dev/null             || curl -fsSL --retry 3 -o latest-snap.json "$RAW/latest.json"
+          REL=$(python3 - <<'PYRG'
+          import json, os
+          d = json.load(open('latest-snap.json'))
+          name = os.environ['SNAP_REPO_NAME']
+          hit = [r for r in d.get('repos', []) if (r.get('remote') or '').rstrip('/').endswith('/' + name + '.git')]
+          print(hit[0]['rel'] if hit else '')
+          PYRG
+          )
+          if [ -z "$REL" ]; then
+            echo "::error title=not in snapshot::@@@REPO@@ is not present in the newest hub snapshot ($STAMP)."
             echo "Open it in a hub session, wait ~5 min for the backup loop, or pass an older stamp that contains it."
             exit 1
           fi
@@ -112,19 +120,6 @@ jobs:
           m = json.load(open('snap/meta.json'))
           print('meta head:', (m.get('head') or '?')[:12], '| branch:', m.get('branch'), '| dirty:', m.get('dirty'))
           PYMETA
-      - name: Signing key from the default branch (if present)
-        # Подпись не может жить в снапшоте (keystore появился после), поэтому
-        # дотягиваем пару keystore.properties+release.p12 ИЗ ВЕТКИ ПО УМОЛЧАНИЮ,
-        # и только целиком: одна без другой ломает gradle хуже, чем unsigned.
-        run: |
-          T="https://raw.githubusercontent.com/${{ github.repository }}/${{ github.ref_name }}"
-          pull() { curl -fsSL --retry 2 -o /tmp/sig "$1" 2>/dev/null && return 0; return 1; }
-          for pair in             "keystore.properties:keystore/release.p12"             "android/keystore.properties:android/keystore/release.p12"             "keystore.properties:app/keystore/release.p12"; do
-            props="${pair%%:*}"; store="${pair##*:}"
-            if pull "$T/$props" && { mkdir -p "src/$(dirname $props)"; cp /tmp/sig "src/$props"; } &&                pull "$T/$store" && { mkdir -p "src/$(dirname $store)"; cp /tmp/sig "src/$store"; }; then
-              echo "✓ signing key: $props + $store"
-            fi
-          done
       - name: Docs preflight (packaged pages must exist)
         working-directory: src
         run: |
