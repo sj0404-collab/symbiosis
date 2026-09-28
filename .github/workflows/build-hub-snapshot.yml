@@ -42,17 +42,9 @@ jobs:
           fi
           echo "snapshot stamp: $STAMP"; echo "STAMP=$STAMP" >> "$GITHUB_ENV"
           BASE="$RAW/snapshots/$STAMP"
-          curl -fsSL --retry 3 -o latest-snap.json "$RAW/snapshots/$STAMP/latest.json" 2>/dev/null             || curl -fsSL --retry 3 -o latest-snap.json "$RAW/latest.json"
-          REL=$(python3 - <<'PYRG'
-          import json, os
-          d = json.load(open('latest-snap.json'))
-          name = os.environ['SNAP_REPO_NAME']
-          hit = [r for r in d.get('repos', []) if (r.get('remote') or '').rstrip('/').endswith('/' + name + '.git')]
-          print(hit[0]['rel'] if hit else '')
-          PYRG
-          )
-          if [ -z "$REL" ]; then
-            echo "::error title=not in snapshot::@@@REPO@@ is not present in the newest hub snapshot ($STAMP)."
+          REL="hub-work/$SNAP_REPO_NAME/code"
+          if ! curl -fsSL --retry 3 -o snap-meta-check.json "$BASE/repos/$REL/meta.json" 2>/dev/null; then
+            echo "::error title=not in snapshot::$SNAP_REPO_NAME is not present in the newest hub snapshot ($STAMP)."
             echo "Open it in a hub session, wait ~5 min for the backup loop, or pass an older stamp that contains it."
             exit 1
           fi
