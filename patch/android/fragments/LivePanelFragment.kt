@@ -5,6 +5,7 @@ package org.yuzu.yuzu_emu.fragments
 
 import android.annotation.SuppressLint
 import android.content.Intent
+import android.net.Uri
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
@@ -372,6 +373,26 @@ class LivePanelFragment : Fragment() {
         fun deleteConverted(path: String): String = runCatching {
             Converter.delete(path)
         }.getOrDefault("""{"ok":false}""")
+
+        /**
+         * Распаковать файл прямо из библиотеки.
+         *
+         * Раньше «сжатый образ» был тупиком: строки в списке нет, а
+         * Конвертер просил выбрать файл заново через системный пикер.
+         * Теперь кнопка на карточке отдаёт тот самый документ, который
+         * библиотека уже нашла.
+         */
+        @JavascriptInterface
+        fun convertPath(path: String): String = runCatching {
+            val uri = Uri.parse(path)
+            Converter.enqueue(requireContext().applicationContext, listOf(uri))
+        }.getOrDefault("""{"busy":false,"pending":0,"error":"не удалось поставить в очередь"}""")
+
+        /** Почему из сотни файлов видна одна: цифры и причины словами. */
+        @JavascriptInterface
+        fun libraryReport(): String = runCatching {
+            LivePanel.libraryReport(requireContext().applicationContext)
+        }.getOrDefault("""{"stats":{"known":false},"headline":"нет данных","files":[]}""")
 
         @JavascriptInterface
         fun canOpen(path: String): Boolean = runCatching {
