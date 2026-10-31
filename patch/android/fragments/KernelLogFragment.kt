@@ -88,6 +88,9 @@ class KernelLogFragment : Fragment() {
             insets
         }
         buildStatic()
+        // Открыли экран — сразу сохранили текущий журнал в архив: это
+        // единственный момент, когда он ещё полон и ничего не потеряно.
+        runCatching { KernelLog.archiveCurrent() }
         refresh()
     }
 
@@ -189,16 +192,21 @@ class KernelLogFragment : Fragment() {
                     setOnClickListener { KernelLog.share(requireContext(), current) }
                 }.also { it.layoutParams = rowParams() }
         )
+        // Кнопки «Очистить» здесь нет и не будет.
+        //
+        // Журнал — единственное, что остаётся от неудачного запуска, и
+        // удалять его одним нажатием рядом с «Отправить» слишком легко
+        // случайно. Вместо удаления копия уходит в «Загрузки»: так файл
+        // переживёт и очистку данных приложения, и переустановку.
         actions.addView(
             MaterialButton(ctx, null, com.google.android.material.R.attr.materialButtonOutlinedStyle)
                 .apply {
-                    text = "Очистить"
+                    text = "В «Загрузки»"
                     textSize = 12f
-                    setTextColor(SymbiosisTheme.RED)
                     setOnClickListener {
-                        val removed = KernelLog.clearAll()
-                        summary.text = "удалено файлов: $removed"
-                        refresh()
+                        val path = KernelLog.exportToDownloads(requireContext(), current)
+                        summary.text = if (path != null) "сохранено: $path"
+                        else "сохранять нечего — журнал пуст"
                     }
                 }.also { it.layoutParams = rowParams() }
         )
@@ -236,6 +244,10 @@ class KernelLogFragment : Fragment() {
                         NativeSymbiosis.logDump(null, NativeSymbiosis.LogLevel.Debug)
                     }.getOrDefault("")
                     null
+                } else if (source == SOURCE_SESSIONS) {
+                    // Архив: самый свежий сохранённый сеанс. Список всех
+                    // сеансов — по кнопке «Сеансы» внизу экрана.
+                    KernelLog.sessions().firstOrNull()?.let { KernelLog.read(it) }
                 } else {
                     val files = KernelLog.files()
                     // «Прошлый сеанс» — второй по свежести файл: первый ядро
@@ -258,7 +270,17 @@ class KernelLogFragment : Fragment() {
             return if (text.isBlank()) "слой ничего не записал"
             else "решения слоя · ${text.lineSequence().count()} строк"
         }
-        if (chunk == null) return "файла журнала нет"
+        if (chunk == null) {
+            return if (source == SOURCE_SESSIONS) {
+                "сохранённых сеансов пока нет — они появятся перед следующим запуском игры"
+            } else {
+                "файла журнала нет"
+            }
+        }
+        if (source == SOURCE_SESSIONS) {
+            return "${KernelLogArchive.label(chunk.name, chunk.sizeBytes, System.currentTimeMillis())}" +
+                " · ошибок: ${KernelLog.countProblems(text)}"
+        }
         val kb = chunk.sizeBytes / 1024
         val problems = KernelLog.countProblems(text)
         return "${chunk.name} · ${kb} КБ · ошибок: $problems"
@@ -281,12 +303,14 @@ class KernelLogFragment : Fragment() {
 
     companion object {
         private const val SOURCE_KERNEL = "kernel"
+        private const val SOURCE_SESSIONS = "sessions"
         private const val SOURCE_PREVIOUS = "previous"
         private const val SOURCE_LAYER = "layer"
 
         private val SOURCES = listOf(
             SOURCE_KERNEL to "ядро",
             SOURCE_PREVIOUS to "прошлый запуск",
+            SOURCE_SESSIONS to "сеансы",
             SOURCE_LAYER to "Symbiosis"
         )
     }

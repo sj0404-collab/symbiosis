@@ -159,6 +159,9 @@ if command -v kotlinc >/dev/null 2>&1; then
       # Android — поэтому проверяется на хосте; ошибка здесь означает
       # OutOfMemory на телефоне или «ошибок: 0» при семи ошибках.
       KernelLogTest) echo "$HERE/patch/android/utils/KernelLogFormat.kt" ;;
+      # Архив журнала: правила «что сохранить и что стереть», лимиты и
+      # подписи. Чистые функции — проверяются без телефона.
+      KernelLogArchiveTest) echo "$HERE/patch/android/utils/KernelLogArchive.kt" ;;
       # Причины отказа конвертера: таблица «сообщение ядра → фраза для
       # человека». Ошибка здесь означает, что вместо причины человек увидит
       # «не удалось».
@@ -172,6 +175,23 @@ if command -v kotlinc >/dev/null 2>&1; then
         $HERE/patch/android/utils/EngineHybrid.kt \
         $HERE/patch/android/utils/NativeLibraryPresenter.kt \
         $HERE/patch/android/utils/LibraryIndex.kt" ;;
+      # Торренты: bencode, разбор .torrent, арифметика кусков, рукопожатие и
+      # трекеры. Всё чистые функции над байтами — проверяются на хосте.
+      TorrentFormatTest) echo "$HERE/patch/android/utils/TorrentBencode.kt \
+        $HERE/patch/android/utils/TorrentMeta.kt \
+        $HERE/patch/android/utils/TorrentPlan.kt \
+        $HERE/patch/android/utils/TorrentWire.kt \
+        $HERE/patch/android/utils/TorrentTracker.kt \
+        $HERE/patch/android/utils/SourceIndex.kt" ;;
+      # Скачивание по-настоящему: локальный трекер и локальный пир на
+      # 127.0.0.1, настоящие сокеты. Log — заглушка из tests/host.
+      TorrentDownloadTest) echo "$HERE/patch/android/utils/TorrentBencode.kt \
+        $HERE/patch/android/utils/TorrentMeta.kt \
+        $HERE/patch/android/utils/TorrentPlan.kt \
+        $HERE/patch/android/utils/TorrentWire.kt \
+        $HERE/patch/android/utils/TorrentTracker.kt \
+        $HERE/patch/android/utils/TorrentDownload.kt \
+        $HERE/tests/host/log_stub.kt" ;;
       *)                echo "" ;;
     esac
   }

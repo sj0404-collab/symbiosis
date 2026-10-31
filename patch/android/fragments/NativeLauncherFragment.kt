@@ -36,6 +36,7 @@ import org.yuzu.yuzu_emu.utils.EngineStore
 import org.yuzu.yuzu_emu.utils.ExitTrace
 import org.yuzu.yuzu_emu.utils.GameHelper
 import org.yuzu.yuzu_emu.utils.GameIconUtils
+import org.yuzu.yuzu_emu.utils.KernelLog
 import org.yuzu.yuzu_emu.utils.NativeLibraryPresenter
 import org.yuzu.yuzu_emu.utils.PluginEngine
 import org.yuzu.yuzu_emu.utils.PluginStore
@@ -505,6 +506,12 @@ class NativeLauncherFragment : Fragment() {
         // След для диагностики: если после этой метки приложение умрёт, в
         // «Диагностике» будет видно, на каком именно запуске это случилось.
         ExitTrace.mark("запуск: ${game.title}")
+
+        // Журнал прошлого сеанса сохраняется ДО старта: ядро при
+        // инициализации переименовывает свой файл и стирает позапрошлый
+        // сеанс. Восстановить его после запуска уже нельзя — именно поэтому
+        // «вчера работало» нечем было подтвердить.
+        runCatching { KernelLog.archiveCurrent() }
 
         // Плагин может переопределить ядро — например, оставить игру на Eden,
         // если она на втором ядре падает. Это решение не молчаливое: если

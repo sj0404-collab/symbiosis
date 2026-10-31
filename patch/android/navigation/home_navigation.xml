@@ -196,6 +196,15 @@
         android:id="@+id/action_global_kernelLogFragment"
         app:destination="@id/kernelLogFragment" />
 
+    <!-- Источники: ссылка → список файлов → скачать или смотреть по частям. -->
+    <fragment
+        android:id="@+id/sourcesFragment"
+        android:name="org.yuzu.yuzu_emu.fragments.SourcesFragment"
+        android:label="SourcesFragment" />
+    <action
+        android:id="@+id/action_global_sourcesFragment"
+        app:destination="@id/sourcesFragment" />
+
     <fragment
         android:id="@+id/toolsFragment"
         android:name="org.yuzu.yuzu_emu.fragments.ToolsFragment"

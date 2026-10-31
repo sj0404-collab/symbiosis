@@ -83,13 +83,89 @@ object KernelLog {
     /** Сколько ошибок в тексте: см. [KernelLogFormat.countProblems]. */
     fun countProblems(text: String): Int = KernelLogFormat.countProblems(text)
 
-    /** Удалить все журналы. Возвращает, сколько файлов убрано. */
-    fun clearAll(): Int {
-        var removed = 0
-        files().forEach { file ->
-            if (file.delete()) removed++
+    /**
+     * Архив сеансов: `log/sessions/`.
+     *
+     * Ядро держит только текущий журнал и один прошлый — третий запуск стирает
+     * первый. Поэтому каждый сеанс копируется сюда перед новым запуском, и
+     * ничто в приложении этот архив не удаляет: только лимит по размеру,
+     * см. [KernelLogArchive].
+     */
+    fun sessionsDir(): File? {
+        val dir = directory() ?: return null
+        val sessions = File(dir, "sessions")
+        return if (sessions.isDirectory || runCatching { sessions.mkdirs() }.getOrDefault(false)) {
+            sessions
+        } else {
+            null
         }
-        return removed
+    }
+
+    /** Сеансы, свежие сверху. */
+    fun sessions(): List<File> {
+        val dir = sessionsDir() ?: return emptyList()
+        return dir.listFiles()
+            .orEmpty()
+            .filter { it.isFile && it.extension.equals("txt", ignoreCase = true) }
+            .sortedByDescending { it.name }
+    }
+
+    /**
+     * Сохранить текущий журнал в архив, если он ещё не сохранён.
+     *
+     * Вызывается перед запуском игры — то есть ДО того, как ядро переименует
+     * файл и начнёт новый сеанс. Возвращает имя созданной копии или null,
+     * если копировать нечего (файла нет, он пуст или уже сохранён).
+     */
+    fun archiveCurrent(): String? {
+        val dir = sessionsDir() ?: return null
+        val source = files().firstOrNull() ?: return null
+        val existing = dir.listFiles().orEmpty().map { it.name }.toHashSet()
+        val modified = source.lastModified()
+        val size = source.length()
+        if (!KernelLogArchive.shouldArchive(modified, size, existing)) return null
+        val name = KernelLogArchive.nameFor(modified)
+        val target = File(dir, name)
+        val copied = runCatching {
+            source.copyTo(target, overwrite = false)
+            true
+        }.getOrDefault(false)
+        if (!copied) return null
+        prune(dir)
+        return name
+    }
+
+    /** Убрать лишнее по лимитам. Ничего не делает, пока лимит не превышен. */
+    private fun prune(dir: File) {
+        val entries = dir.listFiles().orEmpty()
+            .filter { it.isFile }
+            .sortedBy { it.name }
+            .map { it.name to it.length() }
+        KernelLogArchive.toPrune(entries).forEach { old ->
+            runCatching { File(dir, old).delete() }
+        }
+    }
+
+    /**
+     * Копия журнала в «Загрузки» — чтобы файл пережил удаление приложения.
+     *
+     * Единственный способ что-то потерять — удалить приложение вместе с его
+     * папкой данных; копия в общей памяти переживает и это.
+     */
+    fun exportToDownloads(context: Context, chunk: Chunk?): String? {
+        val text = chunk?.text.orEmpty()
+        if (text.isBlank()) return null
+        return runCatching {
+            val base = File(
+                android.os.Environment.getExternalStoragePublicDirectory(
+                    android.os.Environment.DIRECTORY_DOWNLOADS
+                ),
+                "Symbiosis/logs"
+            ).apply { mkdirs() }
+            val target = File(base, "kernel-${chunk!!.name}")
+            target.writeText(text)
+            target.absolutePath
+        }.getOrNull()
     }
 
     /** Отдать журнал наружу: почта, мессенджер, «Сохранить в файлы». */

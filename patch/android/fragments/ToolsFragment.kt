@@ -108,6 +108,16 @@ class ToolsFragment : Fragment() {
                     { nav(R.id.action_global_kernelLogFragment) }
                 )
             )
+            // Источники — рядом с журналом: это тоже «откуда взять»,
+            // только не лог, а сами файлы: каталоги, прямые ссылки, торренты.
+            add(
+                HomeSetting(
+                    R.string.sources_title,
+                    R.string.sources_description,
+                    R.drawable.ic_folder_open,
+                    { nav(R.id.action_global_sourcesFragment) }
+                )
+            )
             add(
                 HomeSetting(
                     R.string.fps_tuning,

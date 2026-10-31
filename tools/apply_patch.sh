@@ -238,6 +238,51 @@ else:
     print('  ::warning:: KenjiProbeService missing; player activity not added')
 PYKENJI
 
+# Плеер «по частям» и сетевая политика для него.
+#
+# Активность обычная (не :kenji): она показывает видео и не грузит чужой
+# код. Политика сети добавляется атрибутом к <application> — без него
+# локальный поток на 127.0.0.1 на Android 9+ не открывается вовсе.
+python3 - "$MANIFEST" <<'PYPLAYER'
+import re
+import sys
+
+path = sys.argv[1]
+text = open(path, encoding='utf-8').read()
+changed = False
+
+if 'SourcePlayerActivity' not in text:
+    activity = """
+        <activity
+            android:name="org.yuzu.yuzu_emu.activities.SourcePlayerActivity"
+            android:exported="false"
+            android:theme="@android:style/Theme.Black.NoTitleBar.Fullscreen"
+            android:configChanges="orientation|screenSize|keyboardHidden|screenLayout"
+            android:launchMode="singleTask" />
+"""
+    marker = '</application>'
+    if marker in text:
+        text = text.replace(marker, activity + '    ' + marker, 1)
+        print('  declared SourcePlayerActivity')
+        changed = True
+    else:
+        print('  ::warning:: no </application>; player activity not added')
+
+if 'networkSecurityConfig' not in text:
+    match = re.search(r'<application\b', text)
+    if match:
+        text = (text[:match.end()] +
+                '\n        android:networkSecurityConfig="@xml/network_security_config"' +
+                text[match.end():])
+        print('  linked res/xml/network_security_config to <application>')
+        changed = True
+    else:
+        print('  ::warning:: no <application>; network policy not linked')
+
+if changed:
+    open(path, 'w', encoding='utf-8').write(text)
+PYPLAYER
+
 # Keep the WebView across rotation. Without this MainActivity is destroyed,
 # library.html reloads and every cover is decoded again — that is the lag.
 python3 - "$MANIFEST" <<'PYROT'
@@ -346,6 +391,13 @@ if [ -d "$P/android/navigation" ]; then
   cp "$P"/android/navigation/*.xml "$A/res/navigation/"
 fi
 cp "$P"/android/drawable/*.xml "$A/res/drawable/"
+# xml/ держит сетевую политику: обычный http разрешён ТОЛЬКО для 127.0.0.1,
+# иначе «просмотр по частям» упирается в запрет cleartext на Android 9+.
+if [ -d "$P/android/xml" ]; then
+  mkdir -p "$A/res/xml"
+  cp "$P"/android/xml/*.xml "$A/res/xml/"
+  echo "  copied res/xml: $(ls "$P/android/xml" | tr '\n' ' ')"
+fi
 # Merge, never replace. A wholesale copy silently drops any upstream string the
 # fork's file predates: build #10 failed on "resource string/off not found"
 # because v0.2.1's arrays.xml references strings my master-derived copy lacked.

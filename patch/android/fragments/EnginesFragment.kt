@@ -26,6 +26,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.yuzu.yuzu_emu.utils.EngineDownloader
 import org.yuzu.yuzu_emu.utils.EngineHybrid
+import org.yuzu.yuzu_emu.utils.DeviceCompat
 import org.yuzu.yuzu_emu.utils.EngineLoader
 import org.yuzu.yuzu_emu.utils.EngineStore
 import org.yuzu.yuzu_emu.utils.KenjiProbeService
@@ -367,7 +368,15 @@ class EnginesFragment : Fragment() {
         val usable = state is EngineLoader.State.Builtin || state is EngineLoader.State.Ready
 
         if (usable && engine == EngineLoader.Engine.KENJI) {
-            buttons.addView(filledButton("Проверить", accent) { probe(engine) })
+            // Результат проверки показывается ВНУТРИ карточки, прямо под
+            // кнопкой.
+            //
+            // Раньше `probe()` добавлял строку состояния в самый низ экрана,
+            // а экран длиннее диагонали телефона: нажатие выглядело как
+            // «кнопка не работает» — человек оставался на карточке, а ответ
+            // появлялся за три экрана ниже. Теперь статус здесь и итог
+            // диалогом, который невозможно не заметить.
+            buttons.addView(filledButton("Проверить", accent) { probe(engine, body) })
         }
         if (state is EngineLoader.State.Missing || state is EngineLoader.State.Broken) {
             // Кнопка показывается ВСЕГДА.
@@ -715,36 +724,115 @@ class EnginesFragment : Fragment() {
      * runs in another process, an abort is reported here as a sentence instead
      * of closing the app.
      */
-    private fun probe(engine: EngineLoader.Engine) {
+    /**
+     * Проверить второе ядро.
+     *
+     * ЧТО ИСПРАВЛЕНО
+     *   Кнопка была, сервис изолированного процесса был, а выглядело это как
+     *   неработающая кнопка: ответ печатался в конец длинного экрана, кнопка
+     *   не блокировалась, а при упоре в таймаут на экране не менялось вообще
+     *   ничего. Человек нажимал второй раз, третий — и оставался без ответа.
+     *
+     *   Теперь: строка «проверяю» появляется ПОД кнопкой, через неё же видно
+     *   секунды, итог приходит диалогом с причиной и кнопкой «Скопировать»,
+     *   а флаг «идёт проверка» снимается в finally, чем бы дело ни кончилось.
+     *
+     * ЗАЧЕМ ПРЕ-ПРОВЕРКА
+     *   Часть отказов видна без запуска ядра: файла нет, он обрезан, ELF не
+     *   читается, выравнивание не то. Такие ответы мгновенные и точные, и
+     *   ждать 30 секунд изолированного процесса незачем. В изолированный
+     *   процесс идём только когда файл формально пригоден.
+     */
+    private fun probe(engine: EngineLoader.Engine, host: LinearLayout) {
         if (busy) return
         busy = true
+        val ctx = requireContext()
         val accent = SymbiosisTheme.sectionAccent("kenji")
-        val status = banner("Проверяю ядро в отдельном процессе…", accent)
-        root.addView(status)
 
-        KenjiProbeService.probe(requireContext()) { ok, message ->
+        val status = banner("Проверяю ядро в отдельном процессе…", accent)
+        host.addView(status)
+
+        val started = System.currentTimeMillis()
+        val ticker = android.os.Handler(android.os.Looper.getMainLooper())
+        val tick = object : Runnable {
+            override fun run() {
+                val sec = (System.currentTimeMillis() - started) / 1000
+                status.text = "Проверяю ядро в отдельном процессе… ${sec} с"
+                if (busy) ticker.postDelayed(this, 1000)
+            }
+        }
+        ticker.postDelayed(tick, 1000)
+
+        val finish = { ok: Boolean, message: String ->
             busy = false
+            ticker.removeCallbacks(tick)
             status.text = if (ok) "Ядро запускается: $message" else "Не запустилось: $message"
             status.setTextColor(if (ok) SymbiosisTheme.MINT else SymbiosisTheme.RED)
             status.background = rounded(
-                SymbiosisTheme.soft(if (ok) SymbiosisTheme.MINT else SymbiosisTheme.RED, 0.14f), 12
+                SymbiosisTheme.soft(if (ok) SymbiosisTheme.MINT else SymbiosisTheme.RED, 0.14f),
+                12
             )
+            showProbeReport(ctx, ok, message)
+        }
+
+        // --- что известно до запуска ------------------------------------
+        val verdict = runCatching { EngineLoader.verdict(ctx, engine) }.getOrNull()
+        val file = runCatching { EngineLoader.coreFile(ctx, engine) }.getOrNull()
+        val sizeMb = (file?.length() ?: 0L) / 1048576
+        if (file == null || !file.isFile) {
+            finish(false, "файла ядра нет — сначала нажмите «Скачать»")
+            return
+        }
+        if (verdict != null && !verdict.supported) {
+            finish(false, verdict.headline + ". " + verdict.advice)
+            return
+        }
+        if (sizeMb <= 0) {
+            finish(false, "файл ядра пустой — скачивание не состоялось")
+            return
+        }
+
+        runCatching {
+            KenjiProbeService.probe(ctx) { ok, message -> finish(ok, message) }
+        }.onFailure {
+            finish(false, "проверка не запустилась: ${it.message ?: it.javaClass.simpleName}")
         }
     }
 
-    private fun kenjiUsable(ctx: android.content.Context): Boolean {
-        val state = EngineLoader.state(ctx, EngineLoader.Engine.KENJI)
-        return state is EngineLoader.State.Ready || state is EngineLoader.State.Builtin
-    }
+    /**
+     * Итог проверки диалогом.
+     *
+     * Строка в карточке — чтобы видеть, что кнопка сработала, а диалог —
+     * чтобы ответ нельзя было пропустить: результат читают один раз, и
+     * пересказывать его в чат поддержки будут копированием отсюда.
+     */
+    private fun showProbeReport(ctx: android.content.Context, ok: Boolean, message: String) {
+        val facts = runCatching { DeviceCompat.describe(EngineLoader.device()) }.getOrDefault(emptyList())
+        val text = buildString {
+            append(if (ok) "Ядро запускается." else "Ядро не запустилось.")
+            append("\n\n")
+            append(message)
+            if (facts.isNotEmpty()) {
+                append("\n\nУстройство:\n")
+                facts.forEach { append("• ").append(it).append('\n') }
+            }
+            val align = runCatching { EngineLoader.coreAlign(ctx, EngineLoader.Engine.KENJI) }.getOrNull()
+            if (align != null) {
+                append("\nЯдро: выравнивание ").append(align / 1024).append(" КБ")
+            }
+        }.trim()
 
-    // ── мелкие кирпичи ─────────────────────────────────────────────────
-
-    private fun sectionTitle(text: String, accent: Int) = TextView(requireContext()).apply {
-        this.text = text
-        textSize = 19f
-        setTypeface(typeface, Typeface.BOLD)
-        setTextColor(accent)
-        setPadding(0, dp(14), 0, dp(6))
+        if (!isAdded) return
+        com.google.android.material.dialog.MaterialAlertDialogBuilder(ctx)
+            .setTitle(if (ok) "Проверка ядра" else "Почему не запустилось")
+            .setMessage(text)
+            .setPositiveButton("Закрыть", null)
+            .setNeutralButton("Скопировать") { _, _ ->
+                val clipboard = ctx.getSystemService(android.content.Context.CLIPBOARD_SERVICE)
+                    as android.content.ClipboardManager
+                clipboard.setPrimaryClip(android.content.ClipData.newPlainText("Проверка ядра", text))
+            }
+            .show()
     }
 
     /** Плашка-сообщение: используется и для прогресса, и для итога. */
