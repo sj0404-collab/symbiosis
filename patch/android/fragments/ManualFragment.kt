@@ -22,6 +22,7 @@ import com.google.android.material.snackbar.Snackbar
 import com.google.android.material.transition.MaterialSharedAxis
 import org.yuzu.yuzu_emu.R
 import org.yuzu.yuzu_emu.databinding.FragmentManualBinding
+import org.yuzu.yuzu_emu.utils.Converter
 import org.yuzu.yuzu_emu.utils.ConverterPicker
 import org.yuzu.yuzu_emu.utils.Manual
 import org.yuzu.yuzu_emu.utils.SymbiosisTheme
@@ -50,7 +51,12 @@ class ManualFragment : Fragment() {
 
         converter = ConverterPicker(
             fragment = this,
-            onQueued = { count -> snack(getString(R.string.launcher_convert_queued, count)) },
+            onQueued = { count ->
+                snack(
+                    getString(R.string.launcher_convert_queued, count) + "\n" +
+                        getString(R.string.converter_where, Converter.whereText())
+                )
+            },
             onFailed = { snack(getString(R.string.launcher_convert_failed)) }
         )
     }

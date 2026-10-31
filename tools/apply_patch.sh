@@ -418,6 +418,38 @@ print(f"gradle tuned for {'a large' if big else 'a small'} machine: "
       f"{total_kb // 1024} MB RAM, {cores} cores")
 PYTUNE
 
+# Служба конвертера: распаковка должна переживать уход с экрана и показывать
+# прогресс в шторке. Без объявления в манифесте startForegroundService падает
+# с «Service not declared», поэтому добавление здесь, а не «когда-нибудь».
+python3 - "$MANIFEST" <<'PYCONV'
+import sys
+path = sys.argv[1]
+text = open(path, encoding='utf-8').read()
+if 'ConverterService' in text:
+    print('  manifest already declares the converter service')
+    raise SystemExit(0)
+if 'FOREGROUND_SERVICE_SPECIAL_USE' not in text:
+    permission = '    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />\n'
+    if '<uses-permission' in text:
+        i = text.index('<uses-permission')
+        text = text[:i] + permission + text[i:]
+service = """
+        <!-- Распаковка NSZ/XCZ/NCZ: своя служба, потому что работа длится
+             дольше экрана и должна быть видна в шторке. -->
+        <service
+            android:name="org.yuzu.yuzu_emu.utils.ConverterService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse" />
+"""
+marker = '</application>'
+if marker not in text:
+    print('  ::warning:: no </application>; converter service not added')
+    raise SystemExit(0)
+text = text.replace(marker, service + '    ' + marker, 1)
+open(path, 'w', encoding='utf-8').write(text)
+print('  declared ConverterService (specialUse)')
+PYCONV
+
 changed=$(git status --porcelain | wc -l)
 echo "PATCH_APPLIED files=$changed"
 if [ "$changed" -lt 80 ]; then

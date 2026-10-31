@@ -275,7 +275,9 @@ jobs:
             for sym in restoreGameDirs rememberGameDirs hasActionableButton \
                        NativeLauncherFragment ManualFragment NativeLibraryPresenter \
                        EnginesFragment EngineHybrid EngineStore \
-                       PluginsFragment PluginEngine PluginStore; do
+                       PluginsFragment PluginEngine PluginStore \
+                       GameFoldersStore GameFolderList ConverterService \
+                       Converter ExitTrace; do
               if strings classes*.dex | grep -q "$sym"; then echo "  ok   $sym in dex"
               else echo "  MISSING $sym"; fail=1; fi
             done
@@ -292,7 +294,8 @@ jobs:
           z = zipfile.ZipFile(sys.argv[1])
           arsc = z.read("resources.arsc")
           for key in ("engine_choice", "launcher_core_kenji", "launcher_properties",
-                      "plugins_title", "plugins_description"):
+                      "plugins_title", "plugins_description",
+                      "converter_title", "folders_add"):
               if key.encode() in arsc or key.encode("utf-16-le") in arsc:
                   print("  ok   string %s is in the resource table" % key)
               else:

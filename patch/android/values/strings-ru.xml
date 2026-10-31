@@ -1500,4 +1500,28 @@
     <string name="launcher_core_kenji_broken">Второе ядро непригодно (%1$s) — запускаю на Eden</string>
     <string name="launcher_core_kenji_failed">Второе ядро не открылось — запускаю на Eden</string>
 
+
+    <!-- Папки с играми: добавление и удаление прямо с экрана -->
+    <string name="folders_add">Добавить папку</string>
+    <string name="folder_add_hint">Выберите глубину обхода — от неё зависит, увидит ли библиотека игры в подпапках.</string>
+    <string name="folder_add_failed">Не удалось открыть выбор папки</string>
+    <string name="folder_no_access_hint">К папке нет доступа. Выберите её снова — разрешение выдаётся заново.</string>
+    <string name="folder_rescan">Пересканировать</string>
+    <string name="folder_remove">Убрать из списка</string>
+    <string name="folder_remove_confirm">Игры останутся на месте — из списка приложения убирается только папка. Вернуть её можно кнопкой «Добавить папку».</string>
+    <string name="folder_remove_failed">Не удалось убрать папку</string>
+
+    <!-- Конвертер: уведомление, прогресс и место результата -->
+    <string name="converter_title">Распаковка</string>
+    <string name="converter_starting">подготовка…</string>
+    <string name="converter_stop">Остановить</string>
+    <string name="converter_stopped">Распаковка остановлена</string>
+    <string name="converter_done">Готово: %1$d</string>
+    <string name="converter_done_with_problems">Распаковка закончилась без результата</string>
+    <string name="converter_done_where">Файлы здесь: %1$s</string>
+    <string name="converter_channel_name">Распаковка игр</string>
+    <string name="converter_channel_description">Ход распаковки NSZ, XCZ и NCZ</string>
+    <string name="converter_where">Файлы попадают в %1$s</string>
+    <string name="converter_export">Сохранить в «Загрузки»</string>
+    <string name="exit_trace_title">Последние шаги перед выходом</string>
 </resources>

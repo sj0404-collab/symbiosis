@@ -92,6 +92,7 @@ import org.yuzu.yuzu_emu.utils.GameHelper
 import org.yuzu.yuzu_emu.utils.GameIconUtils
 import org.yuzu.yuzu_emu.utils.GpuDriverHelper
 import org.yuzu.yuzu_emu.utils.InputHandler
+import org.yuzu.yuzu_emu.utils.ExitTrace
 import org.yuzu.yuzu_emu.utils.Log
 import org.yuzu.yuzu_emu.utils.NativeConfig
 import org.yuzu.yuzu_emu.utils.NativeFreedrenoConfig
@@ -2260,6 +2261,10 @@ class EmulationFragment : Fragment(), SurfaceHolder.Callback {
 
         @Synchronized
         fun stop() {
+            // Метка до и после остановки: сбой между ними — это разрушение
+            // эмуляции, сбой после — уже возврат в библиотеку. Без двух
+            // меток оба случая выглядят одинаково.
+            ExitTrace.mark("остановка эмуляции")
             runCatching {
                 if (state == State.RUNNING) {
                     NativeLibrary.pauseEmulation()
@@ -2267,6 +2272,7 @@ class EmulationFragment : Fragment(), SurfaceHolder.Callback {
                 NativeLibrary.stopEmulation()
             }
             state = State.STOPPED
+            ExitTrace.mark("эмуляция остановлена")
         }
 
         @Synchronized

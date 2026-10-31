@@ -24,6 +24,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.yuzu.yuzu_emu.R
 import org.yuzu.yuzu_emu.databinding.FragmentDiagnosticsBinding
+import org.yuzu.yuzu_emu.utils.ExitTrace
 import org.yuzu.yuzu_emu.utils.NativeSymbiosis
 import org.yuzu.yuzu_emu.utils.SymbiosisStrings
 
@@ -129,6 +130,17 @@ class DiagnosticsFragment : Fragment() {
             runCatching { NativeSymbiosis.clearSafeMode() }
             binding.cardSafeMode.isVisible = false
             Snackbar.make(binding.root, R.string.safe_mode_cleared, Snackbar.LENGTH_LONG).show()
+        }
+
+        // След последних действий показывается сразу при открытии, если он
+        // есть: «краш при выходе из игры» без него — это симптом без адреса.
+        runCatching {
+            val trace = ExitTrace.report()
+            if (trace.isNotBlank() && _binding != null) {
+                lastReport = trace
+                binding.textReport.text = getString(R.string.exit_trace_title) + "\n\n" + trace
+                binding.cardReport.isVisible = true
+            }
         }
 
         setInsets()

@@ -126,6 +126,9 @@ if command -v kotlinc >/dev/null 2>&1; then
       # Палитра: цвет игры, читаемость текста, монограммы. Чистые функции —
       # поэтому проверяются без Android.
       SymbiosisThemeTest) echo "$HERE/patch/android/utils/SymbiosisTheme.kt" ;;
+      # Список папок с играми: после сбоя у пользователя осталась одна папка
+      # из четырёх. Правила восстановления проверяются без телефона.
+      GameFolderListTest) echo "$HERE/patch/android/utils/GameFolderList.kt" ;;
       # Плагины: разбор JSON, проверка правил, порядок применения и пометки на
       # плитках. Чистый Kotlin, поэтому проверяется целиком на хосте.
       PluginEngineTest) echo "$HERE/patch/android/utils/PluginJson.kt \

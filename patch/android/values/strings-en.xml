@@ -2167,4 +2167,28 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
     <string name="launcher_core_kenji_broken">The second core is unusable (%1$s) - starting on Eden</string>
     <string name="launcher_core_kenji_failed">The second core did not open - starting on Eden</string>
 
+
+    <!-- Game folders: add and remove on the same screen -->
+    <string name="folders_add">Add folder</string>
+    <string name="folder_add_hint">Choose the scan depth — it decides whether the library sees games in subfolders.</string>
+    <string name="folder_add_failed">Could not open the folder picker</string>
+    <string name="folder_no_access_hint">This folder is not accessible. Pick it again to grant access.</string>
+    <string name="folder_rescan">Rescan</string>
+    <string name="folder_remove">Remove from list</string>
+    <string name="folder_remove_confirm">The games stay where they are — only the folder is removed from the app. Add it back with the “Add folder” button.</string>
+    <string name="folder_remove_failed">Could not remove the folder</string>
+
+    <!-- Converter: notification, progress and where results go -->
+    <string name="converter_title">Unpacking</string>
+    <string name="converter_starting">preparing…</string>
+    <string name="converter_stop">Stop</string>
+    <string name="converter_stopped">Unpacking stopped</string>
+    <string name="converter_done">Done: %1$d</string>
+    <string name="converter_done_with_problems">Unpacking finished without a result</string>
+    <string name="converter_done_where">Files are here: %1$s</string>
+    <string name="converter_channel_name">Game unpacking</string>
+    <string name="converter_channel_description">Progress of NSZ, XCZ and NCZ unpacking</string>
+    <string name="converter_where">Files go to %1$s</string>
+    <string name="converter_export">Save to Downloads</string>
+    <string name="exit_trace_title">Last steps before exit</string>
 </resources>

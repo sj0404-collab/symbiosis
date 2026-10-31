@@ -98,9 +98,27 @@ object LivePanel {
     fun rememberedGames(): List<Game> =
         runCatching { GameHelper.rememberedGames() }.getOrDefault(emptyList())
 
+    /**
+     * Игры для панели.
+     *
+     * Раньше брались только из кэша настроек, и панель могла показывать
+     * меньше игр, чем нативный лаунчер: кэш пишется после полного обхода и
+     * бывает неполным (обход прерван, ключи появились позже, папку добавили
+     * только что). Лаунчер при этом читает живой список. Два разных ответа
+     * на вопрос «сколько у меня игр» — это и есть «там видит не всё».
+     *
+     * Теперь порядок один: живой обход, а кэш — запасной вариант, когда
+     * обхода ещё не было или он не удался.
+     */
+    private fun panelGames(): List<Game> {
+        val live = runCatching { GameHelper.currentGames() }.getOrNull()
+        if (!live.isNullOrEmpty()) return live
+        return rememberedGames()
+    }
+
     fun gamesJson(): String {
         val arr = JSONArray()
-        rememberedGames().forEach { g ->
+        panelGames().forEach { g ->
             val idx = runCatching { LibraryIndex.classify(g.path) }.getOrNull()
             val probe = saveProbe(g)
             val addons = runCatching { GameAddons.visibleFor(g) }.getOrDefault(emptyList())

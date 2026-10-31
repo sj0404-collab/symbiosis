@@ -52,6 +52,30 @@ Pull to refresh, because the contents are read live rather than cached.
                 app:layout_constraintStart_toStartOf="parent"
                 app:layout_constraintTop_toTopOf="parent" />
 
+            <!--
+                Добавление папки живёт здесь же, а не только в расширенной
+                панели. Экран называется «Папки с играми»; если добавить
+                папку с него нельзя, экран отвечает на вопрос «что есть»,
+                но не на вопрос «как добавить» — и за этим приходилось
+                уходить в другое место, о котором надо знать.
+            -->
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/button_add_folder"
+                style="@style/Widget.Material3.Button.TonalButton"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="20dp"
+                android:layout_marginTop="4dp"
+                android:layout_marginBottom="8dp"
+                android:text="@string/folders_add"
+                app:icon="@drawable/ic_add"
+                app:iconGravity="textStart"
+                app:layout_constraintBottom_toTopOf="@+id/list_folders"
+                app:layout_constraintEnd_toEndOf="parent"
+                app:layout_constraintHorizontal_bias="0.0"
+                app:layout_constraintStart_toStartOf="parent"
+                app:layout_constraintTop_toBottomOf="@+id/text_folders_summary" />
+
             <androidx.recyclerview.widget.RecyclerView
                 android:id="@+id/list_folders"
                 android:layout_width="0dp"
@@ -63,7 +87,7 @@ Pull to refresh, because the contents are read live rather than cached.
                 app:layout_constraintBottom_toBottomOf="parent"
                 app:layout_constraintEnd_toEndOf="parent"
                 app:layout_constraintStart_toStartOf="parent"
-                app:layout_constraintTop_toBottomOf="@+id/text_folders_summary" />
+                app:layout_constraintTop_toBottomOf="@+id/button_add_folder" />
 
             <com.google.android.material.textview.MaterialTextView
                 android:id="@+id/text_no_folders"

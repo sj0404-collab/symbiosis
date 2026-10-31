@@ -28,10 +28,12 @@ import org.yuzu.yuzu_emu.adapters.LauncherTileAdapter
 import org.yuzu.yuzu_emu.databinding.FragmentNativeLauncherBinding
 import org.yuzu.yuzu_emu.model.Game
 import org.yuzu.yuzu_emu.model.GamesViewModel
+import org.yuzu.yuzu_emu.utils.Converter
 import org.yuzu.yuzu_emu.utils.ConverterPicker
 import org.yuzu.yuzu_emu.utils.EngineHybrid
 import org.yuzu.yuzu_emu.utils.EngineLoader
 import org.yuzu.yuzu_emu.utils.EngineStore
+import org.yuzu.yuzu_emu.utils.ExitTrace
 import org.yuzu.yuzu_emu.utils.GameHelper
 import org.yuzu.yuzu_emu.utils.NativeLibraryPresenter
 import org.yuzu.yuzu_emu.utils.PluginEngine
@@ -96,7 +98,8 @@ class NativeLauncherFragment : Fragment() {
                 if (_binding != null) {
                     Snackbar.make(
                         binding.root,
-                        getString(R.string.launcher_convert_queued, count),
+                        getString(R.string.launcher_convert_queued, count) + "\n" +
+                            getString(R.string.converter_where, Converter.whereText()),
                         Snackbar.LENGTH_LONG
                     ).show()
                 }
@@ -426,6 +429,9 @@ class NativeLauncherFragment : Fragment() {
      */
     private fun launchOn(game: Game, requested: EngineHybrid.Core) {
         val appCtx = requireContext().applicationContext
+        // След для диагностики: если после этой метки приложение умрёт, в
+        // «Диагностике» будет видно, на каком именно запуске это случилось.
+        ExitTrace.mark("запуск: ${game.title}")
 
         // Плагин может переопределить ядро — например, оставить игру на Eden,
         // если она на втором ядре падает. Это решение не молчаливое: если

@@ -117,6 +117,16 @@ object GameHelper {
      * turning into a full scan. Returns an empty list only when there has
      * never been a successful one.
      */
+    /**
+     * Игры из последнего обхода этого запуска.
+     *
+     * Отличается от [rememberedGames] тем, что не возвращает кэш из
+     * настроек: если обхода ещё не было, ответ пустой, и вызывающий сам
+     * решает, чем его заменить. Нужен панели, чтобы она показывала тот же
+     * список, что и нативный лаунчер, а не устаревшую копию.
+     */
+    fun currentGames(): List<Game> = if (hasScanned) cachedGameList.toList() else emptyList()
+
     fun rememberedGames(): List<Game> {
         val live = runCatching { cachedGameList }.getOrDefault(emptyList())
         if (live.isNotEmpty()) return live
@@ -164,15 +174,27 @@ object GameHelper {
         }
         gameDirs.addAll(NativeConfig.getGameDirs())
 
-        // Слои: родитель + его ребёнок в одном списке. Оставляем только
-        // более узкую папку, иначе обход идёт по одному дереву дважды и
-        // заходит в nand/load/cache корня данных.
-        val collapsed = GameFolderScanner.collapseLayers(gameDirs.map { it.uriString }).toSet()
-        if (collapsed.size != gameDirs.size) {
-            val kept = gameDirs.filter { it.uriString in collapsed }
-            gameDirs.clear()
-            gameDirs.addAll(kept)
-            runCatching { NativeConfig.setGameDirs(gameDirs.toTypedArray()) }
+        // Папки, которые пропали из конфига, возвращаются из зеркала.
+        //
+        // Здесь раньше стояло схлопывание «слоёв»: если одна папка была
+        // вложена в другую, родительская удалялась из конфига. Для списка
+        // папок это необратимо и неверно: игры, лежавшие в корне родителя,
+        // оставались без папки, а пользователь видел, что «папки сами
+        // почистились». Вложенность теперь учитывается только на время
+        // обхода (GameFolderList.coveredByParent), конфиг не переписывается.
+        //
+        // Второй источник потерь — недописанный конфиг после сбоя: на диске
+        // остаётся одна первая папка. Зеркало (GameFoldersStore) хранит их
+        // отдельно и здесь же возвращает недостающие.
+        runCatching {
+            val known = gameDirs.map { GameFolderList.Entry(it.uriString, it.deepScan) }
+            val lost = GameFoldersStore.missing(known)
+            if (lost.isNotEmpty()) {
+                lost.forEach { gameDirs.add(GameDir(it.uri, it.deepScan)) }
+                NativeConfig.setGameDirs(gameDirs.toTypedArray())
+                GameFoldersStore.save(gameDirs.map { GameFolderList.Entry(it.uriString, it.deepScan) })
+                Log.info("[Folders] возвращено из зеркала: ${lost.size}")
+            }
         }
 
         // Без ключей заголовок ROM не расшифруется: getIsValid врёт или
@@ -240,19 +262,34 @@ object GameHelper {
             }
         }
 
-        // Remove all game dirs with insufficient permissions from config
-        if (badDirs.isNotEmpty()) {
-            var offset = 0
-            badDirs.forEach {
-                gameDirs.removeAt(it - offset)
-                offset++
-            }
+        // Папки без доступа НЕ удаляются из конфига.
+        //
+        // Здесь стояло удаление: `gameDirs.removeAt(...)` и запись укороченного
+        // списка. Один обход при отозванном разрешении — и папка исчезала
+        // навсегда, вместе со всеми играми, которые в ней были. Разрешение
+        // отзывается не только пользователем: система делает это сама, если
+        // процесс упал, а приложение настроек «почистило» права. Именно так
+        // выглядит «после падения осталась одна папка» — и восстановить
+        // остальные без этого исправления нельзя даже вручную, потому что
+        // путь уже нигде не записан.
+        //
+        // Теперь папка остаётся в списке и помечается «нет доступа», а
+        // вернуть её можно одним нажатием на том же экране.
+        val blocked = badDirs.map { gameDirs[it].uriString }
+        GameFoldersStore.markNoAccess(blocked)
+        if (blocked.isNotEmpty()) {
+            Log.warning("[Folders] нет доступа: ${blocked.size} из ${gameDirs.size}")
         }
-        NativeConfig.setGameDirs(gameDirs.toTypedArray())
+        GameFoldersStore.keep(gameDirs.map { GameFolderList.Entry(it.uriString, it.deepScan) })
+
+        // Одна и та же игра может быть найдена дважды — если пользователь
+        // добавил и родительскую папку, и вложенную. Плитки-дубли появились
+        // бы ровно у тех, кто разложил игры по подпапкам. Отсекаем по пути.
+        val unique = games.distinctBy { it.path }
 
         // Cache list of games found on disk
         val serializedGames = mutableSetOf<String>()
-        games.forEach {
+        unique.forEach {
             serializedGames.add(Json.encodeToString(it))
         }
         preferences.edit() {
@@ -260,13 +297,13 @@ object GameHelper {
                 .putStringSet(KEY_GAMES, serializedGames)
         }
 
-        cachedGameList = games.toMutableList()
+        cachedGameList = unique.toMutableList()
         sidecar = side.toList()
         stats.folders = gameDirs.size
         stats.millis = System.currentTimeMillis() - startedAt
         scanStats = stats
         hasScanned = true
-        return games.toList()
+        return unique
     }
 
     fun restoreContentForGame(game: Game) {
