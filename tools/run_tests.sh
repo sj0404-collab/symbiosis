@@ -104,10 +104,35 @@ done
 
 # Kotlin tests, when a compiler is available.
 if command -v kotlinc >/dev/null 2>&1; then
+  # Sources a Kotlin test compiles against, beyond itself.
+  #
+  # A test that calls real code cannot be built from its own file alone, and
+  # the loop below compiles exactly one file. `LibraryIndexTest` imports
+  # `LibraryIndex`, both plain Kotlin with no Android imports, so the pair
+  # compiles with a bare kotlinc. Anything needing the Android framework is
+  # still modelled, not imported.
+  kt_deps_for() {
+    case "$1" in
+      LibraryIndexTest) echo "$HERE/patch/android/utils/LibraryIndex.kt" ;;
+      *)                echo "" ;;
+    esac
+  }
+
   for f in "$HERE"/tests/*.kt; do
     [ -e "$f" ] || continue
     n=$(basename "$f" .kt)
-    kotlinc "$f" -include-runtime -d "$BUILD/$n.jar" 2>/dev/null
+    # shellcheck disable=SC2046
+    if ! kotlinc "$f" $(kt_deps_for "$n") -include-runtime -d "$BUILD/$n.jar" \
+          > "$BUILD/$n.kerr" 2>&1; then
+      # A test that does not build used to be reported as "FAIL" with the
+      # reason thrown away (2>/dev/null), which then surfaced as the useless
+      # "Unable to access jarfile". Say what the compiler said instead.
+      why=$(grep -m1 -E "^.*error:" "$BUILD/$n.kerr" | head -1)
+      echo "  FAIL  $n — does not build"
+      echo "        ${why:-no compiler output}"
+      fail=$((fail+1)); failed="$failed $n"
+      continue
+    fi
     # Run from the repository root. A test that reads its own subject - as
     # PanelAssetsTest does, checking docs/ and the shell source against the
     # copy of the routing logic it asserts - resolves those paths relative to
