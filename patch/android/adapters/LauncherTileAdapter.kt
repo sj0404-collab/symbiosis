@@ -51,6 +51,11 @@ class LauncherTileAdapter(
         holder.badge.text = item.badge
         holder.badge.isVisible = item.badge.isNotBlank()
 
+        // Каким ядром пойдёт игра. У Eden пометки нет: он по умолчанию,
+        // и вторая метка на каждой плитке была бы шумом.
+        holder.core.text = item.core
+        holder.core.isVisible = item.core.isNotBlank()
+
         holder.note.text = item.note
         holder.note.isVisible = item.note.isNotBlank()
         // Красный только там, где человек ничего не исправит настройками:
@@ -94,6 +99,7 @@ class LauncherTileAdapter(
         val title: TextView = view.findViewById(R.id.text_tile_title)
         val subtitle: TextView = view.findViewById(R.id.text_tile_subtitle)
         val badge: TextView = view.findViewById(R.id.chip_tile_badge)
+        val core: TextView = view.findViewById(R.id.chip_tile_core)
         val note: TextView = view.findViewById(R.id.text_tile_note)
     }
 }

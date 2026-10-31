@@ -65,6 +65,18 @@ class ToolsFragment : Fragment() {
         // the launch report and FPS tuning are what a struggling device calls
         // for, and burying them under the ROM tools helps nobody.
         val tools = mutableListOf<HomeSetting>().apply {
+            // Два ядра — первым: это не «ещё одна настройка», а второе ядро
+            // эмулятора. Раньше этот экран был доступен только со старого
+            // домашнего экрана, то есть после перевода библиотеки на нативную
+            // вёрстку до него было не добраться.
+            add(
+                HomeSetting(
+                    R.string.engine_choice,
+                    R.string.engine_choice_description,
+                    R.drawable.ic_verified,
+                    { nav(R.id.action_global_enginesFragment) }
+                )
+            )
             add(
                 HomeSetting(
                     R.string.fps_tuning,

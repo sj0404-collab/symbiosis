@@ -156,6 +156,20 @@ fun main() {
     val split = NativeLibraryPresenter.explain("split", "Big", "часть разрезанного образа")
     check("диалог части про целый файл", split.second.contains("целый файл"), split.second)
 
+    // ── два ядра: пометка на плитке и счёт в сводке ─────────────────────
+    val hybrid = NativeLibraryPresenter.build(
+        games = games.mapIndexed { i, row -> if (i == 0) row.copy(core = "kenji") else row },
+        side = side
+    )
+    eq("ядро видно на плитке", hybrid.items[0].core, "kenji")
+    eq("у остальных игр пометки нет", hybrid.items[1].core, "")
+    check("сводка считает игры на втором ядре", hybrid.summary.contains("1 на Kenji-NX"), hybrid.summary)
+    eq(
+        "без второго ядра счёт не появляется",
+        NativeLibraryPresenter.build(games, side).summary.contains("Kenji-NX"),
+        false
+    )
+
     // ── связь с правилом «что такое игра» ───────────────────────────────
     val real = LibraryIndex.classify("Hollow Knight [0100633007D48000][v0].nsz")
     eq("NSZ остаётся сжатым", real.kind, LibraryIndex.Kind.COMPRESSED)

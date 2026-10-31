@@ -42,7 +42,15 @@ object NativeLibraryPresenter {
         val developer: String = "",
         val fileName: String = "",
         val hasSave: Boolean = false,
-        val saveSize: String = ""
+        val saveSize: String = "",
+        /**
+         * Ядро, которым запустится игра: `kenji` или пусто (Eden).
+         *
+         * Библиотека одна, ядер два. Пометка нужна, чтобы выбор был виден
+         * до нажатия: иначе «я переключил ядро» и «эта игра всё равно
+         * запустилась не тем» выглядят одинаково.
+         */
+        val core: String = ""
     )
 
     /** Файл, который виден, но не запускается. */
@@ -67,6 +75,8 @@ object NativeLibraryPresenter {
         val path: String,
         val action: Action,
         val runnable: Boolean,
+        /** `kenji`, если игра пойдёт на втором ядре; пусто для Eden. */
+        val core: String = "",
         /** Индекс в исходном списке игр, -1 для файлов из [Side]. */
         val gameIndex: Int = -1
     )
@@ -114,6 +124,7 @@ object NativeLibraryPresenter {
                 path = row.path,
                 action = Action.LAUNCH,
                 runnable = true,
+                core = row.core,
                 gameIndex = index
             )
         }
@@ -149,9 +160,11 @@ object NativeLibraryPresenter {
         val split = side.count { it.kind == "split" }
         val gamesCount = games.size
 
+        val onKenji = games.count { it.core == "kenji" }
+
         return Model(
             items = all,
-            summary = summaryLine(gamesCount, updates, dlc, compressed, unreadable + split),
+            summary = summaryLine(gamesCount, updates, dlc, compressed, unreadable + split, onKenji),
             emptyReason = emptyReason(gamesCount, compressed, unreadable + split, games.size + side.size),
             games = gamesCount,
             updates = updates,
@@ -203,9 +216,20 @@ object NativeLibraryPresenter {
      * Считает слова правильно: «1 игра», «2 игры», «5 игр». Раньше панель
      * писала «1 сжатых» и «3 файлов», и это читалось как ошибка.
      */
-    fun summaryLine(games: Int, updates: Int, dlc: Int, compressed: Int, broken: Int): String {
+    fun summaryLine(
+        games: Int,
+        updates: Int,
+        dlc: Int,
+        compressed: Int,
+        broken: Int,
+        onSecondCore: Int = 0
+    ): String {
         val parts = mutableListOf<String>()
         parts.add("$games ${plural(games, "игра", "игры", "игр")}")
+        if (onSecondCore > 0) {
+            // Сколько игр уйдёт на второе ядро — до нажатия, а не после.
+            parts.add("$onSecondCore ${plural(onSecondCore, "на Kenji-NX", "на Kenji-NX", "на Kenji-NX")}")
+        }
         if (updates > 0) parts.add("$updates ${plural(updates, "обновление", "обновления", "обновлений")}")
         if (dlc > 0) parts.add("$dlc DLC")
         if (compressed > 0) {

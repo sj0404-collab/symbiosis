@@ -19,6 +19,7 @@ import androidx.fragment.app.activityViewModels
 import androidx.navigation.fragment.findNavController
 import androidx.recyclerview.widget.LinearLayoutManager
 import com.google.android.material.chip.Chip
+import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import com.google.android.material.snackbar.Snackbar
 import com.google.android.material.transition.MaterialSharedAxis
 import org.yuzu.yuzu_emu.HomeNavigationDirections
@@ -28,6 +29,9 @@ import org.yuzu.yuzu_emu.databinding.FragmentNativeLauncherBinding
 import org.yuzu.yuzu_emu.model.Game
 import org.yuzu.yuzu_emu.model.GamesViewModel
 import org.yuzu.yuzu_emu.utils.ConverterPicker
+import org.yuzu.yuzu_emu.utils.EngineHybrid
+import org.yuzu.yuzu_emu.utils.EngineLoader
+import org.yuzu.yuzu_emu.utils.EngineStore
 import org.yuzu.yuzu_emu.utils.GameHelper
 import org.yuzu.yuzu_emu.utils.NativeLibraryPresenter
 import org.yuzu.yuzu_emu.utils.collect
@@ -200,13 +204,17 @@ class NativeLauncherFragment : Fragment() {
     private fun render() {
         if (_binding == null) return
 
+        val ctx = requireContext().applicationContext
         val rows = games.map { game ->
+            val core = runCatching { EngineStore.coreFor(ctx, game.path) }
+                .getOrDefault(EngineHybrid.Core.EDEN)
             NativeLibraryPresenter.Row(
                 title = game.title,
                 path = game.path,
                 titleId = runCatching { game.programIdHex }.getOrDefault(""),
                 developer = game.developer,
-                fileName = fileNameOf(game.path)
+                fileName = fileNameOf(game.path),
+                core = if (core == EngineHybrid.Core.KENJI) core.short else ""
             )
         }
 
@@ -247,7 +255,10 @@ class NativeLauncherFragment : Fragment() {
         when (item.action) {
             NativeLibraryPresenter.Action.LAUNCH -> {
                 val game = games.getOrNull(item.gameIndex) ?: return
-                navigateToGame(game)
+                val ctx = requireContext().applicationContext
+                val core = runCatching { EngineStore.coreFor(ctx, game.path) }
+                    .getOrDefault(EngineHybrid.Core.EDEN)
+                launchOn(game, core)
             }
             NativeLibraryPresenter.Action.CONVERT -> askConvert(item)
             NativeLibraryPresenter.Action.KEYS -> explainUnreadable(item)
@@ -255,8 +266,49 @@ class NativeLauncherFragment : Fragment() {
         }
     }
 
+    /**
+     * Долгое нажатие: каким ядром играть.
+     *
+     * Выбор запоминается за игрой, а не за приложением: одна библиотека
+     * ходит на двух ядрах, и переключение одной игры не трогает остальные.
+     */
     private fun onItemLongClick(item: NativeLibraryPresenter.Item) {
         val game = games.getOrNull(item.gameIndex) ?: return
+        val ctx = requireContext().applicationContext
+        val current = runCatching { EngineStore.coreFor(ctx, game.path) }
+            .getOrDefault(EngineHybrid.Core.EDEN)
+        val options = arrayOf(
+            getString(R.string.launcher_core_eden),
+            getString(R.string.launcher_core_kenji),
+            getString(R.string.launcher_properties)
+        )
+        MaterialAlertDialogBuilder(requireContext())
+            .setTitle(game.title)
+            .setItems(options) { _, which ->
+                when (which) {
+                    0 -> runOnCore(game, EngineHybrid.Core.EDEN)
+                    1 -> runOnCore(game, EngineHybrid.Core.KENJI)
+                    else -> openProperties(game)
+                }
+            }
+            .setMessage(
+                getString(
+                    R.string.launcher_core_now,
+                    if (current == EngineHybrid.Core.KENJI) "Kenji-NX" else "Eden"
+                )
+            )
+            .show()
+    }
+
+    /** Запомнить ядро за игрой и запустить её этим ядром. */
+    private fun runOnCore(game: Game, core: EngineHybrid.Core) {
+        val ctx = requireContext().applicationContext
+        runCatching { EngineStore.setCoreFor(ctx, game.path, core) }
+        render()
+        launchOn(game, core)
+    }
+
+    private fun openProperties(game: Game) {
         runCatching {
             findNavController().navigate(
                 HomeNavigationDirections.actionGlobalPerGamePropertiesFragment(game)
@@ -265,6 +317,43 @@ class NativeLauncherFragment : Fragment() {
             Snackbar.make(binding.root, R.string.launcher_properties_failed, Snackbar.LENGTH_LONG)
                 .show()
         }
+    }
+
+    /**
+     * Запуск выбранным ядром.
+     *
+     * Если второе ядро не скачано или не прошло проверку, игра всё равно
+     * запускается — на Eden, с честным сообщением. Молча ничего не
+     * открывать хуже, чем открыть и сказать, почему не тем ядром.
+     */
+    private fun launchOn(game: Game, core: EngineHybrid.Core) {
+        if (core == EngineHybrid.Core.EDEN) {
+            navigateToGame(game)
+            return
+        }
+        val ctx = requireContext().applicationContext
+        val state = runCatching { EngineLoader.state(ctx, EngineLoader.Engine.KENJI) }.getOrNull()
+        val usable = state is EngineLoader.State.Ready || state is EngineLoader.State.Builtin
+        if (usable) {
+            val started = runCatching {
+                startActivity(
+                    org.yuzu.yuzu_emu.activities.KenjiPlayerActivity.intent(
+                        requireContext(),
+                        game.path,
+                        game.title,
+                        runCatching { EngineStore.effectiveText(ctx) }.getOrDefault("")
+                    )
+                )
+            }.isSuccess
+            if (started) return
+        }
+        val why = when (state) {
+            is EngineLoader.State.Missing -> getString(R.string.launcher_core_kenji_missing)
+            is EngineLoader.State.Broken -> getString(R.string.launcher_core_kenji_broken, state.reason)
+            else -> getString(R.string.launcher_core_kenji_failed)
+        }
+        Snackbar.make(binding.root, why, Snackbar.LENGTH_LONG).show()
+        navigateToGame(game)
     }
 
     private fun navigate(destination: Int) {

@@ -712,7 +712,14 @@ class LivePanelFragment : Fragment() {
                     runCatching {
                         act.startActivity(
                             org.yuzu.yuzu_emu.activities.KenjiPlayerActivity.intent(
-                                act, game.path, game.title
+                                act,
+                                game.path,
+                                game.title,
+                                // Настройки считает этот процесс: :kenji не видит
+                                // наше хранилище, prefs между процессами не общие.
+                                runCatching {
+                                    org.yuzu.yuzu_emu.utils.EngineStore.effectiveText(act)
+                                }.getOrDefault("")
                             )
                         )
                     }.onFailure {

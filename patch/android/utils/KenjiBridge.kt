@@ -195,43 +195,79 @@ object KenjiBridge {
         }
     }
 
-    /** Prepare device + graphics. Surface and ROM come next. */
-    fun preparePlay(context: Context): Status {
+    /**
+     * Prepare device + graphics. Surface and ROM come next.
+     *
+     * ЗДЕСЬ БЫЛО ВПИСАНО ЧИСЛАМИ. Настройки второго ядра не влияли ни на что:
+     * `memoryManagerMode = 2`, `useNce = false`, `resScale = 1f` и остальные
+     * значения стояли прямо в коде, а экран ядер показывал переключатели,
+     * которые никуда не доезжали. Из-за этого «два ядра в одном» работали
+     * как два разных приложения: настроил масштаб у Eden — Kenji рисует по
+     * своему.
+     *
+     * Теперь аргументы приходят из [EngineStore.config]: свои значения
+     * второго ядра плюс всё, что не тронуто, взятое у Eden.
+     * `EngineHybrid.seed/merge` решает, что откуда, и это проверяется на
+     * хосте, а не на телефоне.
+     */
+    fun preparePlay(context: Context, effective: String = ""): Status {
         seedKeys(context)
         val started = start(context)
         if (!started.ok) return started
-        // Same knobs as official Kenji on this phone: 4 GiB, Host Unchecked,
-        // NCE off, PPTC on, integrity off.
+
+        // Настройки приходят строкой из главного процесса: SharedPreferences
+        // между процессами не синхронизируются, и :kenji увидел бы свою
+        // копию файла. Пустая строка — читаем локально (проверка ядра).
+        val cfg = if (effective.isBlank()) {
+            EngineStore.config(context)
+        } else {
+            EngineStore.configWith(context, EngineHybrid.decode(effective))
+        }
+
         nativeDeviceInit(
-            memoryManagerMode = 2,
-            useNce = false,
-            memoryConfiguration = 0,
-            systemLanguage = 1,
-            regionCode = 1,
-            vSyncMode = 0,
-            enableDockedMode = false,
-            enablePtc = true,
-            enableLowPowerPtc = false,
-            enableJitCacheEviction = false,
-            enableInternetAccess = false,
-            enableFsIntegrityChecks = false,
-            fsGlobalAccessLogMode = 0,
-            timeZone = "UTC",
-            ignoreMissingServices = false
+            memoryManagerMode = cfg.memoryManagerMode,
+            useNce = cfg.useNce,
+            memoryConfiguration = cfg.memoryConfiguration,
+            systemLanguage = cfg.systemLanguage,
+            regionCode = cfg.regionCode,
+            vSyncMode = cfg.vSyncMode,
+            enableDockedMode = cfg.enableDockedMode,
+            enablePtc = cfg.enablePtc,
+            enableLowPowerPtc = cfg.enableLowPowerPtc,
+            enableJitCacheEviction = cfg.enableJitCacheEviction,
+            enableInternetAccess = cfg.enableInternetAccess,
+            enableFsIntegrityChecks = cfg.enableFsIntegrityChecks,
+            fsGlobalAccessLogMode = cfg.fsGlobalAccessLogMode,
+            timeZone = cfg.timeZone,
+            ignoreMissingServices = cfg.ignoreMissingServices
         ).takeIf { it.isNotEmpty() }?.let { return Status(false, it, started.symbols) }
+
         nativeGraphicsInit(
-            resScale = 1f,
-            maxAnisotropy = 0f,
-            fastGpuTime = true,
-            fast2DCopy = true,
-            enableMacroJit = false,
-            enableMacroHLE = true,
-            enableShaderCache = true,
-            enableTextureRecompression = false,
-            backendThreading = 1
+            resScale = cfg.resScale,
+            maxAnisotropy = cfg.maxAnisotropy,
+            fastGpuTime = cfg.fastGpuTime,
+            fast2DCopy = cfg.fast2DCopy,
+            enableMacroJit = cfg.enableMacroJit,
+            enableMacroHLE = cfg.enableMacroHLE,
+            enableShaderCache = cfg.enableShaderCache,
+            enableTextureRecompression = cfg.enableTextureRecompression,
+            backendThreading = cfg.backendThreading
         ).takeIf { it.isNotEmpty() }?.let { return Status(false, it, started.symbols) }
-        return Status(true, "плеер второго ядра готов", started.symbols)
+
+        lastConfig = EngineHybrid.summary(cfg)
+        return Status(true, "плеер второго ядра готов · " + lastConfig, started.symbols)
     }
+
+    /**
+     * С какими настройками стартовал плеер.
+     *
+     * Показывается в статусе [org.yuzu.yuzu_emu.activities.KenjiPlayerActivity]
+     * и в отчёте: «ядро запустилось» без указания настроек ничего не
+     * доказывает, а именно их раньше и не было.
+     */
+    @Volatile
+    var lastConfig: String = ""
+        private set
 
     fun attachSurface(surface: android.view.Surface, width: Int, height: Int): Status {
         ensureBridge()?.let { return Status(false, it) }

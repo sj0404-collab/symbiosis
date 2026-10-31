@@ -120,6 +120,9 @@ if command -v kotlinc >/dev/null 2>&1; then
       NativeLibraryPresenterTest) echo "$HERE/patch/android/utils/LibraryIndex.kt \
         $HERE/patch/android/utils/NativeLibraryPresenter.kt \
         $HERE/patch/android/utils/Manual.kt" ;;
+      # The hybrid decides which Eden setting reaches the second core, and
+      # which stays its own. Plain Kotlin, so it compiles against the real file.
+      EngineHybridTest) echo "$HERE/patch/android/utils/EngineHybrid.kt" ;;
       *)                echo "" ;;
     esac
   }

@@ -65,6 +65,19 @@ something is wrong.
             </LinearLayout>
 
             <com.google.android.material.chip.Chip
+                android:id="@+id/chip_tile_core"
+                style="@style/Widget.Material3.Chip.Assist"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="8dp"
+                android:clickable="false"
+                android:focusable="false"
+                android:textAppearance="?attr/textAppearanceLabelSmall"
+                android:visibility="gone"
+                tools:text="kenji"
+                tools:visibility="visible" />
+
+            <com.google.android.material.chip.Chip
                 android:id="@+id/chip_tile_badge"
                 style="@style/Widget.Material3.Chip.Assist"
                 android:layout_width="wrap_content"

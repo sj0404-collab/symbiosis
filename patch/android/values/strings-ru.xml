@@ -1445,8 +1445,8 @@
     <string name="status_storage_manual">Откройте: Настройки → Приложения → Специальный доступ → Доступ ко всем файлам</string>
     <string name="folder_launch_failed">Не удалось открыть файл игры</string>
     <string name="folder_launch_unreadable">Файл не читается — проверь ключи и прошивку</string>
-    <string name="engine_choice">Движок эмуляции</string>
-    <string name="engine_choice_description">Eden или Kenji-NX. Игра, которая не идёт на одном, иногда идёт на другом.</string>
+    
+    
     <string name="live_panel">Панель</string>
     <string name="live_panel_description">Состояние, папки и файлы. Обновляется сама, без переустановки</string>
 
@@ -1484,5 +1484,16 @@
 
     <string name="live_panel_extended">Расширенная панель</string>
     <string name="live_panel_extended_description">Всё редкое в одном месте: пространства, выбор ядра, тонкие переключатели</string>
+
+    <!-- Гибрид: два ядра в одном -->
+    <string name="engine_choice">Два ядра (гибрид)</string>
+    <string name="engine_choice_description">Eden и Kenji-NX в одном приложении: у каждого свои настройки, ядро выбирается на игру</string>
+    <string name="launcher_core_eden">Запустить на Eden</string>
+    <string name="launcher_core_kenji">Запустить на Kenji-NX</string>
+    <string name="launcher_properties">Свойства игры</string>
+    <string name="launcher_core_now">Сейчас эта игра запускается на: %1$s. Выбор запомнится за ней.</string>
+    <string name="launcher_core_kenji_missing">Второе ядро не скачано — запускаю на Eden. Скачать: «Инструменты» → «Два ядра»</string>
+    <string name="launcher_core_kenji_broken">Второе ядро непригодно (%1$s) — запускаю на Eden</string>
+    <string name="launcher_core_kenji_failed">Второе ядро не открылось — запускаю на Eden</string>
 
 </resources>

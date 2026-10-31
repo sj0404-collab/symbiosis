@@ -2112,8 +2112,8 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
     <string name="status_storage_manual">Open Settings, Apps, Special app access, All files access</string>
     <string name="folder_launch_failed">Could not open the game file</string>
     <string name="folder_launch_unreadable">The file cannot be read - check keys and firmware</string>
-    <string name="engine_choice">Emulation engine</string>
-    <string name="engine_choice_description">Eden or Kenji-NX. A game that stalls on one sometimes runs on the other.</string>
+    
+    
     <string name="live_panel">Panel</string>
     <string name="live_panel_description">Status, folders and files. Updates itself, no reinstall</string>
 
@@ -2151,5 +2151,16 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
     <string name="live_panel_extended">Advanced panel</string>
     <string name="live_panel_extended_description">The rare things in one place: spaces, engine choice, fine-grained toggles</string>
+
+    <!-- Hybrid: two cores in one app -->
+    <string name="engine_choice">Two cores (hybrid)</string>
+    <string name="engine_choice_description">Eden and Kenji-NX in one app: each keeps its own settings, the core is chosen per game</string>
+    <string name="launcher_core_eden">Run on Eden</string>
+    <string name="launcher_core_kenji">Run on Kenji-NX</string>
+    <string name="launcher_properties">Game properties</string>
+    <string name="launcher_core_now">This game currently runs on: %1$s. The choice is remembered for it.</string>
+    <string name="launcher_core_kenji_missing">The second core is not downloaded - starting on Eden. Get it in Tools -> Two cores</string>
+    <string name="launcher_core_kenji_broken">The second core is unusable (%1$s) - starting on Eden</string>
+    <string name="launcher_core_kenji_failed">The second core did not open - starting on Eden</string>
 
 </resources>
