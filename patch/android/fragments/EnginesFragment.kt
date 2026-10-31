@@ -274,8 +274,13 @@ class EnginesFragment : Fragment() {
         box.addView(
             View(ctx).apply {
                 setBackgroundColor(accent)
+                // У LayoutParams нет marginVertical (это свойство появилось
+                // позже и не во всех версиях): верх и низ ставим отдельно.
                 layoutParams = LinearLayout.LayoutParams(dp(4), LinearLayout.LayoutParams.MATCH_PARENT)
-                    .apply { marginVertical = dp(12) }
+                    .apply {
+                        topMargin = dp(12)
+                        bottomMargin = dp(12)
+                    }
             }
         )
 
@@ -446,23 +451,35 @@ class EnginesFragment : Fragment() {
                 setTypeface(typeface, Typeface.BOLD)
                 setTextColor(if (fromEden) SymbiosisTheme.MINT else SymbiosisTheme.PINK)
                 setPadding(dp(8), 0, 0, 0)
+                // Значение вроде «выкл · Dynarmic» не должно выдавливать
+                // подпись за край на узком экране: уступает половину строки.
+                maxWidth = (resources.displayMetrics.widthPixels * 0.46f).toInt()
+                maxLines = 2
             }
         )
         line.addView(top)
 
-        val sub = listOfNotNull(
-            if (fromEden) "из Eden" else "своё у Kenji",
-            field?.hint?.takeIf { it.isNotEmpty() }
-        ).joinToString(" · ")
         line.addView(
             TextView(ctx).apply {
-                text = sub
+                text = if (fromEden) "из Eden · общий с Eden" else "своё у Kenji · Eden не трогает"
                 textSize = 11f
                 setTextColor(if (fromEden) SymbiosisTheme.soft(SymbiosisTheme.MINT, 0.85f)
                 else SymbiosisTheme.soft(SymbiosisTheme.PINK, 0.85f))
                 setPadding(dp(18), dp(3), 0, 0)
             }
         )
+        // Пояснение — отдельной строкой и приглушённо: оно нужно один раз,
+        // а прижать его к пометке источника значило бы спорить с цветом.
+        if (field != null && field.hint.isNotEmpty()) {
+            line.addView(
+                TextView(ctx).apply {
+                    text = field.hint
+                    textSize = 11f
+                    setTextColor(SymbiosisTheme.TEXT_DIM)
+                    setPadding(dp(18), dp(2), 0, dp(2))
+                }
+            )
+        }
 
         val lp = LinearLayout.LayoutParams(
             LinearLayout.LayoutParams.MATCH_PARENT,

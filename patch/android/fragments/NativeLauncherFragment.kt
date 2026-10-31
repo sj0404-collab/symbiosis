@@ -189,7 +189,12 @@ class NativeLauncherFragment : Fragment() {
         binding.layoutLauncherSearch.setHintTextColor(
             android.content.res.ColorStateList.valueOf(SymbiosisTheme.soft(SymbiosisTheme.CYAN, 0.85f))
         )
-        binding.layoutLauncherSearch.boxCornerRadius = dp(16)
+        // Одно поле boxCornerRadius у TextInputLayout нет — есть радиусы по
+        // углам. Все четыре одинаковые: скругление у карточки и у поиска
+        // должно совпадать, иначе экран выглядит собранным из разных наборов.
+        binding.layoutLauncherSearch.setBoxCornerRadii(
+            dp(16).toFloat(), dp(16).toFloat(), dp(16).toFloat(), dp(16).toFloat()
+        )
         binding.layoutLauncherSearch.setBoxBackgroundColor(SymbiosisTheme.soft(SymbiosisTheme.CYAN, 0.05f))
 
         binding.textLauncherSummary.setTextColor(SymbiosisTheme.CYAN)

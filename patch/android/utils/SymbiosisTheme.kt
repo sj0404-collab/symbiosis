@@ -50,6 +50,27 @@ object SymbiosisTheme {
     val MINT = 0xFF34D399.toInt()      // «всё хорошо»
     val RED = 0xFFF87171.toInt()       // «сюда не пройти»
 
+    /**
+     * Цвет раздела руководства.
+     *
+     * Здесь именно соответствие по смыслу, а не хеш: «с чего начать» —
+     * синий, «файл не запускается» — красный, «два ядра» — розовый, как
+     * второе ядро на всех остальных экранах. Человек, листающий руководство,
+     * узнаёт раздел по цвету раньше, чем прочитает заголовок, и цвет не
+     * должен меняться от того, что раздел передвинули.
+     */
+    fun guideAccent(id: String): Int = when (id.lowercase()) {
+        "start" -> BLUE
+        "library" -> CYAN
+        "dead" -> RED
+        "map" -> LIME
+        "cores" -> PINK
+        "speed" -> AMBER
+        "data" -> VIOLET
+        "trouble" -> 0xFFFB7185.toInt()
+        else -> accent(id)
+    }
+
     /** Акцент раздела по его ключу. Неизвестный ключ получает свой оттенок. */
     fun sectionAccent(section: String): Int = when (section.lowercase()) {
         "library" -> CYAN

@@ -97,6 +97,20 @@ fun main() {
         SymbiosisTheme.sectionAccent("нечто") != SymbiosisTheme.OUTLINE
     )
 
+    // ── 4b. разделы руководства ────────────────────────────────────────
+    eq("«два ядра» — розовые, как второе ядро", SymbiosisTheme.guideAccent("cores"), SymbiosisTheme.PINK)
+    eq("«файл не запускается» — красный", SymbiosisTheme.guideAccent("dead"), SymbiosisTheme.RED)
+    eq("«с чего начать» — синий", SymbiosisTheme.guideAccent("start"), SymbiosisTheme.BLUE)
+    check(
+        "все разделы руководства разного цвета",
+        listOf("start", "library", "dead", "map", "cores", "speed", "data", "trouble")
+            .map { SymbiosisTheme.guideAccent(it) }.toSet().size == 8
+    )
+    check(
+        "неизвестный раздел не падает и получает цвет",
+        SymbiosisTheme.guideAccent("приложение") != 0
+    )
+
     // ── 5. форматы файлов ──────────────────────────────────────────────
     eq("nsp — циан", SymbiosisTheme.formatColor("nsp"), SymbiosisTheme.CYAN)
     eq("xci — лайм", SymbiosisTheme.formatColor("XCI"), SymbiosisTheme.LIME)

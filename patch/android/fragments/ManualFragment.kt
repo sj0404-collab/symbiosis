@@ -116,7 +116,7 @@ class ManualFragment : Fragment() {
             // Цвет раздела: ключ — id раздела, а не позиция. Разделы
             // переставляются при правках текста, и цвет «Двух ядер» не должен
             // уезжать на другое место от того, что выше вставили абзац.
-            val accent = SymbiosisTheme.accent("guide:" + section.id)
+            val accent = SymbiosisTheme.guideAccent(section.id)
             card.findViewById<TextView>(R.id.text_manual_section_title).apply {
                 text = section.title
                 setTextColor(accent)
@@ -148,6 +148,11 @@ class ManualFragment : Fragment() {
                 val button = layoutInflater
                     .inflate(R.layout.button_manual_action, actionsContainer, false) as MaterialButton
                 button.text = action.label
+                // Кнопка в цвете своего раздела: «Открыть два ядра» розовая,
+                // потому что розовое — это второе ядро и на других экранах.
+                button.setTextColor(accent)
+                button.backgroundTintList =
+                    android.content.res.ColorStateList.valueOf(SymbiosisTheme.soft(accent, 0.16f))
                 button.setOnClickListener { go(action.go) }
                 val params = LinearLayout.LayoutParams(
                     LinearLayout.LayoutParams.WRAP_CONTENT,
