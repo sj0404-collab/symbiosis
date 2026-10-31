@@ -39,7 +39,7 @@ object EngineStore {
         val p = prefs(context)
         if (p.getInt(KEY_SCHEMA, 0) != EngineHybrid.VERSION) return emptyMap()
         val out = LinkedHashMap<String, String>()
-        p.all().forEach { (key, value) ->
+        p.all.forEach { (key, value) ->
             if (key.startsWith(EngineHybrid.PREFIX) && value is String) out[key] = value
         }
         return out
