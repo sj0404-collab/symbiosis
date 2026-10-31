@@ -114,6 +114,12 @@ if command -v kotlinc >/dev/null 2>&1; then
   kt_deps_for() {
     case "$1" in
       LibraryIndexTest) echo "$HERE/patch/android/utils/LibraryIndex.kt" ;;
+      # The native launcher keeps its decisions in a presenter and its text in
+      # Manual, both plain Kotlin. A test that calls them should compile against
+      # them rather than against a hand-written copy of the same logic.
+      NativeLibraryPresenterTest) echo "$HERE/patch/android/utils/LibraryIndex.kt \
+        $HERE/patch/android/utils/NativeLibraryPresenter.kt \
+        $HERE/patch/android/utils/Manual.kt" ;;
       *)                echo "" ;;
     esac
   }

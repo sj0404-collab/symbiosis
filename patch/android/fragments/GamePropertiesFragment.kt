@@ -89,11 +89,13 @@ class GamePropertiesFragment : Fragment() {
         homeViewModel.setStatusBarShadeVisibility(true)
 
         binding.buttonBack.setOnClickListener {
-            // Always return to the PWA home. A bare popBackStack() finishes
-            // MainActivity when LivePanel is not on the back stack.
+            // Always return to the start screen - the native library now, not
+            // the old WebView panel. A bare popBackStack() finished
+            // MainActivity when the panel was not on the back stack; the same
+            // fallback is kept, pointing at whatever the graph says is home.
             val nav = view.findNavController()
-            if (!nav.popBackStack(R.id.livePanelFragment, false)) {
-                runCatching { nav.navigate(R.id.livePanelFragment) }
+            if (!nav.popBackStack(R.id.nativeLauncherFragment, false)) {
+                runCatching { nav.navigate(R.id.nativeLauncherFragment) }
             }
         }
 

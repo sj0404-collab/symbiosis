@@ -1449,4 +1449,40 @@
     <string name="engine_choice_description">Eden или Kenji-NX. Игра, которая не идёт на одном, иногда идёт на другом.</string>
     <string name="live_panel">Панель</string>
     <string name="live_panel_description">Состояние, папки и файлы. Обновляется сама, без переустановки</string>
+
+    <!-- Нативный лаунчер: стартовый экран библиотеки -->
+    <string name="launcher_title">Symbiosis</string>
+    <string name="launcher_subtitle">Библиотека игр</string>
+    <string name="launcher_rescan">Искать игры</string>
+    <string name="launcher_rescanning">Обход папок: список обновится сам</string>
+    <string name="launcher_action_folders">Папки</string>
+    <string name="launcher_action_convert">Конвертер</string>
+    <string name="launcher_action_keys">Ключи</string>
+    <string name="launcher_action_tools">Инструменты</string>
+    <string name="launcher_action_help">Руководство</string>
+    <string name="launcher_search_hint">Поиск: название, Title ID или имя файла</string>
+    <string name="launcher_filter_all">Все файлы</string>
+    <string name="launcher_filter_runnable">Запускается</string>
+    <string name="launcher_filter_dead">Не запускается</string>
+    <string name="launcher_convert_start">Выбрать файл</string>
+    <string name="launcher_convert_queued">В очереди конвертера: %1$d. Не закрывайте приложение, пока идёт распаковка.</string>
+    <string name="launcher_convert_failed">Не удалось поставить файл в очередь конвертера</string>
+    <string name="launcher_open_keys">Где ключи</string>
+    <string name="launcher_launch_failed">Игра не открылась. Причина — в «Инструменты» → «Диагностика».</string>
+    <string name="launcher_nav_failed">Экран не открылся: попробуйте ещё раз</string>
+    <string name="launcher_properties_failed">Свойства игры не открылись</string>
+
+    <!-- Руководство пользования -->
+    <string name="manual_title">Руководство</string>
+    <string name="manual_subtitle">Как пользоваться и где что лежит</string>
+    <string name="manual_search_hint">Поиск по руководству</string>
+    <string name="manual_search_empty_title">Ничего не нашлось</string>
+    <string name="manual_search_empty">Попробуйте одно слово: конвертер, ключи, папки, сейвы, сжатый.</string>
+    <string name="manual_nav_failed">Экран не открылся: попробуйте ещё раз</string>
+    <string name="settings_manual">Руководство пользования</string>
+    <string name="settings_manual_description">Пошагово: ключи, папки, запуск, что делать со сжатыми файлами</string>
+
+    <string name="live_panel_extended">Расширенная панель</string>
+    <string name="live_panel_extended_description">Всё редкое в одном месте: пространства, выбор ядра, тонкие переключатели</string>
+
 </resources>

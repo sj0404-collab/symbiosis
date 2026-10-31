@@ -26,7 +26,19 @@
 -keep class org.yuzu.yuzu_emu.activities.KenjiPlayerActivity { *; }
 
 # Screens the navigation graph creates by name.
+#
+# The launcher and the manual matter most: the launcher is the start
+# destination, so a renamed class means the app opens on
+# ClassNotFoundException instead of a library, and the manual is the screen
+# that explains where everything is.
 -keep class org.yuzu.yuzu_emu.fragments.EnginesFragment { *; }
+-keep class org.yuzu.yuzu_emu.fragments.NativeLauncherFragment { *; }
+-keep class org.yuzu.yuzu_emu.fragments.ManualFragment { *; }
+# The tiles' decisions and the manual text, reached only from those screens.
+-keep class org.yuzu.yuzu_emu.utils.NativeLibraryPresenter { *; }
+-keep class org.yuzu.yuzu_emu.utils.NativeLibraryPresenter$* { *; }
+-keep class org.yuzu.yuzu_emu.utils.Manual { *; }
+-keep class org.yuzu.yuzu_emu.utils.Manual$* { *; }
 
 # The bridge, belt and braces. The native side resolves
 # Java_org_yuzu_yuzu_1emu_utils_KenjiBridge_* by symbol name, so the class

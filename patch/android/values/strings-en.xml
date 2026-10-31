@@ -2116,4 +2116,40 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
     <string name="engine_choice_description">Eden or Kenji-NX. A game that stalls on one sometimes runs on the other.</string>
     <string name="live_panel">Panel</string>
     <string name="live_panel_description">Status, folders and files. Updates itself, no reinstall</string>
+
+    <!-- Native launcher: the start screen of the library -->
+    <string name="launcher_title">Symbiosis</string>
+    <string name="launcher_subtitle">Game library</string>
+    <string name="launcher_rescan">Rescan</string>
+    <string name="launcher_rescanning">Scanning folders: the list updates itself</string>
+    <string name="launcher_action_folders">Folders</string>
+    <string name="launcher_action_convert">Converter</string>
+    <string name="launcher_action_keys">Keys</string>
+    <string name="launcher_action_tools">Tools</string>
+    <string name="launcher_action_help">Guide</string>
+    <string name="launcher_search_hint">Search: title, title ID or file name</string>
+    <string name="launcher_filter_all">All files</string>
+    <string name="launcher_filter_runnable">Runnable</string>
+    <string name="launcher_filter_dead">Not runnable</string>
+    <string name="launcher_convert_start">Choose a file</string>
+    <string name="launcher_convert_queued">Queued for conversion: %1$d. Keep the app open while it unpacks.</string>
+    <string name="launcher_convert_failed">Could not queue the file for conversion</string>
+    <string name="launcher_open_keys">Where are the keys</string>
+    <string name="launcher_launch_failed">The game did not open. The reason is in Tools -> Diagnostics.</string>
+    <string name="launcher_nav_failed">The screen did not open: try again</string>
+    <string name="launcher_properties_failed">Game properties did not open</string>
+
+    <!-- User manual -->
+    <string name="manual_title">Guide</string>
+    <string name="manual_subtitle">How to use it and where everything is</string>
+    <string name="manual_search_hint">Search the guide</string>
+    <string name="manual_search_empty_title">Nothing found</string>
+    <string name="manual_search_empty">Try a single word: converter, keys, folders, saves, compressed.</string>
+    <string name="manual_nav_failed">The screen did not open: try again</string>
+    <string name="settings_manual">User manual</string>
+    <string name="settings_manual_description">Step by step: keys, folders, launching, what to do with compressed files</string>
+
+    <string name="live_panel_extended">Advanced panel</string>
+    <string name="live_panel_extended_description">The rare things in one place: spaces, engine choice, fine-grained toggles</string>
+
 </resources>

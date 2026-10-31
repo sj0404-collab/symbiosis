@@ -311,7 +311,10 @@ class MainActivity : AppCompatActivity(), ThemeProvider {
     }
 
     fun finishSetup(navController: NavController) {
-        navController.navigate(R.id.action_firstTimeSetupFragment_to_gamesFragment)
+        // Мастер первого запуска убран; если его вернут, выход из него ведёт
+        // на нативный лаунчер, а не на прежний экран игр: домашний экран
+        // теперь один, и он же библиотека.
+        navController.navigate(R.id.action_global_nativeLauncherFragment)
     }
 
     private fun setUpNavigation(navController: NavController) {

@@ -129,13 +129,30 @@ class ToolsFragment : Fragment() {
                     { nav(R.id.action_global_guideFragment) }
                 )
             )
+            // Руководство стоит выше панели и выше справочника настроек:
+            // это единственный экран, который объясняет порядок действий
+            // целиком, а не одно понятие.
+            add(
+                HomeSetting(
+                    R.string.settings_manual,
+                    R.string.settings_manual_description,
+                    R.drawable.ic_info_outline,
+                    { nav(R.id.action_global_manualFragment) }
+                )
+            )
             // Панель, содержимое которой обновляется без пересборки APK:
             // страница живёт на GitHub Pages, данные читает локально через
             // мост. Правка вёрстки видна сразу, скачивать 25 МБ не нужно.
+            //
+            // Названа «расширенной» не для красоты: после перевода
+            // библиотеки на нативную вёрстку всё, что нужно каждый день,
+            // есть на стартовом экране, а здесь остались редкие вещи -
+            // пространства, выбор ядра, тонкие переключатели. Пусть это
+            // будет видно из названия, а не выясняется опытным путём.
             add(
                 HomeSetting(
-                    R.string.live_panel,
-                    R.string.live_panel_description,
+                    R.string.live_panel_extended,
+                    R.string.live_panel_extended_description,
                     R.drawable.ic_info_outline,
                     { nav(R.id.action_global_livePanelFragment) }
                 )

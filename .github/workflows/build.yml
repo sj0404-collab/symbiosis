@@ -268,7 +268,12 @@ jobs:
           esac
 
           if [ "$MINIFIED" = 0 ]; then
-            for sym in restoreGameDirs rememberGameDirs hasActionableButton; do
+            # Зачем: лаунчер и руководство - это два новых экрана, и оба
+            # попадают в APK только если apply_patch.sh их скопировал. Файл,
+            # лежащий в patch/, но не в дереве сборки, даёт зелёную сборку с
+            # прежним интерфейсом - ровно это и проверяем.
+            for sym in restoreGameDirs rememberGameDirs hasActionableButton \
+                       NativeLauncherFragment ManualFragment NativeLibraryPresenter; do
               if strings classes*.dex | grep -q "$sym"; then echo "  ok   $sym in dex"
               else echo "  MISSING $sym"; fail=1; fi
             done

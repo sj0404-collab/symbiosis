@@ -1,0 +1,367 @@
+// SPDX-FileCopyrightText: Copyright 2026 Eden Symbiosis Project
+// SPDX-License-Identifier: GPL-3.0-or-later
+
+package org.yuzu.yuzu_emu.fragments
+
+import android.net.Uri
+import android.os.Bundle
+import android.text.Editable
+import android.text.TextWatcher
+import android.view.LayoutInflater
+import android.view.View
+import android.view.ViewGroup
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.isVisible
+import androidx.core.view.updatePadding
+import androidx.fragment.app.Fragment
+import androidx.fragment.app.activityViewModels
+import androidx.navigation.fragment.findNavController
+import androidx.recyclerview.widget.LinearLayoutManager
+import com.google.android.material.chip.Chip
+import com.google.android.material.snackbar.Snackbar
+import com.google.android.material.transition.MaterialSharedAxis
+import org.yuzu.yuzu_emu.HomeNavigationDirections
+import org.yuzu.yuzu_emu.R
+import org.yuzu.yuzu_emu.adapters.LauncherTileAdapter
+import org.yuzu.yuzu_emu.databinding.FragmentNativeLauncherBinding
+import org.yuzu.yuzu_emu.model.Game
+import org.yuzu.yuzu_emu.model.GamesViewModel
+import org.yuzu.yuzu_emu.utils.ConverterPicker
+import org.yuzu.yuzu_emu.utils.GameHelper
+import org.yuzu.yuzu_emu.utils.NativeLibraryPresenter
+import org.yuzu.yuzu_emu.utils.collect
+
+/**
+ * Стартовый экран: библиотека, запуск, всё остальное - одной кнопкой.
+ *
+ * Раньше стартовым был WebView с `library.html`. Логика разбора файлов и
+ * решений «что предложить» жила в JavaScript, настройки - в Kotlin, вёрстка -
+ * в HTML-строке, и на вопрос «где что находится» ответить было нельзя даже
+ * по коду. Здесь экран не принимает ни одного решения: строки, пометки и
+ * действие собирает [NativeLibraryPresenter], которому это можно доказать
+ * тестом на хосте (`tests/NativeLibraryPresenterTest.kt`), а фрагмент только
+ * подставляет результат в адаптер.
+ *
+ * Экран показывает **все** файлы из выбранных папок, а не только
+ * запускаемые. Именно на этом ломалась старая библиотека: из сотен nsz, nsp
+ * и xci она показывала одну игру, потому что остальные молча отбрасывались
+ * как «невалидные». Теперь у каждого файла есть плитка, а у нерабочего -
+ * причина словами и действие.
+ */
+class NativeLauncherFragment : Fragment() {
+    private var _binding: FragmentNativeLauncherBinding? = null
+    private val binding get() = _binding!!
+
+    private val gamesViewModel: GamesViewModel by activityViewModels()
+
+    private lateinit var adapter: LauncherTileAdapter
+
+    /** Последний список из кэша или обхода; индексы совпадают с presenter. */
+    private var games: List<Game> = emptyList()
+
+    private var filter: String = NativeLibraryPresenter.FILTER_ALL
+    private var query: String = ""
+
+    /**
+     * Очередь распаковки. Создаётся в onCreate: регистрация результата
+     * обязана произойти до STARTED, иначе менеджер активности бросит
+     * исключение при первом нажатии.
+     */
+    private lateinit var converter: ConverterPicker
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        enterTransition = MaterialSharedAxis(MaterialSharedAxis.X, true)
+        returnTransition = MaterialSharedAxis(MaterialSharedAxis.X, false)
+
+        converter = ConverterPicker(
+            fragment = this,
+            onQueued = { count ->
+                if (_binding != null) {
+                    Snackbar.make(
+                        binding.root,
+                        getString(R.string.launcher_convert_queued, count),
+                        Snackbar.LENGTH_LONG
+                    ).show()
+                }
+            },
+            onFailed = {
+                if (_binding != null) {
+                    Snackbar.make(binding.root, R.string.launcher_convert_failed, Snackbar.LENGTH_LONG)
+                        .show()
+                }
+            }
+        )
+    }
+
+    override fun onCreateView(
+        inflater: LayoutInflater,
+        container: ViewGroup?,
+        savedInstanceState: Bundle?
+    ): View {
+        _binding = FragmentNativeLauncherBinding.inflate(inflater, container, false)
+        return binding.root
+    }
+
+    override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
+        super.onViewCreated(view, savedInstanceState)
+
+        // Стартовый экран: стрелки «назад» нет, выходить из него - значит
+        // выходить из приложения.
+        binding.toolbarLauncher.title = getString(R.string.launcher_title)
+        binding.toolbarLauncher.subtitle = getString(R.string.launcher_subtitle)
+
+        adapter = LauncherTileAdapter(::onItemClick, ::onItemLongClick)
+        binding.listLauncher.apply {
+            layoutManager = LinearLayoutManager(requireContext())
+            adapter = this@NativeLauncherFragment.adapter
+            setHasFixedSize(false)
+        }
+
+        buildFilterChips()
+        bindActions()
+
+        binding.editLauncherSearch.addTextChangedListener(object : TextWatcher {
+            override fun beforeTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) = Unit
+            override fun onTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) = Unit
+            override fun afterTextChanged(s: Editable?) {
+                query = s?.toString().orEmpty()
+                render()
+            }
+        })
+
+        binding.swipeLauncher.setOnRefreshListener {
+            gamesViewModel.reloadGames(false)
+        }
+
+        gamesViewModel.isReloading.collect(viewLifecycleOwner) {
+            binding.swipeLauncher.isRefreshing = it
+        }
+        gamesViewModel.games.collect(viewLifecycleOwner) {
+            games = it
+            render()
+        }
+
+        setInsets()
+    }
+
+    /**
+     * Кнопки сверху.
+     *
+     * Специально не в меню «три точки»: жалоба была именно на то, что
+     * нужное спрятано. Шесть кнопок в прокручиваемой строке видно сразу,
+     * и они же названы в руководстве.
+     */
+    private fun bindActions() {
+        binding.buttonLauncherRescan.setOnClickListener {
+            gamesViewModel.reloadGames(false)
+            Snackbar.make(binding.root, R.string.launcher_rescanning, Snackbar.LENGTH_SHORT).show()
+        }
+        binding.buttonLauncherFolders.setOnClickListener {
+            navigate(R.id.action_global_symbiosisGameFoldersFragment)
+        }
+        binding.buttonLauncherConvert.setOnClickListener {
+            converter.pick()
+        }
+        binding.buttonLauncherKeys.setOnClickListener {
+            navigate(R.id.action_global_keysFirmwareFragment)
+        }
+        binding.buttonLauncherTools.setOnClickListener {
+            navigate(R.id.action_global_toolsFragment)
+        }
+        binding.buttonLauncherHelp.setOnClickListener {
+            navigate(R.id.action_global_manualFragment)
+        }
+    }
+
+    private fun buildFilterChips() {
+        val chips = listOf(
+            NativeLibraryPresenter.FILTER_ALL to R.string.launcher_filter_all,
+            NativeLibraryPresenter.FILTER_RUNNABLE to R.string.launcher_filter_runnable,
+            NativeLibraryPresenter.FILTER_DEAD to R.string.launcher_filter_dead
+        )
+        binding.chipsLauncherFilters.removeAllViews()
+        chips.forEachIndexed { index, (id, label) ->
+            val chip = Chip(requireContext()).apply {
+                text = getString(label)
+                isCheckable = true
+                isChecked = index == 0
+                setOnClickListener {
+                    filter = id
+                    render()
+                }
+            }
+            binding.chipsLauncherFilters.addView(chip)
+        }
+    }
+
+    /** Перерисовать список по текущему состоянию: игры, причины, фильтр, поиск. */
+    private fun render() {
+        if (_binding == null) return
+
+        val rows = games.map { game ->
+            NativeLibraryPresenter.Row(
+                title = game.title,
+                path = game.path,
+                titleId = runCatching { game.programIdHex }.getOrDefault(""),
+                developer = game.developer,
+                fileName = fileNameOf(game.path)
+            )
+        }
+
+        val side = runCatching { GameHelper.sidecar }.getOrDefault(emptyList())
+            .map { s ->
+                NativeLibraryPresenter.Side(
+                    name = s.name,
+                    path = s.path,
+                    title = s.title,
+                    reason = s.reason,
+                    kind = s.kind
+                )
+            }
+
+        val stats = runCatching { GameHelper.scanStats }.getOrNull()
+        val model = NativeLibraryPresenter.build(
+            games = rows,
+            side = side,
+            updates = stats?.updates ?: 0,
+            dlc = stats?.dlc ?: 0,
+            search = query,
+            filter = filter
+        )
+
+        adapter.submit(model.items)
+
+        // Сводка и пустота говорят разное и не одновременно: когда строк
+        // нет, вместо «0 игр · 0 сжатых» показывается причина.
+        binding.textLauncherSummary.isVisible = model.items.isNotEmpty()
+        binding.textLauncherSummary.text = model.summary
+
+        val empty = model.items.isEmpty()
+        binding.textLauncherEmpty.isVisible = empty
+        if (empty) binding.textLauncherEmpty.text = model.emptyReason
+    }
+
+    private fun onItemClick(item: NativeLibraryPresenter.Item) {
+        when (item.action) {
+            NativeLibraryPresenter.Action.LAUNCH -> {
+                val game = games.getOrNull(item.gameIndex) ?: return
+                navigateToGame(game)
+            }
+            NativeLibraryPresenter.Action.CONVERT -> askConvert(item)
+            NativeLibraryPresenter.Action.KEYS -> explainUnreadable(item)
+            NativeLibraryPresenter.Action.EXPLAIN_SPLIT -> explainSplit(item)
+        }
+    }
+
+    private fun onItemLongClick(item: NativeLibraryPresenter.Item) {
+        val game = games.getOrNull(item.gameIndex) ?: return
+        runCatching {
+            findNavController().navigate(
+                HomeNavigationDirections.actionGlobalPerGamePropertiesFragment(game)
+            )
+        }.onFailure {
+            Snackbar.make(binding.root, R.string.launcher_properties_failed, Snackbar.LENGTH_LONG)
+                .show()
+        }
+    }
+
+    private fun navigate(destination: Int) {
+        runCatching { findNavController().navigate(destination) }
+            .onFailure {
+                Snackbar.make(binding.root, R.string.launcher_nav_failed, Snackbar.LENGTH_LONG)
+                    .show()
+            }
+    }
+
+    private fun navigateToGame(game: Game) {
+        runCatching {
+            findNavController().navigate(HomeNavigationDirections.actionGlobalEmulationActivity(game))
+        }.onFailure {
+            Snackbar.make(binding.root, R.string.launcher_launch_failed, Snackbar.LENGTH_LONG).show()
+        }
+    }
+
+    /**
+     * Сжатый образ: сначала объяснение, потом действие.
+     *
+     * Диалог, а не сразу распаковка: распаковка занимает столько же места,
+     * сколько сам образ, и на телефоне с 8 ГБ это решение, которое человек
+     * должен принять сам.
+     */
+    private fun askConvert(item: NativeLibraryPresenter.Item) {
+        val (title, text, _) = NativeLibraryPresenter.explain(
+            kind = "compressed",
+            name = item.title,
+            reason = "файл упакован"
+        )
+        MessageDialogFragment.newInstance(
+            requireActivity(),
+            titleString = title,
+            descriptionString = text,
+            positiveButtonTitleId = R.string.launcher_convert_start,
+            positiveAction = { converter.pick() },
+            showNegativeButton = true,
+            negativeButtonTitleId = android.R.string.cancel
+        ).show(childFragmentManager, MessageDialogFragment.TAG)
+    }
+
+    private fun explainUnreadable(item: NativeLibraryPresenter.Item) {
+        val (title, text, _) = NativeLibraryPresenter.explain(
+            kind = "unreadable",
+            name = item.title,
+            reason = item.subtitle
+        )
+        MessageDialogFragment.newInstance(
+            requireActivity(),
+            titleString = title,
+            descriptionString = text,
+            positiveButtonTitleId = R.string.launcher_open_keys,
+            positiveAction = { navigate(R.id.action_global_keysFirmwareFragment) },
+            showNegativeButton = true,
+            negativeButtonTitleId = android.R.string.cancel
+        ).show(childFragmentManager, MessageDialogFragment.TAG)
+    }
+
+    private fun explainSplit(item: NativeLibraryPresenter.Item) {
+        val (title, text, _) = NativeLibraryPresenter.explain(
+            kind = "split",
+            name = item.title,
+            reason = item.subtitle
+        )
+        MessageDialogFragment.newInstance(
+            requireActivity(),
+            titleString = title,
+            descriptionString = text
+        ).show(childFragmentManager, MessageDialogFragment.TAG)
+    }
+
+    private fun fileNameOf(path: String): String {
+        if (path.isBlank()) return ""
+        val segment = runCatching { Uri.parse(path).lastPathSegment }.getOrNull()
+        val decoded = runCatching { Uri.decode(segment ?: "") }.getOrDefault("")
+        return decoded.ifBlank { path.substringAfterLast('/') }
+    }
+
+    private fun setInsets() =
+        ViewCompat.setOnApplyWindowInsetsListener(binding.root) { _: View, insets: WindowInsetsCompat ->
+            val bars = insets.getInsets(WindowInsetsCompat.Type.systemBars())
+            val cutout = insets.getInsets(WindowInsetsCompat.Type.displayCutout())
+            binding.listLauncher.updatePadding(
+                left = bars.left + cutout.left + 12.px,
+                right = bars.right + cutout.right + 12.px,
+                bottom = bars.bottom
+            )
+            insets
+        }
+
+    private val Int.px: Int
+        get() = (this * resources.displayMetrics.density).toInt()
+
+    override fun onDestroyView() {
+        super.onDestroyView()
+        binding.listLauncher.adapter = null
+        _binding = null
+    }
+}

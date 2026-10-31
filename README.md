@@ -5,6 +5,24 @@ A fork of the [Eden](https://git.eden-emu.dev/eden-emu/eden) Android emulator, t
 
 Target hardware for this work: **Mali-G57 MC2 / MediaTek MT6789, 8 GB RAM (~5 GB usable)**.
 
+## Where everything is
+
+The app opens on a **native library screen** — real Android views, not a WebView page. Six
+buttons across the top: *Rescan*, *Folders*, *Converter*, *Keys*, *Tools*, *Guide*. Every file
+in the selected folders gets a row; a file that cannot launch says why in words instead of
+disappearing.
+
+**New here? Read [`docs/GUIDE.md`](docs/GUIDE.md)** — the same manual that ships inside the
+app under *Guide*, with a search box. It covers, in order: keys → folder → launch, what the
+badges mean, what to do with a compressed NSZ, where every screen lives, and what to check
+first when a game will not start.
+
+Why the rewrite: the start screen used to be an HTML page inside a WebView. File handling and
+"what to offer" lived in JavaScript, settings lived in Kotlin, the layout lived in an HTML
+string, and the honest answer to "where is it?" was "depends which half". The screen no longer
+decides anything: `NativeLibraryPresenter` builds the rows, `Manual` holds the text, and both
+are plain Kotlin checked by a host test, so the layout cannot silently disagree with the logic.
+
 ---
 
 ## Why this fork exists
@@ -54,6 +72,7 @@ tests/
   SetupPageTest.kt        setup-page visibility logic
   test_l10n.py            Russian localisation checks
 docs/
+  GUIDE.md                user manual: how to use the app and where everything is
   BUGS.md                 every bug found, with evidence
 ```
 

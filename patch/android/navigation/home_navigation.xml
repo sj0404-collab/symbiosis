@@ -3,7 +3,7 @@
     xmlns:app="http://schemas.android.com/apk/res-auto"
     xmlns:tools="http://schemas.android.com/tools"
     android:id="@+id/home_navigation"
-    app:startDestination="@id/livePanelFragment">
+    app:startDestination="@id/nativeLauncherFragment">
 
     <fragment
         android:id="@+id/gamesFragment"
@@ -100,6 +100,26 @@
         android:name="org.yuzu.yuzu_emu.fragments.InstallableFragment"
         android:label="InstallableFragment" />
     <!-- Symbiosis screens -->
+    <!--
+    Стартовый экран - нативная библиотека. Раньше им был WebView с панелью,
+    и именно из-за этого нельзя было понять, где что находится: половина
+    интерфейса жила в HTML, половина - в Kotlin.
+    -->
+    <fragment
+        android:id="@+id/nativeLauncherFragment"
+        android:name="org.yuzu.yuzu_emu.fragments.NativeLauncherFragment"
+        android:label="NativeLauncherFragment" />
+    <action
+        android:id="@+id/action_global_nativeLauncherFragment"
+        app:destination="@id/nativeLauncherFragment"
+        app:launchSingleTop="true" />
+    <fragment
+        android:id="@+id/manualFragment"
+        android:name="org.yuzu.yuzu_emu.fragments.ManualFragment"
+        android:label="ManualFragment" />
+    <action
+        android:id="@+id/action_global_manualFragment"
+        app:destination="@id/manualFragment" />
     <fragment
         android:id="@+id/fpsTuningFragment"
         android:name="org.yuzu.yuzu_emu.fragments.FpsTuningFragment"
@@ -229,7 +249,7 @@
     <action
         android:id="@+id/action_global_perGamePropertiesFragment"
         app:destination="@id/perGamePropertiesFragment"
-        app:popUpTo="@id/livePanelFragment"
+        app:popUpTo="@id/nativeLauncherFragment"
         app:popUpToInclusive="false" />
     <fragment
         android:id="@+id/gameInfoFragment"
