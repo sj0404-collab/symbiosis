@@ -303,7 +303,10 @@ object LibraryIndex {
             parts.add("$games ${plural(games, "игра", "игры", "игр")}")
             if (updates > 0) parts.add("$updates обновл.")
             if (dlc > 0) parts.add("$dlc DLC")
-            if (compressed > 0) parts.add("$compressed сжатых → Конвертер")
+            if (compressed > 0) {
+                val word = plural(compressed, "сжатый", "сжатых", "сжатых")
+                parts.add("$compressed $word → Конвертер")
+            }
             if (other > 0) parts.add("$other прочих")
             return parts.joinToString(" · ")
         }

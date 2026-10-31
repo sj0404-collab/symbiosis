@@ -22,10 +22,27 @@
     transition:background .2s ease, color .2s ease;
   }
   header {
-    display:flex; align-items:center; gap:6px;
+    display:flex; align-items:center; gap:6px; flex-wrap:wrap;
     padding:6px 12px 0;
   }
-  header h1 { font-size:22px; font-weight:700; margin:0; flex:1; display:flex; align-items:center; gap:8px; }
+  header h1 {
+    font-size:22px; font-weight:700; margin:0; flex:1 1 auto; min-width:0;
+    display:flex; align-items:center; gap:8px;
+    white-space:nowrap; overflow:hidden;
+  }
+  /* Кнопки в собственной строке: на 412 px заголовок и пять кнопок в одну
+     строку не влезают, и документ становился шире экрана - шапка
+     обрезалась справа, логотип слева, а вместе с ними ползли табы и чипы. */
+  .hdr-actions {
+    display:flex; gap:6px; flex:0 1 auto; max-width:100%;
+    overflow-x:auto; scrollbar-width:none;
+  }
+  .hdr-actions::-webkit-scrollbar { display:none; }
+  .hdr-actions .iconbtn { flex:0 0 auto; }
+  @media (max-width:520px) {
+    header h1 { flex:1 1 100%; }
+    .hdr-actions { flex:1 1 100%; padding-bottom:2px; }
+  }
   header h1 svg { width:28px; height:28px; flex:0 0 28px; }
   .boot {
     position:absolute; inset:0; z-index:20; background:#101014;
@@ -67,7 +84,7 @@
   }
   .chip.tap { color:var(--cyan); }
   .list {
-    flex:1; overflow:auto; padding:0 6px 110px;
+    flex:1; overflow:auto; padding:0 6px 150px;
     -webkit-overflow-scrolling:touch;
   }
   .game {
@@ -85,9 +102,17 @@
     align-self:center;
   }
   .thumb img { width:100%; height:100%; object-fit:cover; display:block; }
+  .thumb.fmt { color:#ffd166; font:700 11px/1.1 ui-monospace,monospace; letter-spacing:.02em; }
   .meta { flex:1; min-width:0; align-self:center; }
   .title { font-weight:700; font-size:14px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-  .sub { color:var(--dim); font-size:12px; margin-top:2px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  /* Подпись карточки: две строки вместо многоточия.
+     «ядро не прочитало заголово…» - это тот же дефект, что и обрезанные
+     значения в доке: причина есть, прочитать её нельзя. */
+  .sub {
+    color:var(--dim); font-size:12px; margin-top:2px;
+    white-space:normal; overflow-wrap:anywhere; line-height:1.3;
+    max-height:2.6em; overflow:hidden;
+  }
   .stats { margin-top:3px; font-size:12px; color:var(--cyan); }
   .play { margin-right:8px; }
   .shot {
@@ -111,7 +136,7 @@
   .game.dead { opacity:.92; border-style:dashed; }
   .slide.dead { opacity:.75; }
   .dead-mark { display:flex; flex-direction:column; align-items:center; gap:2px; font-size:22px; color:#ffd166; }
-  .dead-mark small { font-size:9px; letter-spacing:.02em; }
+  .dead-mark small { font-size:9px; letter-spacing:.02em; white-space:nowrap; }
   .dock .go.alt { background:#ffd166; color:#1a1300; }
   .badge {
     display:inline-block; margin-top:4px; padding:2px 8px; border-radius:999px;
@@ -137,6 +162,9 @@
   .why-row .n { flex:1; min-width:0; }
   .why-row .why-reason { color:var(--dim); font-size:11.5px; margin-top:2px; }
   .why-sum { color:var(--cyan); font-size:12.5px; margin-bottom:10px; line-height:1.45; }
+  /* Перенос по слогам разрешён только там, где слово длиннее строки:
+     иначе «Конвертер» ломается на «Конв/ертер» посреди фразы. */
+  .sheet .note, .why-row .why-reason, .sub { hyphens:none; word-break:normal; }
   .fabs {
     position:absolute; right:16px; bottom:72px;
     display:flex; gap:8px; z-index:4;
@@ -172,6 +200,22 @@
   }
   .sheet.on .box { transform:translateY(0); }
   .sheet h2 { margin:0 0 10px; font-size:16px; }
+  /* Кнопки в листах.
+     В «Распаковать / Закрыть» кнопка «Распаковать» рисовалась светлой
+     плашкой с белым текстом: .go брала цвет из темы, а .ghost рядом -
+     прозрачный фон с белой рамкой. Читалось это как «белая кнопка,
+     на которой ничего нет». Здесь оба вида заданы явно. */
+  .sheet .row { display:flex; gap:8px; flex-wrap:wrap; }
+  .sheet .go, .sheet .row .go {
+    flex:1 1 140px; height:42px; border:0; border-radius:12px;
+    background:var(--pink); color:#fff; font:700 14px inherit;
+  }
+  .sheet .ghost, .sheet .row .ghost {
+    flex:0 1 auto; height:42px; border-radius:12px;
+    background:transparent; color:var(--text);
+    border:1px solid var(--line); font:600 13px inherit; padding:0 16px;
+  }
+  .sheet .note { color:var(--dim); font-size:13px; line-height:1.45; margin:0 0 14px; }
   .row { display:flex; gap:8px; flex-wrap:wrap; }
   button.ghost {
     background:transparent; color:var(--cyan); border:1px solid var(--line);
@@ -318,7 +362,14 @@
     padding:6px 8px; flex:1 1 30%; min-width:28%; max-width:100%;
   }
   .fact b { display:block; font-size:11px; color:var(--dim); font-weight:600; }
-  .fact span { display:block; font-size:13px; color:var(--text); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .fact span {
+    display:block; font-size:13px; color:var(--text);
+    /* Было: одна строка с многоточием. «ещё не игра…» и «нет (слоты …)» -
+       это ровно то, на что жаловались в прошлых раундах: значение есть, а
+       прочитать его нельзя. Две строки решают без увеличения блока. */
+    white-space:normal; overflow-wrap:anywhere; line-height:1.25;
+    max-height:2.6em; overflow:hidden;
+  }
   .dock .go {
     width:100%; height:44px; border:0; border-radius:14px;
     background:var(--pink); color:#fff; font:700 15px inherit; margin-top:6px;
@@ -428,11 +479,13 @@
     </svg>
     Symbiosis
   </h1>
-  <button class="iconbtn" id="btn-engines">Ядра</button>
-  <button class="iconbtn" id="btn-plugins">Плагины</button>
-  <button class="iconbtn" id="btn-reload" title="Обновить интерфейс">↻</button>
-  <button class="iconbtn" id="btn-tools">Утилиты</button>
-  <button class="iconbtn" id="btn-settings">Настройки</button>
+  <div class="hdr-actions">
+    <button class="iconbtn" id="btn-engines">Ядра</button>
+    <button class="iconbtn" id="btn-plugins">Плагины</button>
+    <button class="iconbtn" id="btn-reload" title="Обновить интерфейс">↻</button>
+    <button class="iconbtn" id="btn-tools">Утилиты</button>
+    <button class="iconbtn" id="btn-settings">Настройки</button>
+  </div>
 </header>
 <div class="spaces" id="spaces">
   <button class="space on" id="sp-symbiosis" data-id="symbiosis" type="button">
@@ -536,6 +589,24 @@ function call(name, ...a) {
   try { const n=N(); return n && n[name] ? n[name](...a) : null; } catch(e) { return null; }
 }
 function parse(s, fb) { try { return s ? JSON.parse(s) : fb; } catch(e) { return fb; } }
+
+// Чем файл является, если открыть его нельзя: расширение видно на плитке и
+// на карточке. Иероглиф «⧗» тут не годился - в системном шрифте телефона его
+// нет, и вместо значка рисовался пустой прямоугольник.
+// «3 файла», «5 файлов», «1 игра»: без этого панель писала «3 файлов».
+function plural(n, one, few, many) {
+  const m100 = Math.abs(n) % 100, m10 = Math.abs(n) % 10;
+  if (m100 >= 11 && m100 <= 14) return many;
+  if (m10 === 1) return one;
+  if (m10 >= 2 && m10 <= 4) return few;
+  return many;
+}
+
+function formatOf(g) {
+  const n = (g && (g.fileName || g.path || g.title)) || '';
+  const ext = String(n).split('.').pop().toLowerCase();
+  return /^[a-z0-9]{2,4}$/.test(ext) ? ext : 'файл';
+}
 
 let GAMES = [];
 let HOLD = null;
@@ -642,16 +713,15 @@ function render() {
       ? `<span class="badge">${esc(g.reason || (g.kind === 'compressed' ? 'сжатый образ' : 'не запускается'))}</span>`
       : (g.kind === 'dlc' ? '<span class="badge dlc">DLC</span>'
         : g.kind === 'update' ? '<span class="badge upd">обновление</span>' : '');
-    const size = dead && g.fileSize ? `<div class="tid">${esc(g.fileSize)}${g.fileName ? ' · ' + esc(g.fileName) : ''}</div>` : '';
+
     return `<div class="game${dead ? ' dead' : ''}" data-i="${i}">
-      <div class="thumb" id="ic-${i}">${dead ? '⧗' : '▶'}</div>
+      <div class="thumb${dead ? ' fmt' : ''}" id="ic-${i}">${dead ? esc(formatOf(g)) : '▶'}</div>
       <div class="meta">
         <div class="title">${esc(g.title || g.fileName || 'без имени')}</div>
         <div class="sub">${esc(g.developer || '')}${save}</div>
         ${badge}
         ${stats}
         ${tid}
-        ${size}
       </div>
       ${shot}
       ${side}
@@ -791,8 +861,14 @@ function whyNot() {
   const more = (rep.total || 0) > (rep.files || []).length
     ? `<div class="why-row"><div class="n">…и ещё ${rep.total - rep.files.length} файлов</div></div>` : '';
   const byKind = rep.byKind || {};
+  // Ключи формата («unreadable», «compressed») - имена в коде, а не слова.
+  // Ровно та же ошибка, что «Legendary: File … line 3169» вместо описания.
+  const KIND_NAMES = {
+    compressed: 'сжатых', unreadable: 'не прочитано',
+    split: 'частей разрезанного', dlc: 'DLC', update: 'обновлений'
+  };
   const kinds = Object.keys(byKind).map(k =>
-    `${esc(k)}: <b>${byKind[k]}</b>`).join(' · ');
+    `${esc(KIND_NAMES[k] || k)}: <b>${byKind[k]}</b>`).join(' · ');
   $('why-body').innerHTML =
     `<div class="why-sum">${esc(head)}${kinds ? '<br>' + kinds : ''}</div>` +
     (st.files !== undefined
@@ -981,7 +1057,8 @@ function renderLauncher() {
     const gi = GAMES.indexOf(g);
     const dead = g.runnable === false;
     return `<div class="slide${i===LAUNCH_I?' on':''}${dead ? ' dead' : ''}" data-ri="${i}" id="cvl-${gi}">` +
-      (dead ? '<span class="dead-mark">⧗<small>распаковать</small></span>' : '▶') + '</div>';
+      (dead ? '<span class="dead-mark">' + esc(formatOf(g)) + '<small>' +
+        (g.kind === 'compressed' ? 'распаковать' : 'не открыть') + '</small></span>' : '▶') + '</div>';
   }).join('');
   rail.querySelectorAll('.slide').forEach(el => {
     el.addEventListener('click', () => {
@@ -1317,7 +1394,10 @@ function loadStatus() {
     (totalGames ? ` · <b>${totalGames}</b> игр` : '') +
     (totalSize ? ` · ${esc(totalSize)}` : '');
   const folderChips = folders.length
-    ? folders.map(f => `<span class="chip x" data-uri="${esc(f.uri)}">${esc(f.name)} · ${f.games || 0}${f.size ? ' · ' + esc(f.size) : ''}<button class="rm" data-uri="${esc(f.uri)}" title="убрать из библиотеки">×</button></span>`).join('')
+    ? folders.map(f => `<span class="chip x" data-uri="${esc(f.uri)}">${esc(f.name)} · ${f.games || 0} ${plural(f.games || 0, 'игра', 'игры', 'игр')}` +
+        (f.files ? ` · ${f.files} ${plural(f.files, 'файл', 'файла', 'файлов')}` : '') +
+        (f.size ? ' · ' + esc(f.size) : '') +
+        `<button class="rm" data-uri="${esc(f.uri)}" title="убрать из библиотеки">×</button></span>`).join('')
     : '<span class="chip">папка не выбрана</span>';
   const saveChip = SAVES.path
     ? `<span class="chip tap" id="chip-saves">сейвы · ${esc(SAVES.name || 'папка')} · ${SAVES.titles || 0}${SAVES.size ? ' · ' + esc(SAVES.size) : ''}</span>`
@@ -1334,7 +1414,9 @@ function loadStatus() {
     };
   });
   const folderBar = folders.length
-    ? folders.map(f => `<b>${esc(f.name)}</b> · ${f.games || 0} игр${f.size ? ' · ' + esc(f.size) : ''}`).join('  ·  ')
+    ? folders.map(f => `<b>${esc(f.name)}</b> · ${f.games || 0} ${plural(f.games || 0, 'игра', 'игры', 'игр')}` +
+        (f.files ? ` · ${f.files} ${plural(f.files, 'файл', 'файла', 'файлов')}` : '') +
+        (f.size ? ' · ' + esc(f.size) : '')).join('  ·  ')
     : 'папка игр не выбрана — «＋ Папка»';
   const saveBar = SAVES.path
     ? `сейвы: <b>${esc(SAVES.name || SAVES.path)}</b> · ${SAVES.titles || 0}`
@@ -1968,7 +2050,20 @@ if ($('k-plug')) $('k-plug').onclick = () => {
 };
 $('sheet').addEventListener('click', e => { if (e.target.id === 'sheet') closeSheet(); });
 
-if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(()=>{});
+// Регистрация service worker - необязательная часть, но падала она
+// фатально.
+//
+// В песочном iframe (и в WebView, которому не дали https-origin) чтение
+// navigator.serviceWorker бросает SecurityError. Проверка `'serviceWorker'
+// in navigator` проходит - свойство есть в прототипе, - поэтому исключение
+// случалось уже после неё, а не после неё было пусто: строка обрывала весь
+// скрипт, и страница навсегда оставалась на «загрузка…» с нулём игр.
+// Это ровно тот белый экран, на который жаловались в прошлых раундах.
+try {
+  if ('serviceWorker' in navigator && navigator.serviceWorker) {
+    navigator.serviceWorker.register('sw.js').catch(() => {});
+  }
+} catch (e) {}
 loadGames();
 loadStatus();
 applyPlugins();
