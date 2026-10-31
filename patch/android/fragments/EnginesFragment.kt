@@ -20,6 +20,7 @@ import androidx.fragment.app.Fragment
 import androidx.lifecycle.lifecycleScope
 import com.google.android.material.button.MaterialButton
 import com.google.android.material.transition.MaterialSharedAxis
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -28,6 +29,7 @@ import org.yuzu.yuzu_emu.utils.EngineHybrid
 import org.yuzu.yuzu_emu.utils.EngineLoader
 import org.yuzu.yuzu_emu.utils.EngineStore
 import org.yuzu.yuzu_emu.utils.KenjiProbeService
+import org.yuzu.yuzu_emu.utils.Spaces
 import org.yuzu.yuzu_emu.utils.SymbiosisTheme
 
 /**
@@ -63,6 +65,13 @@ class EnginesFragment : Fragment() {
 
     private lateinit var root: LinearLayout
     private var busy = false
+    /**
+     * Текущая плашка прогресса.
+     *
+     * Нужна, чтобы отличить «моя плашка ещё на экране» от «экран уже
+     * перерисован, и писать в старую вьюху нельзя».
+     */
+    private var _status: TextView? = null
     private var statusLine = ""
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -361,10 +370,25 @@ class EnginesFragment : Fragment() {
             buttons.addView(filledButton("Проверить", accent) { probe(engine) })
         }
         if (state is EngineLoader.State.Missing || state is EngineLoader.State.Broken) {
-            if (EngineLoader.deviceSupported()) {
-                val mb = (EngineLoader.KNOWN_SIZE[engine] ?: 0L) / 1048576
-                buttons.addView(filledButton("Скачать ($mb МБ)", accent) { fetch(engine) })
-            }
+            // Кнопка показывается ВСЕГДА.
+            //
+            // Здесь стояло условие «если устройство поддерживается» — и на
+            // телефоне, который проверку не проходил, карточка оставалась
+            // без единой кнопки и без объяснения. Это и выглядело как
+            // «кнопка не нажимается»: нажимать было нечего.
+            //
+            // Не подходит устройство — кнопка неактивна и рядом написано,
+            // почему и что делать вместо этого.
+            val compat = runCatching { EngineLoader.verdict(ctx, engine) }
+                .getOrNull()
+            val allowed = compat?.supported ?: true
+            val mb = (EngineLoader.KNOWN_SIZE[engine] ?: 0L) / 1048576
+            val label = if (allowed) "Скачать ($mb МБ)" else "Скачать нельзя"
+            buttons.addView(
+                filledButton(label, accent) {
+                    if (allowed) fetch(engine) else statusLine = compat?.advice.orEmpty()
+                }.apply { isEnabled = true }
+            )
         }
         if (state is EngineLoader.State.Ready) {
             buttons.addView(outlineButton("Удалить", SymbiosisTheme.RED) {
@@ -377,7 +401,93 @@ class EnginesFragment : Fragment() {
             })
         }
         if (buttons.childCount > 0) body.addView(buttons)
+        if (!isEden) body.addView(compatBlock())
         return box
+    }
+
+    /**
+     * Что именно проверено на этом телефоне, и что делать, если не подходит.
+     *
+     * Блок стоит под карточкой второго ядра, потому что вопрос «почему у
+     * других работает, а у меня нет» возникает именно здесь. Показываются
+     * факты, по которым это можно решить без догадок: архитектура, версия
+     * системы, размер страниц памяти, выравнивание скачанного файла.
+     */
+    private fun compatBlock(): View {
+        val ctx = requireContext()
+        val verdict = runCatching { EngineLoader.verdict(ctx, EngineLoader.Engine.KENJI) }
+            .getOrNull()
+        val official = runCatching { Spaces.official(ctx) }.getOrNull()
+
+        val column = LinearLayout(ctx).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(4), dp(2), dp(4), dp(14))
+        }
+        column.addView(
+            TextView(ctx).apply {
+                text = "Проверено на этом устройстве"
+                textSize = 12f
+                setTypeface(typeface, Typeface.BOLD)
+                setTextColor(SymbiosisTheme.TEXT_DIM)
+            }
+        )
+        verdict?.details?.forEach { line ->
+            column.addView(
+                TextView(ctx).apply {
+                    text = "· $line"
+                    textSize = 12f
+                    setTextColor(SymbiosisTheme.TEXT_DIM)
+                    setPadding(0, dp(2), 0, 0)
+                }
+            )
+        }
+        if (verdict != null && !verdict.supported) {
+            column.addView(
+                TextView(ctx).apply {
+                    text = verdict.headline
+                    textSize = 13f
+                    setTypeface(typeface, Typeface.BOLD)
+                    setTextColor(SymbiosisTheme.AMBER)
+                    setPadding(0, dp(8), 0, 0)
+                }
+            )
+            if (verdict.advice.isNotEmpty()) {
+                column.addView(
+                    TextView(ctx).apply {
+                        text = verdict.advice
+                        textSize = 12f
+                        setTextColor(SymbiosisTheme.TEXT_DIM)
+                        setPadding(0, dp(4), 0, 0)
+                    }
+                )
+            }
+        }
+
+        // Официальный APK Kenji на этом устройстве работает — значит его и
+        // предлагаем, вместо «ядро несовместимо, до свидания».
+        if (official != null && official.installed) {
+            column.addView(
+                TextView(ctx).apply {
+                    text = "Установлен «${official.label}» — им можно играть так же, " +
+                        "как оригинальным приложением."
+                    textSize = 12f
+                    setTextColor(SymbiosisTheme.MINT)
+                    setPadding(0, dp(10), 0, dp(6))
+                }
+            )
+            column.addView(
+                outlineButton("Играть через «${official.label}»", SymbiosisTheme.MINT) {
+                    val opened = runCatching {
+                        Spaces.openOfficial(requireContext().applicationContext, "")
+                    }.getOrNull()
+                    val ok = opened != null && opened.contains("\"ok\":true")
+                    statusLine = if (ok) "открыл «${official.label}»" else
+                        "не удалось открыть «${official.label}»"
+                    render()
+                }
+            )
+        }
+        return column
     }
 
     /** Состояние словами. Не числами и не именами исключений. */
@@ -492,47 +602,107 @@ class EnginesFragment : Fragment() {
 
     // ── действия ───────────────────────────────────────────────────────
 
+    /**
+     * Скачивание второго ядра.
+     *
+     * Три вещи, из-за которых эта кнопка раньше «не нажималась»:
+     *
+     *  1. Флаг [busy] снимался после загрузки, но не снимался при отмене:
+     *     стоило уйти с экрана во время скачивания — и корутина отменялась,
+     *     строка `busy = false` не выполнялась, и все последующие нажатия
+     *     молча игнорировались до пересоздания экрана. Теперь `finally`.
+     *  2. Плашка прогресса добавлялась в конец прокрутки, то есть ниже
+     *     видимой части: человек нажимал кнопку и не видел ничего. Теперь
+     *     она первая сверху — рядом с кнопкой, которую нажали.
+     *  3. Любое исключение, кроме сетевого, роняло корутину без сообщения.
+     *     Теперь ловится всё, и текст попадает в ту же плашку.
+     */
     private fun fetch(engine: EngineLoader.Engine) {
-        if (busy) return
+        if (busy) {
+            statusLine = "скачивание уже идёт — подождите"
+            render()
+            return
+        }
         busy = true
 
         val ctx = requireContext()
-        val accent = SymbiosisTheme.sectionAccent(if (engine == EngineLoader.Engine.EDEN) "eden" else "kenji")
-        val status = banner("Скачиваю…", accent)
-        root.addView(status)
+        val accent = SymbiosisTheme.sectionAccent(
+            if (engine == EngineLoader.Engine.EDEN) "eden" else "kenji"
+        )
+        val status = banner("Скачиваю… 0 МБ", accent)
+        // Нулевая позиция: плашка должна быть там, где на неё смотрят.
+        root.addView(status, 0)
 
+        fun settle(text: String, color: Int) {
+            if (_status == status) _status = null
+            if (status.parent == null) return
+            status.text = text
+            status.setTextColor(color)
+            status.background = rounded(SymbiosisTheme.soft(color, 0.14f), 12)
+        }
+
+        _status = status
         viewLifecycleOwner.lifecycleScope.launch {
-            val result = withContext(Dispatchers.IO) {
-                EngineDownloader.download(ctx, engine) { done, total ->
-                    // Progress arrives on the IO thread; the view must be
-                    // touched on the main one. Posting to the view's own
-                    // handler keeps this correct without another coroutine
-                    // per chunk.
-                    val text = if (total > 0) {
-                        "Скачиваю… ${done / 1048576} из ${total / 1048576} МБ"
-                    } else {
-                        "Скачиваю… ${done / 1048576} МБ"
+            try {
+                val result = withContext(Dispatchers.IO) {
+                    EngineDownloader.download(ctx, engine) { done, total ->
+                        // Progress arrives on the IO thread; the view must be
+                        // touched on the main one. Posting to the view's own
+                        // handler keeps this correct without another coroutine
+                        // per chunk.
+                        val text = if (total > 0) {
+                            "Скачиваю… ${done / 1048576} из ${total / 1048576} МБ"
+                        } else {
+                            "Скачиваю… ${done / 1048576} МБ"
+                        }
+                        status.post { if (status.parent != null) status.text = text }
                     }
-                    status.post { status.text = text }
                 }
-            }
-            busy = false
-            if (!result.ok) {
-                status.text = result.message
-                status.setTextColor(SymbiosisTheme.RED)
-                status.background = rounded(SymbiosisTheme.soft(SymbiosisTheme.RED, 0.14f), 12)
-            } else {
+                if (!result.ok) {
+                    settle(result.message, SymbiosisTheme.RED)
+                    return@launch
+                }
+
+                // Скачано — проверяем, загрузится ли именно на этом
+                // телефоне. «Скачалось, а не запускается» должно быть
+                // названо здесь, а не выясняться при первом запуске игры.
+                val verdict = withContext(Dispatchers.IO) {
+                    EngineLoader.verdict(ctx, engine)
+                }
+                if (!verdict.supported) {
+                    val text = "Скачано, но это устройство ядро не запустит: " +
+                        verdict.headline + ". " + verdict.advice
+                    // Перерисовка стирает плашку, поэтому итог остаётся
+                    // строкой состояния — она живёт до следующего действия.
+                    statusLine = text
+                    settle(text, SymbiosisTheme.AMBER)
+                    render()
+                    return@launch
+                }
+
                 // Load it straight away rather than at the next launch: if the
                 // core is going to be refused, the person who just waited for
-                // 55 MB should find out now.
+                // 57 MB should find out now.
                 val err = withContext(Dispatchers.IO) { EngineLoader.load(ctx, engine) }
                 if (err != null) {
-                    status.text = "Скачано, но не загрузилось: $err"
-                    status.setTextColor(SymbiosisTheme.AMBER)
+                    val text = "Скачано, но не загрузилось: $err"
+                    statusLine = text
+                    settle(text, SymbiosisTheme.AMBER)
+                    render()
                     return@launch
                 }
                 statusLine = "второе ядро скачано · настройки у него свои"
                 render()
+            } catch (t: Throwable) {
+                // Отмена корутины — не ошибка и не повод для красной плашки,
+                // но флаг снять обязан `finally`.
+                if (t is CancellationException) return@launch
+                settle(
+                    "скачивание прервалось: ${t.message ?: t.javaClass.simpleName}",
+                    SymbiosisTheme.RED
+                )
+            } finally {
+                busy = false
             }
         }
     }

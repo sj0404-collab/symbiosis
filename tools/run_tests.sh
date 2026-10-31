@@ -129,6 +129,9 @@ if command -v kotlinc >/dev/null 2>&1; then
       # Список папок с играми: после сбоя у пользователя осталась одна папка
       # из четырёх. Правила восстановления проверяются без телефона.
       GameFolderListTest) echo "$HERE/patch/android/utils/GameFolderList.kt" ;;
+      # Совместимость ядра с устройством: разбор ELF и auxv, вывод «подходит/
+      # не подходит» с причиной. Чистые функции над байтами.
+      DeviceCompatTest) echo "$HERE/patch/android/utils/DeviceCompat.kt" ;;
       # Плагины: разбор JSON, проверка правил, порядок применения и пометки на
       # плитках. Чистый Kotlin, поэтому проверяется целиком на хосте.
       PluginEngineTest) echo "$HERE/patch/android/utils/PluginJson.kt \

@@ -277,7 +277,7 @@ jobs:
                        EnginesFragment EngineHybrid EngineStore \
                        PluginsFragment PluginEngine PluginStore \
                        GameFoldersStore GameFolderList ConverterService \
-                       Converter ExitTrace; do
+                       Converter ExitTrace DeviceCompat; do
               if strings classes*.dex | grep -q "$sym"; then echo "  ok   $sym in dex"
               else echo "  MISSING $sym"; fail=1; fi
             done

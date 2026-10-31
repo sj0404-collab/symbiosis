@@ -38,6 +38,7 @@ import org.yuzu.yuzu_emu.utils.GameHelper
 import org.yuzu.yuzu_emu.utils.NativeLibraryPresenter
 import org.yuzu.yuzu_emu.utils.PluginEngine
 import org.yuzu.yuzu_emu.utils.PluginStore
+import org.yuzu.yuzu_emu.utils.Spaces
 import org.yuzu.yuzu_emu.utils.SymbiosisTheme
 import org.yuzu.yuzu_emu.utils.collect
 
@@ -477,6 +478,23 @@ class NativeLauncherFragment : Fragment() {
             is EngineLoader.State.Missing -> getString(R.string.launcher_core_kenji_missing)
             is EngineLoader.State.Broken -> getString(R.string.launcher_core_kenji_broken, state.reason)
             else -> getString(R.string.launcher_core_kenji_failed)
+        }
+
+        // Своё ядро не готово — но на телефоне может стоять официальный Kenji,
+        // и он там работает. Отдать игру ему честнее, чем молча запустить на
+        // Eden и сделать вид, что так и задумано: человек выбрал Kenji.
+        val official = runCatching { Spaces.official(ctx) }.getOrNull()
+        if (official != null && official.installed) {
+            val handed = runCatching { Spaces.openOfficial(ctx, game.path) }.getOrNull()
+            val opened = handed != null && handed.contains("\"ok\":true")
+            if (opened) {
+                Snackbar.make(
+                    binding.root,
+                    "Открыл игру в «${official.label}»: своё ядро не готово ($why).",
+                    Snackbar.LENGTH_LONG
+                ).show()
+                return
+            }
         }
         Snackbar.make(binding.root, why, Snackbar.LENGTH_LONG).show()
         navigateToGame(game)
