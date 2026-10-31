@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+SPDX-FileCopyrightText: Copyright 2026 Eden Symbiosis Project
+SPDX-License-Identifier: GPL-3.0-or-later
+
+Фон экрана: сверху холодное синее свечение, ниже — база приложения.
+
+Почему не сплошной цвет: сплошной тёмный фон делает все экраны одинаковыми,
+и «где я» приходится вспоминать по заголовку. Свечение сверху — как подсветка
+консоли: экран узнаётся по силуэту, а текст остаётся на почти чёрном.
+Цвета совпадают с SymbiosisTheme.BASE, поэтому подложка не спорит с
+карточками.
+-->
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="rectangle">
+    <gradient
+        android:angle="270"
+        android:centerColor="#0E1116"
+        android:centerY="0.32"
+        android:endColor="#0E1116"
+        android:startColor="#16223C"
+        android:type="linear" />
+</shape>

@@ -19,7 +19,7 @@ test can check without an emulator.
     android:id="@+id/coordinator_launcher"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="?attr/colorSurface">
+    android:background="@drawable/bg_sym_screen">
 
     <com.google.android.material.appbar.AppBarLayout
         android:id="@+id/appbar_launcher"

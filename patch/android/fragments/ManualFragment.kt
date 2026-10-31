@@ -24,6 +24,7 @@ import org.yuzu.yuzu_emu.R
 import org.yuzu.yuzu_emu.databinding.FragmentManualBinding
 import org.yuzu.yuzu_emu.utils.ConverterPicker
 import org.yuzu.yuzu_emu.utils.Manual
+import org.yuzu.yuzu_emu.utils.SymbiosisTheme
 
 /**
  * Инструкция пользования.
@@ -94,6 +95,10 @@ class ManualFragment : Fragment() {
             // «ничего не нашлось» и «руководство не загрузилось» - разные
             // вещи, и человеку важно понимать, какая из них случилась.
             val row = layoutInflater.inflate(R.layout.item_manual_step, container, false)
+            row.findViewById<TextView>(R.id.text_manual_step_number).apply {
+                text = "?"
+                setTextColor(SymbiosisTheme.TEXT_DIM)
+            }
             row.findViewById<TextView>(R.id.text_manual_step_title)
                 .setText(R.string.manual_search_empty_title)
             row.findViewById<TextView>(R.id.text_manual_step_text)
@@ -102,14 +107,36 @@ class ManualFragment : Fragment() {
             return
         }
 
+        val density = resources.displayMetrics.density
+        fun dp(v: Int) = (v * density).toInt()
+
         sections.forEach { section ->
             val card = layoutInflater.inflate(R.layout.card_manual_section, container, false)
-            card.findViewById<TextView>(R.id.text_manual_section_title).text = section.title
+
+            // Цвет раздела: ключ — id раздела, а не позиция. Разделы
+            // переставляются при правках текста, и цвет «Двух ядер» не должен
+            // уезжать на другое место от того, что выше вставили абзац.
+            val accent = SymbiosisTheme.accent("guide:" + section.id)
+            card.findViewById<TextView>(R.id.text_manual_section_title).apply {
+                text = section.title
+                setTextColor(accent)
+            }
             card.findViewById<TextView>(R.id.text_manual_section_intro).text = section.intro
+            card.findViewById<View>(R.id.view_manual_accent).setBackgroundColor(accent)
+            (card as com.google.android.material.card.MaterialCardView).strokeColor =
+                SymbiosisTheme.soft(accent, 0.30f)
 
             val stepsContainer = card.findViewById<LinearLayout>(R.id.container_manual_steps)
-            section.steps.forEach { step ->
+            section.steps.forEachIndexed { index, step ->
                 val row = layoutInflater.inflate(R.layout.item_manual_step, stepsContainer, false)
+                row.findViewById<TextView>(R.id.text_manual_step_number).apply {
+                    text = (index + 1).toString()
+                    setTextColor(accent)
+                    background = android.graphics.drawable.GradientDrawable().apply {
+                        cornerRadius = dp(13).toFloat()
+                        setColor(SymbiosisTheme.soft(accent, 0.16f))
+                    }
+                }
                 row.findViewById<TextView>(R.id.text_manual_step_title).text = step.title
                 row.findViewById<TextView>(R.id.text_manual_step_text).text = step.text
                 stepsContainer.addView(row)

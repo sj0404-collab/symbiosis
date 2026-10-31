@@ -34,6 +34,7 @@ import org.yuzu.yuzu_emu.utils.EngineLoader
 import org.yuzu.yuzu_emu.utils.EngineStore
 import org.yuzu.yuzu_emu.utils.GameHelper
 import org.yuzu.yuzu_emu.utils.NativeLibraryPresenter
+import org.yuzu.yuzu_emu.utils.SymbiosisTheme
 import org.yuzu.yuzu_emu.utils.collect
 
 /**
@@ -123,6 +124,7 @@ class NativeLauncherFragment : Fragment() {
             setHasFixedSize(false)
         }
 
+        applyTheme()
         buildFilterChips()
         bindActions()
 
@@ -148,6 +150,50 @@ class NativeLauncherFragment : Fragment() {
         }
 
         setInsets()
+    }
+
+    /**
+     * Цвет экрана.
+     *
+     * Шесть верхних кнопок делают разные вещи, и раньше все шесть выглядели
+     * одинаково: чтобы найти «Конвертер», приходилось читать каждую. Теперь
+     * у каждой свой цвет, и он же повторяется на её экране — цвет становится
+     * подписью, а не украшением.
+     *
+     * Тона приглушённые (16 % акцента на тёмном), текст — сам акцент: так
+     * кнопка остаётся читаемой на солнце и не превращает строку в радугу.
+     */
+    private fun applyTheme() {
+        val density = resources.displayMetrics.density
+        fun dp(v: Int) = (v * density).toInt()
+
+        fun tint(button: com.google.android.material.button.MaterialButton, accent: Int) {
+            button.backgroundTintList = android.content.res.ColorStateList.valueOf(
+                SymbiosisTheme.soft(accent, 0.16f)
+            )
+            button.setTextColor(accent)
+            button.strokeWidth = 0
+            button.cornerRadius = dp(14)
+        }
+
+        tint(binding.buttonLauncherRescan, SymbiosisTheme.CYAN)
+        tint(binding.buttonLauncherFolders, SymbiosisTheme.LIME)
+        tint(binding.buttonLauncherConvert, SymbiosisTheme.AMBER)
+        tint(binding.buttonLauncherKeys, SymbiosisTheme.VIOLET)
+        tint(binding.buttonLauncherTools, SymbiosisTheme.PINK)
+        tint(binding.buttonLauncherHelp, SymbiosisTheme.BLUE)
+
+        binding.toolbarLauncher.title = getString(R.string.launcher_title)
+
+        binding.layoutLauncherSearch.setBoxStrokeColor(SymbiosisTheme.soft(SymbiosisTheme.CYAN, 0.55f))
+        binding.layoutLauncherSearch.setHintTextColor(
+            android.content.res.ColorStateList.valueOf(SymbiosisTheme.soft(SymbiosisTheme.CYAN, 0.85f))
+        )
+        binding.layoutLauncherSearch.boxCornerRadius = dp(16)
+        binding.layoutLauncherSearch.setBoxBackgroundColor(SymbiosisTheme.soft(SymbiosisTheme.CYAN, 0.05f))
+
+        binding.textLauncherSummary.setTextColor(SymbiosisTheme.CYAN)
+        binding.textLauncherEmpty.setTextColor(SymbiosisTheme.TEXT_DIM)
     }
 
     /**
@@ -191,6 +237,22 @@ class NativeLauncherFragment : Fragment() {
                 text = getString(label)
                 isCheckable = true
                 isChecked = index == 0
+                // Выбранный фильтр — цветом библиотеки: строка «какой фильтр
+                // включён» должна читаться одним взглядом, без прочтения.
+                chipBackgroundColor = android.content.res.ColorStateList(
+                    arrayOf(intArrayOf(android.R.attr.state_checked), intArrayOf()),
+                    intArrayOf(
+                        SymbiosisTheme.soft(SymbiosisTheme.CYAN, 0.22f),
+                        SymbiosisTheme.CARD
+                    )
+                )
+                setTextColor(
+                    android.content.res.ColorStateList(
+                        arrayOf(intArrayOf(android.R.attr.state_checked), intArrayOf()),
+                        intArrayOf(SymbiosisTheme.CYAN, SymbiosisTheme.TEXT_DIM)
+                    )
+                )
+                chipStrokeWidth = 0f
                 setOnClickListener {
                     filter = id
                     render()
