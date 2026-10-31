@@ -48,6 +48,44 @@ object GameFolderList {
     }
 
     /**
+     * Ключ файла, одинаковый независимо от того, из какой папки его нашли.
+     *
+     * Вот из-за чего появлялись дубликаты. Один и тот же файл приходит с
+     * разным URI, если пользователь добавил и родительскую папку, и
+     * вложенную:
+     *
+     *   …/tree/primary%3AGames/document/primary%3AGames%2FSwitch%2Fx.nsp
+     *   …/tree/primary%3AGames%2FSwitch/document/primary%3AGames%2FSwitch%2Fx.nsp
+     *
+     * Различается часть `/tree/…` — она описывает, ЧЕРЕЗ ЧТО смотрят, а не
+     * что смотрят. Отпечаток файла — часть после `/document/`, то есть
+     * идентификатор документа. По нему и надо склеивать.
+     *
+     * Регистр не трогаем: на внутренней памяти `Game.nsp` и `game.nsp` —
+     * разные файлы, и «умное» приведение к нижнему регистру склеило бы две
+     * настоящие игры в одну.
+     */
+    fun fileKey(uri: String): String {
+        val normalised = normalise(uri)
+        val marker = "/document/"
+        val at = normalised.lastIndexOf(marker)
+        if (at < 0) return normalised  // file:// или что-то не документное
+        val doc = normalised.substring(at + marker.length)
+        return runCatching { java.net.URLDecoder.decode(doc, "UTF-8") }.getOrDefault(doc)
+    }
+
+    /**
+     * Убирает повторы файлов, найденных через разные папки.
+     *
+     * Первая запись остаётся: порядок в библиотеке — это порядок обхода, и
+     * переставлять плитки при каждом сканировании нельзя.
+     */
+    fun uniqueFiles(paths: List<String>): List<String> {
+        val seen = HashSet<String>()
+        return paths.filter { seen.add(fileKey(it)) }
+    }
+
+    /**
      * Имя папки для показа.
      *
      * Tree-URI выглядит как `…/tree/primary%3AGames%2FSwitch`: всё, что

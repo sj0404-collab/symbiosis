@@ -15,6 +15,16 @@ object NativeSymbiosis {
     private const val RECORD_SEP = '\u001e'
 
     // --- Diagnostics -----------------------------------------------------
+
+    /**
+     * Папка журнала ядра — по мнению самого ядра.
+     *
+     * Путь не выводится в Kotlin из `filesDir`: корень данных настраивается
+     * (SharedDataDirectory), и после переноса в общую папку журнал лежит не
+     * там, где его ждёт догадка.
+     */
+    external fun logDirectory(): String
+
     external fun getDriverTopology(): String
     external fun getMemoryState(): String
     external fun getMemoryJson(): String

@@ -264,7 +264,7 @@ object Converter {
         incoming.delete()
         if (bytes <= 0L || !dest.isFile) {
             dest.delete()
-            return@runCatching fail(error.ifBlank { "конвертация не вышла" }, name)
+            return@runCatching fail(reasonText(error), name)
         }
         val card = probeFile(dest)
         card.put("ok", card.optBoolean("canLaunch"))
@@ -278,6 +278,9 @@ object Converter {
     }.getOrElse {
         fail(it.message ?: "сбой конвертера", "?")
     }
+
+    /** Причина отказа: см. [ConverterReasons]. */
+    internal fun reasonText(error: String): String = ConverterReasons.text(error)
 
     /**
      * Кладёт готовый файл в «Загрузки» отдельной копией.

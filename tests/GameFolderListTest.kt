@@ -178,6 +178,48 @@ fun main() {
         "Plain"
     )
 
+    // --- дубликаты одного файла из разных папок --------------------------
+    //
+    // Пользователь добавил `Games` и `Games/Switch`. Один и тот же файл
+    // приходит с двумя URI, отличающимися частью `/tree/…`, и раньше это
+    // давало две плитки одной игры.
+    val viaParent =
+        "content://com.android.externalstorage.documents/tree/primary%3AGames" +
+            "/document/primary%3AGames%2FSwitch%2Fgame.nsp"
+    val viaChild =
+        "content://com.android.externalstorage.documents/tree/primary%3AGames%2FSwitch" +
+            "/document/primary%3AGames%2FSwitch%2Fgame.nsp"
+    eq(
+        "один файл через разные папки даёт один ключ",
+        GameFolderList.fileKey(viaParent),
+        GameFolderList.fileKey(viaChild)
+    )
+    check(
+        "ключ файла — это путь внутри хранилища, без части /tree/",
+        GameFolderList.fileKey(viaParent) == "primary:Games/Switch/game.nsp",
+        GameFolderList.fileKey(viaParent)
+    )
+    check(
+        "разные файлы дают разные ключи",
+        GameFolderList.fileKey(viaParent) !=
+            GameFolderList.fileKey(viaParent.replace("game.nsp", "other.nsp"))
+    )
+    check(
+        "регистр не склеивает две настоящие игры",
+        GameFolderList.fileKey(viaParent) !=
+            GameFolderList.fileKey(viaParent.replace("game.nsp", "Game.nsp"))
+    )
+    eq(
+        "повторы убираются, порядок сохраняется",
+        GameFolderList.uniqueFiles(listOf(viaParent, viaChild, viaParent)),
+        listOf(viaParent)
+    )
+    eq(
+        "разные файлы не схлопываются",
+        GameFolderList.uniqueFiles(listOf(viaParent, viaChild.replace("game.nsp", "b.nsp"))).size,
+        2
+    )
+
     println()
     println("passed=$passed failed=${failures.size}")
     failures.forEach { println("FAIL  $it") }

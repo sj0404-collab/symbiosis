@@ -13,6 +13,7 @@
 #include <jni.h>
 
 #include "common/android/android_common.h"
+#include "common/fs/path_util.h"
 #include "common/logging.h"
 #include "common/settings.h"
 #include "common/symbiosis/abi_shim.h"
@@ -91,6 +92,20 @@ Symbiosis::DriverOrigin CurrentOrigin() {
 } // Anonymous namespace
 
 extern "C" {
+
+/**
+ * Папка, в которую ядро пишет свой журнал.
+ *
+ * Корень данных настраивается, поэтому «Android/data/<пакет>/files/log» —
+ * только значение по умолчанию. Спрашиваем путь у самого ядра: журнал ищется
+ * там, где его файловый backend действительно создаёт, и после переноса
+ * данных в общую папку экран продолжает работать.
+ */
+JNIEXPORT jstring JNICALL
+Java_org_yuzu_yuzu_1emu_utils_NativeSymbiosis_logDirectory(JNIEnv* env, jobject) {
+    const auto& dir = Common::FS::GetEdenPath(Common::FS::EdenPath::LogDir);
+    return Common::Android::ToJString(env, dir.string());
+}
 
 JNIEXPORT jstring JNICALL
 Java_org_yuzu_yuzu_1emu_utils_NativeSymbiosis_getDriverTopology(JNIEnv* env, jobject) {

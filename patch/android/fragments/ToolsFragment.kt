@@ -98,6 +98,16 @@ class ToolsFragment : Fragment() {
                     { nav(R.id.action_global_cloudFragment) }
                 )
             )
+            // Журнал ядра — рядом с диагностикой: это тот же вопрос «почему
+            // не работает», но про конкретный запуск, а не про устройство.
+            add(
+                HomeSetting(
+                    R.string.kernel_log_title,
+                    R.string.kernel_log_description,
+                    R.drawable.ic_verified,
+                    { nav(R.id.action_global_kernelLogFragment) }
+                )
+            )
             add(
                 HomeSetting(
                     R.string.fps_tuning,

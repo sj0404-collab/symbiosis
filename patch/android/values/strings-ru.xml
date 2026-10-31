@@ -1528,4 +1528,6 @@
     <string name="cloud_title">Облако</string>
     <string name="cloud_description">Сейвы в облаке: Яндекс.Диск, Nextcloud, свой сервер</string>
     <string name="launcher_saves_menu">Сейвы и прогресс</string>
+    <string name="kernel_log_title">Журнал ядра</string>
+    <string name="kernel_log_description">Что говорило ядро в этом и прошлом запуске. Копировать, отправить, очистить.</string>
 </resources>

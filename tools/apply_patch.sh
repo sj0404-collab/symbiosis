@@ -450,6 +450,45 @@ open(path, 'w', encoding='utf-8').write(text)
 print('  declared ConverterService (specialUse)')
 PYCONV
 
+# Новые .cpp сами в список не попадут: upstream_changes.patch перечисляет
+# файлы common руками, а хунки в нём уже сдвинуты. Поэтому список
+# дополняется здесь, и отдельно проверяется результат: без строки в CMake
+# символы Ncz::* и Aes::* остаются неразрешёнными, и падает не компиляция, а
+# линковка libyuzu-android — через двадцать минут и без указания на причину.
+CMCOMMON="$E/src/common/CMakeLists.txt"
+for extra in symbiosis/ncz.cpp symbiosis/ncz.h symbiosis/aes128.cpp symbiosis/aes128.h symbiosis/zstd_include.h; do
+  [ -f "$E/src/$extra" ] || echo "  ::warning:: $extra не скопирован" >&2
+done
+if [ -f "$CMCOMMON" ] && ! grep -q "symbiosis/ncz.cpp" "$CMCOMMON"; then
+python3 - "$CMCOMMON" <<'PYNCZ'
+import re
+import sys
+path = sys.argv[1]
+text = open(path, encoding='utf-8').read()
+anchor = '    symbiosis/rom_tools.cpp'
+extra = '    symbiosis/aes128.cpp\n    symbiosis/aes128.h\n    symbiosis/ncz.cpp\n    symbiosis/ncz.h\n    symbiosis/zstd_include.h\n'
+if anchor in text:
+    text = text.replace(anchor, extra + anchor, 1)
+else:
+    idx = text.find('symbiosis/')
+    if idx < 0:
+        print('  ::warning:: no symbiosis sources in common CMakeLists')
+        raise SystemExit(0)
+    line_start = text.rfind('\n', 0, idx) + 1
+    text = text[:line_start] + extra + text[line_start:]
+open(path, 'w', encoding='utf-8').write(text)
+print('  added ncz/aes128 sources to common CMakeLists')
+PYNCZ
+
+# Строка в CMakeLists.txt должна быть ровно одна; повторный запуск скрипта на
+# неочищенном дереве не должен добавлять файлы дважды.
+dups=$(grep -c "symbiosis/ncz.cpp" "$CMCOMMON")
+if [ "$dups" != "1" ]; then
+  echo "ERROR: symbiosis/ncz.cpp встречается в common CMakeLists $dups раз" >&2
+  exit 1
+fi
+fi
+
 changed=$(git status --porcelain | wc -l)
 echo "PATCH_APPLIED files=$changed"
 if [ "$changed" -lt 80 ]; then

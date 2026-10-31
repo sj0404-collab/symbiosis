@@ -97,7 +97,11 @@ jobs:
       - name: Install NDK, CMake and glslang
         run: |
           sdkmanager --install "ndk;28.2.13676358" "cmake;3.31.6" "build-tools;35.0.0" "platforms;android-36"
-          sudo apt-get update -qq && sudo apt-get install -y glslang-tools
+          sudo apt-get update -qq
+          # libzstd-dev — не для сборки APK, а для теста распаковки NSZ: без
+          # него tools/run_tests.sh отказывается работать, потому что «NSZ не
+          # распаковывается» уже один раз доехало до пользователя.
+          sudo apt-get install -y glslang-tools libzstd-dev
 
       - name: Cache Gradle
         uses: actions/cache@v4
@@ -279,7 +283,9 @@ jobs:
                        GameFoldersStore GameFolderList ConverterService \
                        Converter ExitTrace DeviceCompat \
                        SavesOverview ProgressMarks CloudSync CloudSettings \
-                       WebDavClient WebDavParse SavesFragment CloudFragment; do
+                       WebDavClient WebDavParse SavesFragment CloudFragment \
+                       KernelLog KernelLogFormat KernelLogFragment \
+                       ConverterReasons; do
               if strings classes*.dex | grep -q "$sym"; then echo "  ok   $sym in dex"
               else echo "  MISSING $sym"; fail=1; fi
             done

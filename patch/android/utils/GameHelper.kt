@@ -283,9 +283,18 @@ object GameHelper {
         GameFoldersStore.keep(gameDirs.map { GameFolderList.Entry(it.uriString, it.deepScan) })
 
         // Одна и та же игра может быть найдена дважды — если пользователь
-        // добавил и родительскую папку, и вложенную. Плитки-дубли появились
-        // бы ровно у тех, кто разложил игры по подпапкам. Отсекаем по пути.
-        val unique = games.distinctBy { it.path }
+        // добавил и родительскую папку, и вложенную.
+        //
+        // Отсекать по `path` было недостаточно: путь — это весь URI, а он
+        // отличается частью `/tree/…` у каждой папки, через которую файл
+        // нашли. Родитель даёт
+        //   …/tree/primary%3AGames/document/primary%3AGames%2FА%2Fигра.nsp
+        // а сама вложенная папка —
+        //   …/tree/primary%3AGames%2FА/document/primary%3AGames%2FА%2Fигра.nsp
+        // Две строки, один файл, две плитки. Поэтому ключ берётся по
+        // идентификатору документа (GameFolderList.fileKey).
+        val seenFiles = HashSet<String>()
+        val unique = games.filter { seenFiles.add(GameFolderList.fileKey(it.path)) }
 
         // Cache list of games found on disk
         val serializedGames = mutableSetOf<String>()

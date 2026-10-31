@@ -2195,4 +2195,6 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
     <string name="cloud_title">Cloud</string>
     <string name="cloud_description">Saves in the cloud: Yandex.Disk, Nextcloud, your own server</string>
     <string name="launcher_saves_menu">Saves and progress</string>
+    <string name="kernel_log_title">Core log</string>
+    <string name="kernel_log_description">What the core said in this and the previous run. Copy, share, clear.</string>
 </resources>

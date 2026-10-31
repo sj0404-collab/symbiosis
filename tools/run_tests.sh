@@ -57,6 +57,21 @@ void FmtLogMessageImpl(Class, Level, const char*, unsigned int, const char*,
 } // namespace Common::Log
 STUB
 
+# zstd нужен по-настоящему: без него NSZ не распаковывается, и именно это
+# раньше уходило в APK незамеченным. Поэтому пакет обязателен, а не «если
+# найдётся»: отсутствие libzstd-dev — ошибка окружения, а не повод тихо
+# пропустить тест распаковки.
+ZSTD_FLAGS=""
+ZSTD_LIBS=""
+if printf '#include <zstd.h>\nint main(){return 0;}\n' | g++ -x c++ -o "$BUILD/zstd_probe" -lzstd - >/dev/null 2>&1; then
+  ZSTD_FLAGS="-DSYMBIOSIS_HOST_ZSTD"
+  ZSTD_LIBS="-lzstd"
+else
+  echo "libzstd-dev не найден (нужен для теста распаковки NSZ)." >&2
+  echo "  sudo apt-get install -y libzstd-dev" >&2
+  exit 1
+fi
+
 CORE="$S/symbiosis_log.cpp $S/symbiosis_types.cpp $BUILD/log_stub.cpp"
 # Settings::values lives here; several tests read or write real settings.
 SETTINGS="$E/src/common/settings.cpp"
@@ -65,7 +80,8 @@ deps_for() {
   case "$1" in
     t_mali|t_parse) echo "$S/mali_tuning.cpp $CORE" ;;
     t_fw)           echo "$S/firmware_vault.cpp $CORE" ;;
-    t_rom)          echo "$S/rom_tools.cpp $CORE" ;;
+    t_rom)          echo "$S/rom_tools.cpp $S/ncz.cpp $S/aes128.cpp $CORE" ;;
+    t_nsz)          echo "$S/rom_tools.cpp $S/ncz.cpp $S/aes128.cpp $CORE" ;;
     t_save)         echo "$S/save_guard.cpp $S/thermal_monitor.cpp $CORE" ;;
     t_guard)        echo "$CORE" ;;
     t_modes)        echo "$S/auto_modes.cpp $S/device_profiles.cpp $SETTINGS $CORE" ;;
@@ -82,9 +98,11 @@ for f in "$HERE"/tests/t_*.cpp; do
   n=$(basename "$f" .cpp)
   # shellcheck disable=SC2046
   # shellcheck disable=SC2086
-  if g++ -std=c++20 -O1 $FMT_FLAGS -I"$E/src" -o "$BUILD/$n" "$f" $(deps_for "$n") $LINK_FMT \
-       > "$BUILD/$n.err" 2>&1; then
-    if out=$("$BUILD/$n" 2>&1); then
+  if g++ -std=c++20 -O1 $FMT_FLAGS $ZSTD_FLAGS -I"$E/src" -o "$BUILD/$n" "$f" $(deps_for "$n") \
+       $LINK_FMT $ZSTD_LIBS > "$BUILD/$n.err" 2>&1; then
+    # Тестам NSZ нужны файлы-образцы; путь передаётся явно, чтобы бинарник
+    # работал и запущенный из любой папки.
+    if out=$(SYMBIOSIS_TEST_DATA="$HERE/tests/data" "$BUILD/$n" 2>&1); then
       echo "  PASS  $n — $(printf '%s' "$out" | tail -1)"; pass=$((pass+1))
     else
       echo "  FAIL  $n"; printf '%s\n' "$out" | tail -5 | sed 's/^/        /'
@@ -137,6 +155,14 @@ if command -v kotlinc >/dev/null 2>&1; then
       SavesOverviewTest) echo "$HERE/patch/android/utils/SavesOverview.kt" ;;
       # WebDAV: разбор ответов сервера и сборка путей.
       WebDavParseTest) echo "$HERE/patch/android/utils/WebDavParse.kt" ;;
+      # Журнал ядра: чтение хвоста файла и подсчёт ошибок. Чистый Kotlin без
+      # Android — поэтому проверяется на хосте; ошибка здесь означает
+      # OutOfMemory на телефоне или «ошибок: 0» при семи ошибках.
+      KernelLogTest) echo "$HERE/patch/android/utils/KernelLogFormat.kt" ;;
+      # Причины отказа конвертера: таблица «сообщение ядра → фраза для
+      # человека». Ошибка здесь означает, что вместо причины человек увидит
+      # «не удалось».
+      ConverterReasonsTest) echo "$HERE/patch/android/utils/ConverterReasons.kt" ;;
       # Плагины: разбор JSON, проверка правил, порядок применения и пометки на
       # плитках. Чистый Kotlin, поэтому проверяется целиком на хосте.
       PluginEngineTest) echo "$HERE/patch/android/utils/PluginJson.kt \

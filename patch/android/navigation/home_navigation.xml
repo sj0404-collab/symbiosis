@@ -188,6 +188,13 @@
     <action
         android:id="@+id/action_global_cloudFragment"
         app:destination="@id/cloudFragment" />
+    <fragment
+        android:id="@+id/kernelLogFragment"
+        android:name="org.yuzu.yuzu_emu.fragments.KernelLogFragment"
+        android:label="KernelLogFragment" />
+    <action
+        android:id="@+id/action_global_kernelLogFragment"
+        app:destination="@id/kernelLogFragment" />
 
     <fragment
         android:id="@+id/toolsFragment"

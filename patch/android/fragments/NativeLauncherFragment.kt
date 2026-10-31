@@ -306,12 +306,18 @@ class NativeLauncherFragment : Fragment() {
         image: android.widget.ImageView,
         monogram: android.widget.TextView
     ) {
+        if (item.path.isBlank()) return
         val game = gamesByPath[item.path]
-        if (game == null || item.path.isBlank()) return
-        // Метка ставится ДО запроса: ответ приходит асинхронно, и ячейка к
-        // тому моменту может уже показывать другую игру. Без метки чужая
-        // обложка попадала бы в соседнюю строку.
-        image.tag = item.path
+        if (game == null) {
+            // Игры нет в карте (перерисовка во время заполнения) — показываем
+            // букву и ничего не грузим. Метку НЕ трогаем: она уже стоит с
+            // привязки ячейки, и запоздавший ответ прошлой игры отсеется.
+            image.isVisible = false
+            monogram.isVisible = true
+            return
+        }
+        // Метка выставляется при привязке ячейки в адаптере; здесь только
+        // читаем её в колбэке, чтобы отсеять ответ прошлой игры.
         GameIconUtils.loadGameIcon(game, image) { ok ->
             // Пришло не в тот момент — ячейку уже заняли другой игрой.
             val current = image.tag as? String

@@ -14,6 +14,7 @@ import androidx.recyclerview.widget.RecyclerView
 import com.google.android.material.card.MaterialCardView
 import com.google.android.material.chip.Chip
 import org.yuzu.yuzu_emu.R
+import org.yuzu.yuzu_emu.utils.GameIconUtils
 import org.yuzu.yuzu_emu.utils.NativeLibraryPresenter
 import org.yuzu.yuzu_emu.utils.SymbiosisTheme
 
@@ -81,6 +82,13 @@ class LauncherTileAdapter(
         // Сначала буква, потом картинка поверх неё. Порядок важен:
         // переиспользованная ячейка может нести обложку прошлой игры, и если
         // не сбросить, на новой строке на миг покажется чужая картинка.
+        //
+        // Сбрасывается и сама картинка, и её метка. Метка ставится ЗДЕСЬ, до
+        // любого обращения к загрузчику: если бы её ставил только загрузчик,
+        // то при любом раннем выходе из него в ячейке осталась бы метка
+        // прошлой игры, и запоздавший ответ считался бы «своим».
+        holder.cover.setImageDrawable(null)
+        holder.cover.tag = item.path
         holder.cover.isVisible = false
         holder.monogram.isVisible = true
 
@@ -121,12 +129,15 @@ class LauncherTileAdapter(
             }
         )
 
-        cover?.let { load ->
-            load(
-                item,
-                holder.cover,
-                holder.monogram
-            )
+        // Пустой путь — не игра, а строка-объяснение: картинку не просим.
+        if (item.path.isNotBlank()) {
+            cover?.let { load ->
+                load(
+                    item,
+                    holder.cover,
+                    holder.monogram
+                )
+            }
         }
 
         holder.itemView.setOnClickListener { onClick(item) }
@@ -145,6 +156,19 @@ class LauncherTileAdapter(
         chip.chipStrokeWidth = 0f
         chip.chipCornerRadius = radius.toFloat()
         chip.chipMinHeight = radius * 2.4f
+    }
+
+    /**
+     * Ячейка уходит в переработку — загрузку в неё прекращаем.
+     *
+     * Иначе запрос продолжает работать и рисует в ImageView, которую уже
+     * никто не видит, а при возврате ячейки на экран кладёт туда обложку
+     * прошлой игры.
+     */
+    override fun onViewRecycled(holder: Holder) {
+        super.onViewRecycled(holder)
+        holder.cover.tag = null
+        GameIconUtils.cancel(holder.cover)
     }
 
     class Holder(view: View) : RecyclerView.ViewHolder(view) {
