@@ -23,6 +23,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.yuzu.yuzu_emu.utils.KernelLog
+import org.yuzu.yuzu_emu.utils.KernelLogArchive
 import org.yuzu.yuzu_emu.utils.NativeSymbiosis
 import org.yuzu.yuzu_emu.utils.SymbiosisTheme
 

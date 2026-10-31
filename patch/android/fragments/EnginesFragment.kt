@@ -835,6 +835,28 @@ class EnginesFragment : Fragment() {
             .show()
     }
 
+    /**
+     * Скачано ли второе ядро, и можно ли на нём запускать.
+     *
+     * Вынесено отдельной функцией, потому что этот вопрос задают два разных
+     * места экрана — карточка ядра и «ядро по умолчанию». Две копии одной
+     * проверки разошлись бы при первом же изменении условия.
+     */
+    private fun kenjiUsable(ctx: android.content.Context): Boolean {
+        val state = EngineLoader.state(ctx, EngineLoader.Engine.KENJI)
+        return state is EngineLoader.State.Ready || state is EngineLoader.State.Builtin
+    }
+
+    // ── мелкие кирпичи ─────────────────────────────────────────────────
+
+    private fun sectionTitle(text: String, accent: Int) = TextView(requireContext()).apply {
+        this.text = text
+        textSize = 19f
+        setTypeface(typeface, Typeface.BOLD)
+        setTextColor(accent)
+        setPadding(0, dp(14), 0, dp(6))
+    }
+
     /** Плашка-сообщение: используется и для прогресса, и для итога. */
     private fun banner(text: String, accent: Int) = TextView(requireContext()).apply {
         this.text = text

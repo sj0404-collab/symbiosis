@@ -75,12 +75,15 @@ object TorrentAnnounce {
         port: Int,
         downloaded: Long,
         left: Long
-    ): Answer = if (TorrentTracker.isUdp(tracker)) {
+    ): Answer {
+        // Тело-блок, а не выражение: внутри есть ранний выход, когда адрес
+        // UDP-трекера не разбирается.
+        if (!TorrentTracker.isUdp(tracker)) {
+            return http(tracker, infoHash, peerId, port, downloaded, left)
+        }
         val endpoint = TorrentTracker.udpEndpoint(tracker)
             ?: return Answer(emptyList(), failure = "адрес трекера не разобран")
-        udp(endpoint.first, endpoint.second, infoHash, peerId, port, downloaded, left)
-    } else {
-        http(tracker, infoHash, peerId, port, downloaded, left)
+        return udp(endpoint.first, endpoint.second, infoHash, peerId, port, downloaded, left)
     }
 
     private fun http(
