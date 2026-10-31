@@ -781,6 +781,9 @@ function fillShot(i, path) {
 function play(g) {
   if (!g || !g.path || !N() || !N().launch) return;
   if (g.runnable === false) { deadAction(g); return; }
+  // Ключей нет - запуск всё равно кончится ошибкой ядра. Сказать об этом
+  // здесь честнее, чем показать чужой traceback из native.
+  if (g.needsKeys) { keysNeeded(g); return; }
   const eng = parse(call('engines'), null);
   if (eng && eng.current && eng.current !== eng.launch) {
     HOLD = g;
@@ -843,6 +846,28 @@ function deadAction(g) {
     closeSheet();
     if (N() && N().openUtilities) N().openUtilities();
   };
+  const close = $('a-close');
+  if (close) close.onclick = closeSheet;
+  openSheet();
+}
+
+// Файл читается, но без ключей консоли не расшифруется.
+//
+// Настоящий дамп без prod.keys ведёт себя именно так: контейнер разобран,
+// заголовок прочитан, а содержимое - нет. Запуск в этом состоянии даёт
+// ошибку ядра, и лучше объяснить её заранее, чем показывать пользователю
+// строку из native.
+function keysNeeded(g) {
+  HOLD = g;
+  $('sheet-title').textContent = g.title || 'Игра';
+  $('sheet-note').textContent =
+    'Файл разобран, но содержимое зашифровано. Нужны ключи консоли (prod.keys) ' +
+    'и прошивка: без них ядро не запустит ни один дамп, а не только этот.';
+  $('sheet-actions').innerHTML =
+    '<button class="go" id="a-keys">Открыть ключи</button>' +
+    '<button class="ghost" id="a-close">Закрыть</button>';
+  const open = $('a-keys');
+  if (open) open.onclick = () => { closeSheet(); if (N() && N().openUtilities) N().openUtilities(); };
   const close = $('a-close');
   if (close) close.onclick = closeSheet;
   openSheet();
