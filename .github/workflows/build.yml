@@ -285,7 +285,12 @@ jobs:
                        SavesOverview ProgressMarks CloudSync CloudSettings \
                        WebDavClient WebDavParse SavesFragment CloudFragment \
                        KernelLog KernelLogFormat KernelLogFragment \
-                       ConverterReasons; do
+                       KernelLogArchive ConverterReasons \
+                       SourcesFragment SourceBrowser SourceIndex \
+                       SourceRangeServer SourcePlayerActivity \
+                       TorrentBencode TorrentMeta TorrentPlan TorrentWire \
+                       TorrentTracker TorrentAnnounce TorrentDownload \
+                       MagnetMeta; do
               if strings classes*.dex | grep -q "$sym"; then echo "  ok   $sym in dex"
               else echo "  MISSING $sym"; fail=1; fi
             done
