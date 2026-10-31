@@ -258,9 +258,23 @@ DumpReport RomTools::Inspect(const std::string& path) {
         break;
     }
 
+    case DumpFormat::Ncz: {
+        // Сжатый одиночный NCA: размер после распаковки читается из его же
+        // заголовка, и это единственное число, которое тут интересно —
+        // сколько места понадобится на выходе.
+        report.health = DumpHealth::Unknown;
+        const u64 out = Ncz::DecompressedSize(file, 0, report.file_size);
+        report.summary = out > 0
+                             ? "Compressed NCA; it unpacks to " +
+                                   std::to_string(out / kMiB) + " MiB."
+                             : "Community compressed format.";
+        report.advice = "Open the Converter tab and turn this into an NCA. "
+                        "Eden cannot launch the compressed file as-is.";
+        break;
+    }
+
     case DumpFormat::Nsz:
     case DumpFormat::Xcz:
-    case DumpFormat::Ncz:
         report.health = DumpHealth::Unknown;
         report.summary = "Community compressed format.";
         report.advice = "Open the Converter tab and turn this into NSP/NCA. "
@@ -473,8 +487,10 @@ std::string RomTools::Describe(const DumpReport& report) {
 
 namespace {
 
-constexpr u64 kNcaHeaderSize = 0x4000;
-constexpr u64 kMaxOutBytes = 34ULL * 1024ULL * 1024ULL * 1024ULL;
+// Разбор NCZ переехал в symbiosis/ncz.cpp целиком — здесь от него не
+// осталось ни одной константы. Незамеченные `constexpr` в анонимном
+// пространстве имён ловятся только `-Wunused-const-variable`, а на Android
+// он включён как ошибка, то есть всплывает через двадцать минут сборки.
 constexpr u32 kMaxPfsFiles = 512;
 
 struct PackFile {

@@ -222,8 +222,7 @@ class BlockPump final : public Pump {
 public:
     BlockPump(std::ifstream& in, const Layout& layout)
         : Pump{layout.stream_length}, in_{in}, sizes_{layout.block_sizes},
-          block_size_{1ULL << layout.block_exponent}, data_offset_{layout.stream_offset},
-          cursor_{layout.stream_offset} {}
+          block_size_{1ULL << layout.block_exponent}, cursor_{layout.stream_offset} {}
 
     bool Next(u8* buf, std::size_t want, std::size_t& got, std::string& error) override {
         got = 0;
@@ -293,7 +292,6 @@ private:
     std::ifstream& in_;
     std::vector<u32> sizes_;
     u64 block_size_;
-    u64 data_offset_;
     u64 cursor_{0};
     std::size_t index_{0};
     std::vector<u8> block_;
