@@ -1524,4 +1524,8 @@
     <string name="converter_where">Файлы попадают в %1$s</string>
     <string name="converter_export">Сохранить в «Загрузки»</string>
     <string name="exit_trace_title">Последние шаги перед выходом</string>
+    <!-- Облако: сейвы и образы -->
+    <string name="cloud_title">Облако</string>
+    <string name="cloud_description">Сейвы в облаке: Яндекс.Диск, Nextcloud, свой сервер</string>
+    <string name="launcher_saves_menu">Сейвы и прогресс</string>
 </resources>

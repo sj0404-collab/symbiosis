@@ -7,6 +7,7 @@ import android.graphics.drawable.GradientDrawable
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
+import android.widget.ImageView
 import android.widget.TextView
 import androidx.core.view.isVisible
 import androidx.recyclerview.widget.RecyclerView
@@ -34,7 +35,20 @@ import org.yuzu.yuzu_emu.utils.SymbiosisTheme
  */
 class LauncherTileAdapter(
     private val onClick: (NativeLibraryPresenter.Item) -> Unit,
-    private val onLongClick: (NativeLibraryPresenter.Item) -> Unit
+    private val onLongClick: (NativeLibraryPresenter.Item) -> Unit,
+    /**
+     * Загрузчик обложки: item, картинка, монограмма (запасной вариант).
+     *
+     * Отдельной лямбдой, а не прямой загрузкой здесь, потому что адаптер не
+     * знает модель игры: у него только строки списка. Кто знает — тот и
+     * грузит; адаптер только освобождает место под картинку и возвращает
+     * букву, если её нет.
+     *
+     * Необязательный параметр: адаптер используется и там, где обложки не
+     * нужны (тесты, превью), и требовать его от всех значило бы ломать
+     * вызывающих ради одной строки.
+     */
+    private val cover: ((NativeLibraryPresenter.Item, ImageView, TextView) -> Unit)? = null
 ) : RecyclerView.Adapter<LauncherTileAdapter.Holder>() {
 
     private val items = mutableListOf<NativeLibraryPresenter.Item>()
@@ -63,6 +77,12 @@ class LauncherTileAdapter(
         holder.title.text = item.title
         holder.subtitle.text = item.subtitle
         holder.subtitle.isVisible = item.subtitle.isNotBlank()
+
+        // Сначала буква, потом картинка поверх неё. Порядок важен:
+        // переиспользованная ячейка может нести обложку прошлой игры, и если
+        // не сбросить, на новой строке на миг покажется чужая картинка.
+        holder.cover.isVisible = false
+        holder.monogram.isVisible = true
 
         // Буква-монограмма: обложки у файла может не быть вовсе, а пустой
         // квадрат слева читается как недогруженная картинка.
@@ -101,6 +121,14 @@ class LauncherTileAdapter(
             }
         )
 
+        cover?.let { load ->
+            load(
+                item,
+                holder.cover,
+                holder.monogram
+            )
+        }
+
         holder.itemView.setOnClickListener { onClick(item) }
         holder.itemView.setOnLongClickListener {
             onLongClick(item)
@@ -123,6 +151,7 @@ class LauncherTileAdapter(
         val card: MaterialCardView = view.findViewById(R.id.card_launcher_tile)
         val accent: View = view.findViewById(R.id.view_tile_accent)
         val monogram: TextView = view.findViewById(R.id.text_tile_monogram)
+        val cover: ImageView = view.findViewById(R.id.image_tile_cover)
         val title: TextView = view.findViewById(R.id.text_tile_title)
         val subtitle: TextView = view.findViewById(R.id.text_tile_subtitle)
         val badge: Chip = view.findViewById(R.id.chip_tile_badge)

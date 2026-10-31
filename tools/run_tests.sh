@@ -132,6 +132,11 @@ if command -v kotlinc >/dev/null 2>&1; then
       # Совместимость ядра с устройством: разбор ELF и auxv, вывод «подходит/
       # не подходит» с причиной. Чистые функции над байтами.
       DeviceCompatTest) echo "$HERE/patch/android/utils/DeviceCompat.kt" ;;
+      # Сводка по сейвам: дни, часы без сохранения, склонения. Ошибка здесь
+      # меняет решение «начинать заново или нет».
+      SavesOverviewTest) echo "$HERE/patch/android/utils/SavesOverview.kt" ;;
+      # WebDAV: разбор ответов сервера и сборка путей.
+      WebDavParseTest) echo "$HERE/patch/android/utils/WebDavParse.kt" ;;
       # Плагины: разбор JSON, проверка правил, порядок применения и пометки на
       # плитках. Чистый Kotlin, поэтому проверяется целиком на хосте.
       PluginEngineTest) echo "$HERE/patch/android/utils/PluginJson.kt \

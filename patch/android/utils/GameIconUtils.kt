@@ -163,14 +163,41 @@ object GameIconUtils {
             .onFailure { android.util.Log.e("Symbiosis", "не удалось очистить кэш иконок", it) }
     }
 
-    fun loadGameIcon(game: Game, imageView: ImageView) {
+    fun loadGameIcon(
+        game: Game,
+        imageView: ImageView,
+        onResult: ((Boolean) -> Unit)? = null
+    ) {
+        // Ошибка не должна подменять обложку серой заглушкой поверх
+        // монограммы: у большинства файлов иконки нет вовсе, и «есть буква»
+        // читается лучше, чем «есть серая картинка». Поэтому при отказе
+        // картинка просто прячется, а монограмма остаётся.
         val request = ImageRequest.Builder(YuzuApplication.appContext)
             .data(game)
             .target(imageView)
             .error(R.drawable.default_icon)
+            .listener(
+                onSuccess = { _, _ -> onResult?.invoke(true) },
+                onError = { _, _ -> onResult?.invoke(false) }
+            )
             .build()
         imageLoader.enqueue(request)
     }
+
+    /**
+     * Есть ли у этой игры обложка — без загрузки в ImageView.
+     *
+     * Нужно там, где решается вид строки (показывать картинку или букву), а
+     * не рисуется сама картинка.
+     */
+    suspend fun hasCover(game: Game): Boolean = runCatching {
+        val drawable = imageLoader.execute(
+            ImageRequest.Builder(YuzuApplication.appContext)
+                .data(game)
+                .build()
+        ).drawable
+        drawable != null
+    }.getOrDefault(false)
 
     /**
      * Обложка как Bitmap. Второе место с тем же `!!`.

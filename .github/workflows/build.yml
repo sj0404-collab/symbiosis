@@ -277,7 +277,9 @@ jobs:
                        EnginesFragment EngineHybrid EngineStore \
                        PluginsFragment PluginEngine PluginStore \
                        GameFoldersStore GameFolderList ConverterService \
-                       Converter ExitTrace DeviceCompat; do
+                       Converter ExitTrace DeviceCompat \
+                       SavesOverview ProgressMarks CloudSync CloudSettings \
+                       WebDavClient WebDavParse SavesFragment CloudFragment; do
               if strings classes*.dex | grep -q "$sym"; then echo "  ok   $sym in dex"
               else echo "  MISSING $sym"; fail=1; fi
             done
@@ -295,7 +297,8 @@ jobs:
           arsc = z.read("resources.arsc")
           for key in ("engine_choice", "launcher_core_kenji", "launcher_properties",
                       "plugins_title", "plugins_description",
-                      "converter_title", "folders_add"):
+                      "converter_title", "folders_add",
+                      "cloud_title", "launcher_saves_menu"):
               if key.encode() in arsc or key.encode("utf-16-le") in arsc:
                   print("  ok   string %s is in the resource table" % key)
               else:

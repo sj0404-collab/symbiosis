@@ -35,6 +35,7 @@ import org.yuzu.yuzu_emu.utils.EngineLoader
 import org.yuzu.yuzu_emu.utils.EngineStore
 import org.yuzu.yuzu_emu.utils.ExitTrace
 import org.yuzu.yuzu_emu.utils.GameHelper
+import org.yuzu.yuzu_emu.utils.GameIconUtils
 import org.yuzu.yuzu_emu.utils.NativeLibraryPresenter
 import org.yuzu.yuzu_emu.utils.PluginEngine
 import org.yuzu.yuzu_emu.utils.PluginStore
@@ -131,7 +132,7 @@ class NativeLauncherFragment : Fragment() {
         binding.toolbarLauncher.title = getString(R.string.launcher_title)
         binding.toolbarLauncher.subtitle = getString(R.string.launcher_subtitle)
 
-        adapter = LauncherTileAdapter(::onItemClick, ::onItemLongClick)
+        adapter = LauncherTileAdapter(::onItemClick, ::onItemLongClick, ::loadCover)
         binding.listLauncher.apply {
             layoutManager = LinearLayoutManager(requireContext())
             adapter = this@NativeLauncherFragment.adapter
@@ -281,11 +282,54 @@ class NativeLauncherFragment : Fragment() {
         }
     }
 
+    /**
+     * Игры по пути — чтобы плитка могла загрузить обложку.
+     *
+     * Плитка получает строку списка, а обложку ядро отдаёт по пути к файлу.
+     * Хранить здесь всю модель незачем: нужен только путь и название.
+     */
+    private val gamesByPath = HashMap<String, Game>()
+
+    /**
+     * Обложка плитки.
+     *
+     * Раньше нативная библиотека показывала только букву: адаптер вообще не
+     * запрашивал картинку, хотя загрузчик в приложении был (им пользуется
+     * штатный экран игр и ярлыки на рабочем столе). Отсюда и «в WebView
+     * обложки есть, а тут квадратики».
+     *
+     * Обложка берётся из того же кэша Coil, что и в штатном списке, поэтому
+     * второй раз файл не расшифровывается.
+     */
+    private fun loadCover(
+        item: NativeLibraryPresenter.Item,
+        image: android.widget.ImageView,
+        monogram: android.widget.TextView
+    ) {
+        val game = gamesByPath[item.path]
+        if (game == null || item.path.isBlank()) return
+        // Метка ставится ДО запроса: ответ приходит асинхронно, и ячейка к
+        // тому моменту может уже показывать другую игру. Без метки чужая
+        // обложка попадала бы в соседнюю строку.
+        image.tag = item.path
+        GameIconUtils.loadGameIcon(game, image) { ok ->
+            // Пришло не в тот момент — ячейку уже заняли другой игрой.
+            val current = image.tag as? String
+            if (current != null && current != item.path) return@loadGameIcon
+            image.isVisible = ok
+            monogram.isVisible = !ok
+        }
+    }
+
     /** Перерисовать список по текущему состоянию: игры, причины, фильтр, поиск. */
     private fun render() {
         if (_binding == null) return
 
         val ctx = requireContext().applicationContext
+        // Карта для обложек: заполняется каждым render(), чтобы плитки не
+        // держали ссылку на давно устаревший список игр.
+        gamesByPath.clear()
+        games.forEach { gamesByPath[it.path] = it }
         val rows = games.map { game ->
             val core = runCatching { EngineStore.coreFor(ctx, game.path) }
                 .getOrDefault(EngineHybrid.Core.EDEN)
@@ -382,6 +426,7 @@ class NativeLauncherFragment : Fragment() {
         val options = arrayOf(
             getString(R.string.launcher_core_eden),
             getString(R.string.launcher_core_kenji),
+            getString(R.string.launcher_saves_menu),
             getString(R.string.launcher_properties)
         )
         MaterialAlertDialogBuilder(requireContext())
@@ -390,6 +435,7 @@ class NativeLauncherFragment : Fragment() {
                 when (which) {
                     0 -> runOnCore(game, EngineHybrid.Core.EDEN)
                     1 -> runOnCore(game, EngineHybrid.Core.KENJI)
+                    2 -> openSaves(game)
                     else -> openProperties(game)
                 }
             }
@@ -400,6 +446,26 @@ class NativeLauncherFragment : Fragment() {
                 )
             )
             .show()
+    }
+
+    /**
+     * Сейвы и прогресс игры.
+     *
+     * Аргументами уходят только путь и название: экран сам читает сейвы с
+     * диска и не зависит от того, насколько свеж список в памяти.
+     */
+    private fun openSaves(game: Game) {
+        runCatching {
+            findNavController().navigate(
+                R.id.action_global_savesFragment,
+                android.os.Bundle().apply {
+                    putString("path", game.path)
+                    putString("title", game.title)
+                }
+            )
+        }.onFailure {
+            Snackbar.make(binding.root, R.string.launcher_nav_failed, Snackbar.LENGTH_LONG).show()
+        }
     }
 
     /** Запомнить ядро за игрой и запустить её этим ядром. */

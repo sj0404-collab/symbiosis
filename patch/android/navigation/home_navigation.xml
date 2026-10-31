@@ -160,6 +160,35 @@
     <action
         android:id="@+id/action_global_pluginsFragment"
         app:destination="@id/pluginsFragment" />
+    <!--
+        Сейвы одной игры и облако. Сейвы принимают путь игры аргументом:
+        экран открывается и с плитки библиотеки, и из свойств игры, а
+        тащить туда целый Parcelable ради двух строк незачем.
+    -->
+    <fragment
+        android:id="@+id/savesFragment"
+        android:name="org.yuzu.yuzu_emu.fragments.SavesFragment"
+        android:label="SavesFragment">
+        <argument
+            android:name="path"
+            app:argType="string"
+            android:defaultValue="" />
+        <argument
+            android:name="title"
+            app:argType="string"
+            android:defaultValue="" />
+    </fragment>
+    <action
+        android:id="@+id/action_global_savesFragment"
+        app:destination="@id/savesFragment" />
+    <fragment
+        android:id="@+id/cloudFragment"
+        android:name="org.yuzu.yuzu_emu.fragments.CloudFragment"
+        android:label="CloudFragment" />
+    <action
+        android:id="@+id/action_global_cloudFragment"
+        app:destination="@id/cloudFragment" />
+
     <fragment
         android:id="@+id/toolsFragment"
         android:name="org.yuzu.yuzu_emu.fragments.ToolsFragment"

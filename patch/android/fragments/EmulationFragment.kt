@@ -92,6 +92,7 @@ import org.yuzu.yuzu_emu.utils.GameHelper
 import org.yuzu.yuzu_emu.utils.GameIconUtils
 import org.yuzu.yuzu_emu.utils.GpuDriverHelper
 import org.yuzu.yuzu_emu.utils.InputHandler
+import org.yuzu.yuzu_emu.utils.CloudSync
 import org.yuzu.yuzu_emu.utils.ExitTrace
 import org.yuzu.yuzu_emu.utils.Log
 import org.yuzu.yuzu_emu.utils.NativeConfig
@@ -1433,6 +1434,10 @@ class EmulationFragment : Fragment(), SurfaceHolder.Callback {
     }
 
     override fun onDestroyView() {
+        // Сейвы — наверх, пока приложение открыто и сеть есть. Тихо: если не
+        // вышло, следующий запуск попробует снова, а человеку не нужен
+        // диалог об облаке в момент, когда он закрыл игру.
+        runCatching { game?.let { CloudSync.uploadSavesQuietly(it) } }
         super.onDestroyView()
         amiiboLoadJob?.cancel()
         amiiboLoadJob = null

@@ -60,15 +60,43 @@ SPDX-License-Identifier: GPL-3.0-or-later
                 android:gravity="center_vertical"
                 android:orientation="horizontal">
 
-                <TextView
-                    android:id="@+id/text_tile_monogram"
-                    android:layout_width="42dp"
-                    android:layout_height="42dp"
-                    android:gravity="center"
-                    android:textAppearance="?attr/textAppearanceTitleMedium"
-                    android:textStyle="bold"
-                    tools:text="M"
-                    tools:textColor="#22D3EE" />
+                <!--
+                    Обложка игры. Раньше её здесь не было вовсе: плитка всегда
+                    рисовала монограмму, и библиотека выглядела как набор
+                    букв. В WebView-панели обложки были — потому что она
+                    запрашивала картинку у ядра отдельно.
+
+                    Обе лежат друг на друге: картинка сверху, буква снизу.
+                    Если иконки у файла нет (homebrew, битый заголовок, нет
+                    ключей), картинка прячется и остаётся буква — без пустого
+                    квадрата и без серой заглушки.
+                -->
+                <FrameLayout
+                    android:layout_width="46dp"
+                    android:layout_height="46dp">
+
+                    <TextView
+                        android:id="@+id/text_tile_monogram"
+                        android:layout_width="42dp"
+                        android:layout_height="42dp"
+                        android:layout_gravity="center"
+                        android:gravity="center"
+                        android:textAppearance="?attr/textAppearanceTitleMedium"
+                        android:textStyle="bold"
+                        tools:text="M"
+                        tools:textColor="#22D3EE" />
+
+                    <ImageView
+                        android:id="@+id/image_tile_cover"
+                        android:layout_width="46dp"
+                        android:layout_height="46dp"
+                        android:layout_gravity="center"
+                        android:contentDescription="@null"
+                        android:scaleType="fitCenter"
+                        android:visibility="gone"
+                        tools:src="@drawable/default_icon" />
+
+                </FrameLayout>
 
                 <LinearLayout
                     android:layout_width="0dp"

@@ -88,6 +88,16 @@ class ToolsFragment : Fragment() {
                     { nav(R.id.action_global_pluginsFragment) }
                 )
             )
+            // Облако — рядом с папками игр: это тоже «где лежат данные»,
+            // но за пределами телефона.
+            add(
+                HomeSetting(
+                    R.string.cloud_title,
+                    R.string.cloud_description,
+                    R.drawable.ic_folder_open,
+                    { nav(R.id.action_global_cloudFragment) }
+                )
+            )
             add(
                 HomeSetting(
                     R.string.fps_tuning,

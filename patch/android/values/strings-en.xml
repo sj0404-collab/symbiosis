@@ -2191,4 +2191,8 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
     <string name="converter_where">Files go to %1$s</string>
     <string name="converter_export">Save to Downloads</string>
     <string name="exit_trace_title">Last steps before exit</string>
+    <!-- Cloud: saves and game images -->
+    <string name="cloud_title">Cloud</string>
+    <string name="cloud_description">Saves in the cloud: Yandex.Disk, Nextcloud, your own server</string>
+    <string name="launcher_saves_menu">Saves and progress</string>
 </resources>
