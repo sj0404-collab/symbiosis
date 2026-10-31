@@ -34,6 +34,8 @@ import org.yuzu.yuzu_emu.utils.EngineLoader
 import org.yuzu.yuzu_emu.utils.EngineStore
 import org.yuzu.yuzu_emu.utils.GameHelper
 import org.yuzu.yuzu_emu.utils.NativeLibraryPresenter
+import org.yuzu.yuzu_emu.utils.PluginEngine
+import org.yuzu.yuzu_emu.utils.PluginStore
 import org.yuzu.yuzu_emu.utils.SymbiosisTheme
 import org.yuzu.yuzu_emu.utils.collect
 
@@ -67,6 +69,14 @@ class NativeLauncherFragment : Fragment() {
 
     private var filter: String = NativeLibraryPresenter.FILTER_ALL
     private var query: String = ""
+
+    /**
+     * Что решили плагины по этому экрану. Считается один раз за отрисовку:
+     * разбор файлов плагинов на каждой плитке — это чтение с диска в
+     * прокрутке, то есть заметные рывки.
+     */
+    private var pluginDecisions = PluginEngine.Decisions()
+
 
     /**
      * Очередь распаковки. Создаётся в onCreate: регистрация результата
@@ -306,7 +316,28 @@ class NativeLauncherFragment : Fragment() {
             filter = filter
         )
 
-        adapter.submit(model.items)
+        // Плагины: пометки на плитках и сообщения над списком. Решения
+        // считаются по экрану целиком; конкретная игра уточняется при запуске.
+        pluginDecisions = runCatching {
+            PluginStore.decisions(ctx, PluginStore.contextFor(ctx))
+        }.getOrDefault(PluginEngine.Decisions())
+
+        adapter.submit(PluginEngine.decorate(model.items, pluginDecisions))
+
+        // Сообщения плагинов — отдельной строкой, а не в дневной сводке:
+        // сводка отвечает «сколько игр», а плашка — «что с ними не так».
+        val banners = pluginDecisions.banners
+        binding.textLauncherPlugin.isVisible = banners.isNotEmpty()
+        if (banners.isNotEmpty()) {
+            binding.textLauncherPlugin.text = banners.joinToString("\n") { it.text }
+            binding.textLauncherPlugin.setTextColor(
+                when (banners.maxByOrNull { it.severity.ordinal }?.severity) {
+                    org.yuzu.yuzu_emu.utils.PluginApi.Severity.ERROR -> SymbiosisTheme.RED
+                    org.yuzu.yuzu_emu.utils.PluginApi.Severity.WARN -> SymbiosisTheme.AMBER
+                    else -> SymbiosisTheme.CYAN
+                }
+            )
+        }
 
         // Сводка и пустота говорят разное и не одновременно: когда строк
         // нет, вместо «0 игр · 0 сжатых» показывается причина.
@@ -393,7 +424,29 @@ class NativeLauncherFragment : Fragment() {
      * запускается — на Eden, с честным сообщением. Молча ничего не
      * открывать хуже, чем открыть и сказать, почему не тем ядром.
      */
-    private fun launchOn(game: Game, core: EngineHybrid.Core) {
+    private fun launchOn(game: Game, requested: EngineHybrid.Core) {
+        val appCtx = requireContext().applicationContext
+
+        // Плагин может переопределить ядро — например, оставить игру на Eden,
+        // если она на втором ядре падает. Это решение не молчаливое: если
+        // ядро поменялось, человек увидит строку с причиной.
+        val gameCtx = runCatching {
+            PluginStore.contextFor(appCtx, title = game.title, path = game.path, core = requested.id)
+        }.getOrNull()
+        val decisions = if (gameCtx == null) PluginEngine.Decisions()
+        else runCatching { PluginStore.decisions(appCtx, gameCtx) }
+            .getOrDefault(PluginEngine.Decisions())
+
+        val core = decisions.core ?: requested
+        if (core != requested) {
+            val reason = decisions.coreReason.ifEmpty { "так решил плагин" }
+            Snackbar.make(
+                binding.root,
+                "Эта игра пойдёт на ${core.short}: $reason",
+                Snackbar.LENGTH_LONG
+            ).show()
+        }
+
         if (core == EngineHybrid.Core.EDEN) {
             navigateToGame(game)
             return
@@ -408,7 +461,7 @@ class NativeLauncherFragment : Fragment() {
                         requireContext(),
                         game.path,
                         game.title,
-                        runCatching { EngineStore.effectiveText(ctx) }.getOrDefault("")
+                        configFor(ctx, decisions)
                     )
                 )
             }.isSuccess
@@ -421,6 +474,29 @@ class NativeLauncherFragment : Fragment() {
         }
         Snackbar.make(binding.root, why, Snackbar.LENGTH_LONG).show()
         navigateToGame(game)
+    }
+
+    /**
+     * Настройки второго ядра с поправками плагинов.
+     *
+     * Патч накладывается на действующий конфиг (Eden + своё у Kenji), а не
+     * заменяет его: плагин правит одно поле, остальные остаются как выбрал
+     * человек. Если конфиг не собрался, отдаём прежнюю строку — плагин не
+     * имеет права оставить игру без настроек вовсе.
+     */
+    private fun configFor(
+        ctx: android.content.Context,
+        decisions: PluginEngine.Decisions
+    ): String {
+        if (decisions.settings.isEmpty()) {
+            return runCatching { EngineStore.effectiveText(ctx) }.getOrDefault("")
+        }
+        return runCatching {
+            val patched = PluginEngine.patch(EngineStore.config(ctx), decisions.settings)
+            EngineHybrid.encode(EngineHybrid.effective(patched))
+        }.getOrElse {
+            runCatching { EngineStore.effectiveText(ctx) }.getOrDefault("")
+        }
     }
 
     private fun navigate(destination: Int) {

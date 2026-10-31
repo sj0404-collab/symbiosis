@@ -166,6 +166,23 @@ test can check without an emulator.
             android:textColor="?attr/colorPrimary"
             tools:text="12 игр · 3 обновления · 40 сжатых → Конвертер" />
 
+        <!--
+        Сообщение плагина. Отдельная строка под сводкой, а не внутри неё:
+        сводка отвечает «сколько игр», плашка — «что с ними не так». Цвет
+        ставится по важности сообщения (SymbiosisTheme).
+        -->
+        <com.google.android.material.textview.MaterialTextView
+            android:id="@+id/text_launcher_plugin"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginHorizontal="16dp"
+            android:layout_marginBottom="6dp"
+            android:padding="10dp"
+            android:textAppearance="@style/TextAppearance.Material3.BodySmall"
+            android:visibility="gone"
+            tools:text="Памяти меньше 6 ГБ: второму ядру может не хватить места рядом с игрой."
+            tools:visibility="visible" />
+
         <androidx.swiperefreshlayout.widget.SwipeRefreshLayout
             android:id="@+id/swipe_launcher"
             android:layout_width="match_parent"

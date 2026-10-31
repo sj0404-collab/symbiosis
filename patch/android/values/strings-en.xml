@@ -2153,6 +2153,10 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
     <string name="live_panel_extended_description">The rare things in one place: spaces, engine choice, fine-grained toggles</string>
 
     <!-- Hybrid: two cores in one app -->
+    <!-- Plugins: behaviour patches without a rebuild -->
+    <string name="plugins_title">Plugins</string>
+    <string name="plugins_description">Rules for when something works badly: a different setting, a different core, a note — without a new build</string>
+
     <string name="engine_choice">Two cores (hybrid)</string>
     <string name="engine_choice_description">Eden and Kenji-NX in one app: each keeps its own settings, the core is chosen per game</string>
     <string name="launcher_core_eden">Run on Eden</string>

@@ -1485,6 +1485,10 @@
     <string name="live_panel_extended">Расширенная панель</string>
     <string name="live_panel_extended_description">Всё редкое в одном месте: пространства, выбор ядра, тонкие переключатели</string>
 
+    <!-- Плагины: правки поведения без пересборки -->
+    <string name="plugins_title">Плагины</string>
+    <string name="plugins_description">Правила на случай, когда что-то работает плохо: другая настройка, другое ядро, пометка — без новой сборки</string>
+
     <!-- Гибрид: два ядра в одном -->
     <string name="engine_choice">Два ядра (гибрид)</string>
     <string name="engine_choice_description">Eden и Kenji-NX в одном приложении: у каждого свои настройки, ядро выбирается на игру</string>

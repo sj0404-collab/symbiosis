@@ -154,6 +154,13 @@
         android:id="@+id/action_global_enginesFragment"
         app:destination="@id/enginesFragment" />
     <fragment
+        android:id="@+id/pluginsFragment"
+        android:name="org.yuzu.yuzu_emu.fragments.PluginsFragment"
+        android:label="PluginsFragment" />
+    <action
+        android:id="@+id/action_global_pluginsFragment"
+        app:destination="@id/pluginsFragment" />
+    <fragment
         android:id="@+id/toolsFragment"
         android:name="org.yuzu.yuzu_emu.fragments.ToolsFragment"
         android:label="ToolsFragment" />

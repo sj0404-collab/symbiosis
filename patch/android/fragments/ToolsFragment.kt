@@ -77,6 +77,17 @@ class ToolsFragment : Fragment() {
                     { nav(R.id.action_global_enginesFragment) }
                 )
             )
+            // Плагины — сразу после ядер: это тот же класс инструмента
+            // «починить без пересборки», и искать его в конце списка никто
+            // не станет.
+            add(
+                HomeSetting(
+                    R.string.plugins_title,
+                    R.string.plugins_description,
+                    R.drawable.ic_verified,
+                    { nav(R.id.action_global_pluginsFragment) }
+                )
+            )
             add(
                 HomeSetting(
                     R.string.fps_tuning,
