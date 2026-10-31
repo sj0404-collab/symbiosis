@@ -772,10 +772,11 @@ class GamesFragment : Fragment() {
             }
             list.adapter = GameFolderAdapter(
                 requireActivity() as androidx.appcompat.app.AppCompatActivity,
-                folders
-            ) {
-                findNavController().navigate(R.id.action_global_symbiosisGameFoldersFragment)
-            }
+                folders,
+                onClick = {
+                    findNavController().navigate(R.id.action_global_symbiosisGameFoldersFragment)
+                }
+            )
         }
     }
 

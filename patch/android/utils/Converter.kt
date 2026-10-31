@@ -290,6 +290,7 @@ object Converter {
         val src = File(path)
         if (!src.isFile) return@runCatching JSONObject().put("ok", false)
             .put("message", "файла уже нет")
+        val target = File(publicDir(), src.name)
         val parent = target.parentFile ?: publicDir()
         if (!parent.isDirectory && !parent.mkdirs()) {
             return@runCatching JSONObject().put("ok", false).put("message", "нет доступа к «Загрузкам»")
