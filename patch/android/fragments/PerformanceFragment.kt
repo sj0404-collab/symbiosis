@@ -13,6 +13,7 @@ import android.view.Gravity
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
+import android.widget.HorizontalScrollView
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
@@ -307,7 +308,7 @@ class PerformanceFragment : Fragment() {
                 ).apply { rightMargin = dp(6) }
             )
         }
-        card.addView(row)
+        card.addView(hscroll(row))
         root.addView(card)
     }
 
@@ -480,10 +481,16 @@ class PerformanceFragment : Fragment() {
             setOnClickListener { onClick() }
         }
 
-    private fun rowOf(vararg views: View): View =
-        LinearLayout(requireContext()).apply {
+    /**
+     * Ряд кнопок, который можно прокрутить вбок.
+     *
+     * Три-четыре кнопки с русскими подписями в строку на узком экране не
+     * влезают: LinearLayout молча сжимает последнюю, и подпись превращается в
+     * «Скопир…». Лучше прокрутка, чем обрезанный текст.
+     */
+    private fun rowOf(vararg views: View): View {
+        val row = LinearLayout(requireContext()).apply {
             orientation = LinearLayout.HORIZONTAL
-            setPadding(0, dp(6), 0, dp(2))
             views.forEach { view ->
                 addView(
                     view,
@@ -493,6 +500,16 @@ class PerformanceFragment : Fragment() {
                     ).apply { rightMargin = dp(8) }
                 )
             }
+        }
+        return hscroll(row)
+    }
+
+    private fun hscroll(inner: View): View =
+        HorizontalScrollView(requireContext()).apply {
+            isHorizontalScrollBarEnabled = false
+            clipToPadding = false
+            setPadding(0, dp(6), 0, dp(2))
+            addView(inner)
         }
 
     companion object {
