@@ -321,7 +321,10 @@ jobs:
           # zstd: пин в дереве сборки. Без него правильный solid-NSZ снова
           # считается битым на arm64 — и APK выглядит рабочим ровно до
           # первого тяжёлого сжатого файла.
-          if grep -q '"33618c8"' eden/cpmfile.json; then
+          # Путь абсолютный: выше был `cd /tmp/x` для распаковки APK, и
+          # относительный `eden/cpmfile.json` там просто не существует —
+          # проверка падала на здоровой сборке (прогон 41331469358).
+          if grep -q '"33618c8"' "$GITHUB_WORKSPACE/eden/cpmfile.json"; then
             echo "  ok   zstd pinned to 33618c8 in the build tree"
           else
             echo "  MISSING zstd pin (solid NSZ will fail on arm64)"; fail=1
