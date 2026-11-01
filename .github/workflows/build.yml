@@ -291,7 +291,7 @@ jobs:
                        TorrentBencode TorrentMeta TorrentPlan TorrentWire \
                        TorrentTracker TorrentAnnounce TorrentDownload \
                        MagnetMeta FramePacing FrameMetricsText \
-                       PerformanceFragment RomSniff KenjiCrash QuickPanel; do
+                       PerformanceFragment RomSniff KenjiCrash QuickPanel UiGuard; do
               if strings classes*.dex | grep -q "$sym"; then echo "  ok   $sym in dex"
               else echo "  MISSING $sym"; fail=1; fi
             done
@@ -317,6 +317,27 @@ jobs:
                   print("  MISSING string %s" % key)
                   sys.exit(1)
           STPY
+
+          # zstd: пин в дереве сборки. Без него правильный solid-NSZ снова
+          # считается битым на arm64 — и APK выглядит рабочим ровно до
+          # первого тяжёлого сжатого файла.
+          if grep -q '"33618c8"' eden/cpmfile.json; then
+            echo "  ok   zstd pinned to 33618c8 in the build tree"
+          else
+            echo "  MISSING zstd pin (solid NSZ will fail on arm64)"; fail=1
+          fi
+
+          # Отчёт и запись падения: класс может доехать, а строки — нет.
+          # «Что сказало ядро» без файла stderr не покажет ничего, поэтому
+          # проверяются оба имени.
+          for text in "kenji-stdout.txt" "ui-crash.txt" \
+                      "Что сказало ядро перед остановкой"; do
+            if grep -qa "$text" /tmp/x/classes*.dex; then
+              echo "  ok   \"$text\" in dex"
+            else
+              echo "  MISSING \"$text\" in dex"; fail=1
+            fi
+          done
 
           NM=$(find "$ANDROID_HOME/ndk" -name llvm-nm | head -1)
           n=$("$NM" -D lib/arm64-v8a/libyuzu-android.so | grep -c NativeSymbiosis || true)

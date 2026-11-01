@@ -171,6 +171,19 @@ class EmulationFragment : Fragment(), SurfaceHolder.Callback {
     private var isQuickSettingsMenuOpen = false
     private val quickSettings = QuickSettings(this)
 
+    /**
+     * Обновляет подписи собранной панели на месте.
+     *
+     * Раньше на каждое изменение вызывался `addQuickSettings()`, то есть
+     * `removeAllViews()`. Вызов приходил из обработчика элемента, который в
+     * этот момент находился внутри удаляемого дерева: у радиокнопки — из её
+     * собственного `setOnCheckedChangeListener`, у чипа буфера — из `onClick`.
+     * Удалять виджет из-под выполняющегося обработчика нельзя, и на телефоне
+     * это заканчивалось остановкой игры. Теперь панель не пересобирается:
+     * меняются только тексты и видимость кнопки перезапуска.
+     */
+    private var quickPanelRefresh: (() -> Unit)? = null
+
     private val loadAmiiboLauncher =
         registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
             isAmiiboPickerOpen = false
@@ -1236,12 +1249,42 @@ class EmulationFragment : Fragment(), SurfaceHolder.Callback {
      * разрешение, не видит разницы и решает, что настройки не работают.
      */
     private fun addSymbiosisQuickSettings(container: ViewGroup) {
-        val ctx = requireContext()
+        // Ни один наш пункт не имеет права уронить игру. Панель — это экран
+        // поверх работающей эмуляции: исключение здесь закрывает её целиком,
+        // причём молча (в отчёте остаётся только «остановлено»). Поэтому всё
+        // тело под защитой, а причина пишется в журнал, а не теряется.
+        try {
+            buildSymbiosisQuickSettings(container)
+        } catch (error: RuntimeException) {
+            Log.error("[Symbiosis] панель быстрых настроек: ${error.message}")
+            runCatching {
+                container.addView(TextView(requireContext()).apply {
+                    text = "Дополнительные настройки не показаны: ${error.message?.take(120)}"
+                    textSize = 12f
+                    setTextColor(quickColor(android.R.attr.textColorSecondary))
+                })
+            }
+        }
+    }
 
-        fun header(text: String): TextView = TextView(ctx).apply {
+    private fun buildSymbiosisQuickSettings(container: ViewGroup) {
+        val ctx = requireContext()
+        val dimColor = quickColor(android.R.attr.textColorSecondary)
+        val primaryColor = quickColor(
+            com.google.android.material.R.attr.colorPrimary,
+            android.R.attr.colorAccent
+        )
+        val surfaceColor = quickColor(
+            com.google.android.material.R.attr.colorSurfaceVariant,
+            com.google.android.material.R.attr.colorSurface,
+            android.R.attr.colorBackground
+        )
+        val spacing = resources.getDimensionPixelSize(R.dimen.spacing_small)
+
+        fun header(text: String, top: Int = spacing): TextView = TextView(ctx).apply {
             this.text = text
-            setPadding(0, resources.getDimensionPixelSize(R.dimen.spacing_small), 0, 0)
-            setTextColor(MaterialColors.getColor(this, com.google.android.material.R.attr.colorPrimary))
+            setPadding(0, top, 0, 0)
+            setTextColor(primaryColor)
             textSize = 13f
             setTypeface(typeface, Typeface.BOLD)
         }
@@ -1249,21 +1292,22 @@ class EmulationFragment : Fragment(), SurfaceHolder.Callback {
         fun badge(entry: QuickPanel.Entry): TextView = TextView(ctx).apply {
             text = QuickPanel.badge(entry)
             textSize = 11f
-            setTextColor(
-                MaterialColors.getColor(
-                    this,
-                    if (entry.live) android.R.attr.textColorSecondary
-                    else com.google.android.material.R.attr.colorError
-                )
-            )
-            setPadding(0, 0, 0, resources.getDimensionPixelSize(R.dimen.spacing_small))
+            setTextColor(if (entry.live) dimColor else 0xFFFF6B6B.toInt())
+            setPadding(0, 0, 0, spacing)
+        }
+
+        fun hint(text: String): TextView = TextView(ctx).apply {
+            this.text = text
+            textSize = 12f
+            setTextColor(dimColor)
+            setPadding(0, spacing / 2, 0, 0)
         }
 
         fun entryOf(key: String): QuickPanel.Entry =
             QuickPanel.entries.first { it.key == key }
 
         quickSettings.addDivider(container)
-        container.addView(header("Изображение"))
+        container.addView(header("Изображение", top = 0))
         container.addView(badge(entryOf("resolution_setup")))
 
         quickSettings.addIntSetting(
@@ -1283,23 +1327,32 @@ class EmulationFragment : Fragment(), SurfaceHolder.Callback {
         ) { markQuickChange("use_vsync") }
 
         quickSettings.addDivider(container)
-        container.addView(header("Звук"))
+        container.addView(header("Звук", top = 0))
+
         // Громкость — единственная звуковая настройка, которая меняется на
         // ходу, поэтому она первая: если человек просто хочет тише, ему не
         // нужно ничего перезапускать.
-        container.addView(header("Громкость · ${QuickPanel.badge(entryOf("audio_volume"))}"))
+        container.addView(TextView(ctx).apply {
+            text = "Громкость · ${QuickPanel.badge(entryOf("audio_volume"))}"
+            textSize = 13f
+            setTypeface(typeface, Typeface.BOLD)
+            setTextColor(primaryColor)
+            setPadding(0, spacing, 0, 0)
+        })
         container.addView(
             com.google.android.material.slider.Slider(ctx).apply {
                 valueFrom = 0f
                 valueTo = 100f
                 stepSize = 1f
                 // Громкость — байтовая настройка (ByteSetting.AUDIO_VOLUME),
-                // а не целочисленная: getInt по её ключу вернул бы 0, и ползунок
-                // каждый раз показывал бы «тишину».
+                // а не целочисленная: getInt по её ключу вернул бы 0, и
+                // ползунок каждый раз показывал бы «тишину».
                 value = runCatching { ByteSetting.AUDIO_VOLUME.getByte(needsGlobal = false) }
                     .getOrDefault(100).toInt().coerceIn(0, 100).toFloat()
                 addOnChangeListener { _, value, fromUser ->
                     if (!fromUser) return@addOnChangeListener
+                    // set_byte у Eden требует байт: значение 0..100 в него
+                    // влезает, но тип приводим явно, иначе подпись не сойдётся.
                     runCatching { ByteSetting.AUDIO_VOLUME.setByte(value.toInt().toByte()) }
                     runCatching { NativeConfig.saveGlobalConfig() }
                     if (shouldUseCustom) runCatching { NativeConfig.savePerGameConfig() }
@@ -1323,100 +1376,121 @@ class EmulationFragment : Fragment(), SurfaceHolder.Callback {
 
         // Буфер звука: чипы, а не поле ввода. Значений мало и они
         // осмысленные, а промахнуться пальцем по числу — легко.
-        container.addView(TextView(ctx).apply {
-            text = "Буфер звука"
-            textSize = 15f
-            setPadding(0, resources.getDimensionPixelSize(R.dimen.spacing_small), 0, 0)
-        })
-        container.addView(TextView(ctx).apply {
-            text = QuickPanel.bufferHint(currentAudioBufferMs())
-            textSize = 12f
-            setTextColor(MaterialColors.getColor(this, android.R.attr.textColorSecondary))
-        })
+        container.addView(header("Буфер звука"))
+        val bufferHint = hint(QuickPanel.bufferHint(currentAudioBufferMs()))
+        container.addView(bufferHint)
+
+        // Подсветка выбранного чипа обновляется на месте: пересобирать панель
+        // из обработчика нажатия нельзя (см. quickPanelRefresh).
+        val bufferButtons = mutableListOf<Pair<Int, com.google.android.material.button.MaterialButton>>()
+        fun paintBufferChip(button: com.google.android.material.button.MaterialButton, selected: Boolean) {
+            button.backgroundTintList = android.content.res.ColorStateList.valueOf(
+                if (selected) primaryColor else surfaceColor
+            )
+            button.setTextColor(if (selected) 0xFF0E1116.toInt() else dimColor)
+        }
+
         val chips = LinearLayout(ctx).apply {
             orientation = LinearLayout.HORIZONTAL
-            setPadding(0, resources.getDimensionPixelSize(R.dimen.spacing_small), 0, 0)
+            setPadding(0, spacing, 0, 0)
         }
         QuickPanel.bufferChoices.forEach { ms ->
-            val selected = currentAudioBufferMs() == ms
+            val button = com.google.android.material.button.MaterialButton(ctx).apply {
+                text = "$ms мс"
+                textSize = 13f
+                isAllCaps = false
+                cornerRadius = spacing.toFloat()
+                minWidth = 0
+                minimumWidth = 0
+                insetTop = 0
+                insetBottom = 0
+                paintBufferChip(this, currentAudioBufferMs() == ms)
+                setOnClickListener {
+                    runCatching { NativeConfig.setInt(QuickPanel.BUFFER_KEY, ms) }
+                    runCatching { NativeConfig.saveGlobalConfig() }
+                    if (shouldUseCustom) runCatching { NativeConfig.savePerGameConfig() }
+                    // Только подсветка и подписи — без removeAllViews.
+                    bufferButtons.forEach { (chipMs, chip) -> paintBufferChip(chip, chipMs == ms) }
+                    bufferHint.text = QuickPanel.bufferHint(ms)
+                    markQuickChange(QuickPanel.BUFFER_KEY)
+                }
+            }
+            bufferButtons.add(ms to button)
             chips.addView(
-                com.google.android.material.button.MaterialButton(ctx).apply {
-                    text = "$ms мс"
-                    textSize = 13f
-                    isAllCaps = false
-                    cornerRadius = resources.getDimensionPixelSize(R.dimen.spacing_small)
-                    minWidth = 0
-                    minimumWidth = 0
-                    insetTop = 0
-                    insetBottom = 0
-                    if (selected) {
-                        backgroundTintList = android.content.res.ColorStateList.valueOf(
-                            MaterialColors.getColor(this, com.google.android.material.R.attr.colorPrimary)
-                        )
-                        setTextColor(
-                            MaterialColors.getColor(this, com.google.android.material.R.attr.colorOnPrimary)
-                        )
-                    } else {
-                        backgroundTintList = android.content.res.ColorStateList.valueOf(
-                            MaterialColors.getColor(this, com.google.android.material.R.attr.colorSurfaceVariant)
-                        )
-                        setTextColor(
-                            MaterialColors.getColor(this, android.R.attr.textColorSecondary)
-                        )
-                    }
-                    setOnClickListener {
-                        runCatching { NativeConfig.setInt(QuickPanel.BUFFER_KEY, ms) }
-                        runCatching { NativeConfig.saveGlobalConfig() }
-                        if (shouldUseCustom) runCatching { NativeConfig.savePerGameConfig() }
-                        markQuickChange(QuickPanel.BUFFER_KEY)
-                        addQuickSettings()
-                    }
-                },
+                button,
                 LinearLayout.LayoutParams(
                     LinearLayout.LayoutParams.WRAP_CONTENT,
                     LinearLayout.LayoutParams.WRAP_CONTENT
-                ).apply { rightMargin = resources.getDimensionPixelSize(R.dimen.spacing_small) }
+                ).apply { rightMargin = spacing }
             )
         }
-        val chipsScroll = HorizontalScrollView(ctx).apply {
-            isHorizontalScrollBarEnabled = false
-            addView(chips)
-        }
-        container.addView(chipsScroll)
+        container.addView(
+            HorizontalScrollView(ctx).apply {
+                isHorizontalScrollBarEnabled = false
+                addView(chips)
+            }
+        )
         container.addView(badge(entryOf("symbiosis_audio_buffer_ms")))
 
-        // Итог: что уже работает, а что ждёт перезапуска, и одна кнопка,
-        // чтобы это сделать. Без кнопки человек ищет «как перезапустить» сам.
+        // Итог и кнопка перезапуска. Кнопка создаётся всегда и только
+        // показывается по необходимости: добавить её позже значило бы снова
+        // пересобрать панель, а это и было причиной остановки игры.
         val status = TextView(ctx).apply {
-            text = QuickPanel.statusLine(quickChanges).ifEmpty {
-                "Громкость и предел кадров применяются сразу; разрешение, vsync и звук — после перезапуска."
-            }
             textSize = 12f
-            setTextColor(MaterialColors.getColor(this, android.R.attr.textColorSecondary))
-            setPadding(0, resources.getDimensionPixelSize(R.dimen.spacing_small), 0, 0)
+            setTextColor(dimColor)
+            setPadding(0, spacing, 0, 0)
         }
         container.addView(status)
 
-        if (QuickPanel.needsRestart(quickChanges)) {
-            container.addView(
-                com.google.android.material.button.MaterialButton(ctx).apply {
-                    text = "Перезапустить игру"
-                    textSize = 14f
-                    isAllCaps = false
-                    setOnClickListener { restartGameWithSettings() }
-                },
-                LinearLayout.LayoutParams(
-                    LinearLayout.LayoutParams.MATCH_PARENT,
-                    LinearLayout.LayoutParams.WRAP_CONTENT
-                ).apply { topMargin = resources.getDimensionPixelSize(R.dimen.spacing_small) }
-            )
+        val restart = com.google.android.material.button.MaterialButton(ctx).apply {
+            text = "Перезапустить игру"
+            textSize = 14f
+            isAllCaps = false
+            setOnClickListener { restartGameWithSettings() }
         }
+        container.addView(
+            restart,
+            LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply { topMargin = spacing }
+        )
+
+        fun refresh() {
+            status.text = QuickPanel.statusLine(quickChanges).ifEmpty {
+                "Громкость и предел кадров применяются сразу; разрешение, vsync и звук — после перезапуска."
+            }
+            restart.visibility =
+                if (QuickPanel.needsRestart(quickChanges)) View.VISIBLE else View.GONE
+        }
+        refresh()
+        quickPanelRefresh = { runCatching { refresh() } }
     }
 
-    /** Запомнить, что пункт меняли: от этого зависит и подпись, и кнопка. */
+    /**
+     * Запомнить, что пункт меняли: от этого зависит и подпись, и кнопка.
+     *
+     * Панель при этом НЕ пересобирается — см. [quickPanelRefresh].
+     */
     private fun markQuickChange(key: String) {
         quickChanges.add(key)
-        if (isAdded) runCatching { addQuickSettings() }
+        runCatching { quickPanelRefresh?.invoke() }
+    }
+
+    /**
+     * Цвет темы, но не падение, если атрибута нет.
+     *
+     * `MaterialColors.getColor` бросает исключение, когда атрибут не задан в
+     * теме. Панель с пятью пунктами обращается к цветам чаще остальных экранов,
+     * и одного отсутствующего атрибута хватало, чтобы игра закрылась. Поэтому
+     * пробуем по порядку и в конце берём запасной оттенок текста.
+     */
+    private fun quickColor(vararg attrs: Int): Int {
+        for (attr in attrs) {
+            val color = runCatching { MaterialColors.getColor(binding.root, attr) }.getOrNull()
+            if (color != null) return color
+        }
+        return 0xFFA6B2C4.toInt()
     }
 
     private fun currentAudioBufferMs(): Int =

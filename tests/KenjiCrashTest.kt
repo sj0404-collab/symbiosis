@@ -191,6 +191,59 @@ fun main() {
     check("лимит соблюдён", KenjiCrash.fatalLines(logcat, limit = 2).size <= 2)
     check("пустой журнал — пустой список", KenjiCrash.fatalLines("").isEmpty())
 
+    // ── что сказало само ядро (stderr процесса :kenji) ────────────────
+    val stderr = """
+        05-01 19:04:11.001  4628  4650 I SymbiosisKenji: core loaded and verified
+        Unhandled exception. System.TypeInitializationException: The type initializer for 'X' threw an exception.
+         ---> System.DllNotFoundException: Unable to load shared library 'libkenjinxjni' or one of its dependencies.
+           at X..cctor()
+           --- End of inner exception stack trace ---
+           at Interop.SystemFunctionTable..ctor()
+    """.trimIndent()
+
+    val said = KenjiCrash.exceptionLines(stderr)
+    check("исключение из stderr найдено", said.any { it.contains("Unhandled exception") }, said.toString())
+    check("внутренняя причина тоже", said.any { it.contains("DllNotFoundException") }, said.toString())
+    check("кадры сохранены", said.any { it.trimStart().startsWith("at ") }, said.toString())
+    check("шапка «core loaded» отброшена", said.none { it.contains("core loaded") }, said.toString())
+    check("лимит соблюдён", KenjiCrash.exceptionLines(stderr, limit = 2).size <= 2)
+    check("пустой stderr — пустой список", KenjiCrash.exceptionLines("").isEmpty())
+    check("без исключения — пусто", KenjiCrash.exceptionLines("some random line\nanother").isEmpty())
+
+    // ── журнал только своего процесса ─────────────────────────────────
+    //
+    // В отчёте с устройства были строки PID 4628, а процесс имел 24319.
+    // Такой журнал хуже пустого: он показывает чужую причину.
+    val args = KenjiCrash.logcatArgs(24319)
+    check("фильтр по pid в аргументах", args.any { it == "--pid=24319" }, args.toString())
+    check("буфер задаётся", KenjiCrash.logcatArgs(1, buffer = "crash").contains("crash"))
+    check("без буфера флага нет", !KenjiCrash.logcatArgs(1).contains("-b"))
+
+    val log = """
+        05-01 19:04:11.001  4628  4650 I SymbiosisKenji: чужое прошлое падение
+        05-01 19:04:12.000 24319 24360 I SymbiosisKenji: наше сообщение
+        	at Our.Frame()
+        05-01 19:04:13.000 24319 24360 E AndroidRuntime: наша ошибка
+        05-01 19:04:14.000  4628  4650 I SymbiosisKenji: снова чужое
+    """.trimIndent()
+    val kept = KenjiCrash.filterByPid(log, 24319)
+    check("чужая строка отброшена", !kept.contains("чужое"), kept)
+    check("своя строка осталась", kept.contains("наше сообщение"), kept)
+    check("продолжение своей строки осталось", kept.contains("at Our.Frame"), kept)
+    check("ещё одна своя", kept.contains("наша ошибка"), kept)
+    check("хвост чужого не просочился", !kept.contains("снова чужое"), kept)
+    check("пустой журнал — пусто", KenjiCrash.filterByPid("", 1).isEmpty())
+    check("без дат ничего не выдумываем", KenjiCrash.filterByPid("просто текст", 1).isEmpty())
+
+    // ── запись необработанного исключения ─────────────────────────────
+    val thrown = runCatching { error("панель упала") }.exceptionOrNull()!!
+    val described = KenjiCrash.describeThrowable("main", thrown, "2026-11-01 20:00:00")
+    check("время в записи", described.startsWith("2026-11-01 20:00:00"), described)
+    check("поток в записи", described.contains("поток=main"), described)
+    check("тип исключения", described.contains("IllegalStateException"), described)
+    check("текст исключения", described.contains("панель упала"), described)
+    check("стек записан", described.contains("KenjiCrashTest"), described)
+
     println()
     println("passed=$passed failed=${failures.size}")
     failures.forEach { println("FAIL  $it") }

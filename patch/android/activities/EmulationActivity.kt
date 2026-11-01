@@ -60,6 +60,7 @@ import org.yuzu.yuzu_emu.model.Game
 import org.yuzu.yuzu_emu.network.NetPlayManager
 import org.yuzu.yuzu_emu.utils.InputHandler
 import org.yuzu.yuzu_emu.utils.Log
+import org.yuzu.yuzu_emu.utils.UiGuard
 import org.yuzu.yuzu_emu.utils.MemoryUtil
 import org.yuzu.yuzu_emu.utils.NativeConfig
 import org.yuzu.yuzu_emu.utils.NfcReader
@@ -124,6 +125,12 @@ class EmulationActivity : AppCompatActivity(), SensorEventListener, InputManager
     override fun onCreate(savedInstanceState: Bundle?) {
         Log.gameLaunched = true
         ThemeHelper.setTheme(this)
+
+        // Игра — первый экран, где падение особенно заметно. С этого момента
+        // необработанное исключение оставляет след в
+        // `<внешние файлы>/symbiosis/ui-crash.txt`, иначе от него остаётся
+        // только «приложение остановлено».
+        runCatching { UiGuard.install(this) }
 
         super.onCreate(savedInstanceState)
 

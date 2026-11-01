@@ -205,6 +205,86 @@ object KenjiCrash {
     }
 
     /**
+     * Аргументы logcat для одного процесса.
+     *
+     * ЗАЧЕМ PID. В прошлом отчёте с устройства строки журнала были от PID 4628,
+     * а процесс к тому моменту имел 24319: `logcat -d -t 400` отдаёт хвост
+     * общего буфера, куда попадают чужие и уже мёртвые процессы того же
+     * приложения. Такой журнал хуже пустого — по нему видно «другую» причину и
+     * ведёт не туда. `--pid` есть с Android 7, а ниже Linux-ядра журнал
+     * фильтруется ещё раз в коде ([filterByPid]).
+     */
+    fun logcatArgs(pid: Int, buffer: String? = null, lines: Int = 400): List<String> =
+        buildList {
+            add("logcat")
+            if (buffer != null) {
+                add("-b")
+                add(buffer)
+            }
+            add("--pid=$pid")
+            add("-d")
+            add("-v")
+            add("brief")
+            add("-t")
+            add(lines.toString())
+        }
+
+    /**
+     * Оставить в тексте журнала только строки одного процесса.
+     *
+     * Формат brief: `05-01 19:04:11.001  4628  4650 I Tag: текст`, где первое
+     * число — PID, второе — TID. Строки без даты (продолжение многострочного
+     * сообщения, например кадры стека) относятся к предыдущей записи, поэтому
+     * решение запоминается. Номер у погибшего процесса не переиспользуется
+     * мгновенно, так что повторный запуск не подмешивается.
+     */
+    fun filterByPid(text: String, pid: Int): String {
+        val head = Regex("""^\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3}\s+(\d+)\s+(\d+)\s""")
+        val kept = StringBuilder()
+        var keep = false
+        for (line in text.lineSequence()) {
+            val match = head.find(line)
+            if (match != null) keep = match.groupValues[1].toIntOrNull() == pid
+            if (keep && line.isNotBlank()) kept.append(line).append('\n')
+        }
+        return kept.toString().trim()
+    }
+
+    /**
+     * Как записать необработанное исключение приложения, чтобы его потом
+     * прочитали глазами, а не искали в logcat.
+     */
+    fun describeThrowable(threadName: String, error: Throwable, stamp: String): String {
+        val trace = java.io.StringWriter().also { error.printStackTrace(java.io.PrintWriter(it)) }
+        return "$stamp поток=$threadName\n$trace"
+    }
+
+    /**
+     * Текст, который рантайм ядра сказал в stderr перед abort().
+     *
+     * Берём не весь файл — там бывает шум самого ядра. Оставляем строки про
+     * исключение и кадры стека («at …»), в том порядке, в каком их печатал
+     * рантайм: по нему видно, где начало сообщения, а где уже стек.
+     */
+    fun exceptionLines(stderrDump: String, limit: Int = 10): List<String> {
+        val marks = listOf(
+            "unhandled exception", "exception:", "system.", "failfast",
+            "--- end of", "abort"
+        )
+        val kept = stderrDump.lineSequence()
+            .map { it.trim().trimEnd('\r') }
+            .filter { line ->
+                line.isNotEmpty() &&
+                    (line.startsWith("at ") || marks.any { line.contains(it, ignoreCase = true) })
+            }
+            .map { it.take(300) }
+            .toList()
+        if (kept.isEmpty()) return emptyList()
+        // Хвост, а не начало: если файл большой, причина всегда в конце.
+        return kept.takeLast(limit)
+    }
+
+    /**
      * Строки журнала системы, которые стоит показать рядом с отчётом.
      *
      * ЗАЧЕМ. SIGABRT в .NET-ядре — это почти всегда необработанное исключение,

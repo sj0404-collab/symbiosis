@@ -241,6 +241,42 @@ void NoteStep(const char* name) {
     g_step[sizeof(g_step) - 1] = '\0';
 }
 
+/**
+ * Забрать себе stdout и stderr процесса.
+ *
+ * ЗАЧЕМ ЭТО ВАЖНЕЕ САМОГО ОТЧЁТА О СИГНАЛЕ. .NET-рантайм ядра печатает
+ * необработанное исключение в stderr — «Unhandled exception. System.Xxx: …» —
+ * и только потом вызывает abort(). В отчёте о сигнале этой строки нет, а из
+ * logcat приложение её прочитать не может: буфер `crash` закрыт для обычных
+ * процессов, а в общем строки тонут за секунды (это и было видно в отчётах с
+ * устройства: адреса есть, текста нет).
+ *
+ * Поэтому stderr перенаправляется в файл ДО первого вызова в ядро. Процесс
+ * умирает — файл остаётся, и в нём ровно то, что рантайм успел сказать.
+ */
+void ArmStdioCapture() {
+    if (g_crashPath[0] == '\0') return;
+    char path[512];
+    const char* slash = ::strrchr(g_crashPath, '/');
+    if (slash == nullptr) return;
+    const std::size_t dir_len = static_cast<std::size_t>(slash - g_crashPath) + 1;
+    const char* name = "kenji-stdout.txt";
+    if (dir_len + ::strlen(name) + 1 >= sizeof(path)) return;
+    ::memcpy(path, g_crashPath, dir_len);
+    ::strcpy(path + dir_len, name);
+
+    const int out = ::open(path, O_WRONLY | O_CREAT | O_TRUNC, 0600);
+    if (out < 0) return;
+    ::dup2(out, STDOUT_FILENO);
+    ::dup2(out, STDERR_FILENO);
+    if (out > STDERR_FILENO) ::close(out);
+
+    // Процесс может умереть в любой момент, поэтому без буферизации: строка
+    // должна попасть в файл сразу, а не при выходе, которого не будет.
+    ::setvbuf(stdout, nullptr, _IONBF, 0);
+    ::setvbuf(stderr, nullptr, _IONBF, 0);
+}
+
 void InstallCrashHandlers() {
     struct sigaction action {};
     action.sa_sigaction = CrashHandler;
@@ -358,6 +394,7 @@ Java_org_yuzu_yuzu_1emu_utils_KenjiBridge_nativeSetCrashLog(JNIEnv* env, jobject
     const int fd = ::open(g_crashPath, O_WRONLY | O_CREAT | O_TRUNC, 0600);
     if (fd >= 0) ::close(fd);
     InstallCrashHandlers();
+    ArmStdioCapture();
     LOGI("crash report armed: %s", g_crashPath);
 }
 

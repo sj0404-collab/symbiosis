@@ -518,6 +518,54 @@ open(path, 'w', encoding='utf-8').write(text)
 print('  declared ConverterService (specialUse)')
 PYCONV
 
+# ── zstd: поднять пин ─────────────────────────────────────────────────
+#
+# В v0.2.1 zstd запинен на b8d6101fba (1.5). На ARM64 эта версия повреждает
+# данные при распаковке solid-контейнеров NCZ: внутри ZSTD_decodeSequence
+# включена ветка, которая на aarch64 считается неверно, и декодер сообщает
+# «Data corruption detected» на ЦЕЛОМ файле. Именно это и случилось с
+# «Vault of Power … (0.31 GB).nsz» — файл был исправен.
+#
+# Upstream Eden починил это, подняв пин на 33618c8 — версию zstd, в которой
+# проблемная оптимизация отменена. Без этого шага любая правка ncz.cpp
+# бессмысленна: повреждение возникает до нашего кода.
+CPMFILE="$E/cpmfile.json"
+if [ -f "$CPMFILE" ]; then
+python3 - "$CPMFILE" <<'PYZSTD'
+import collections
+import json
+import sys
+path = sys.argv[1]
+with open(path, encoding='utf-8') as handle:
+    data = json.load(handle, object_pairs_hook=collections.OrderedDict)
+zstd = data.get('zstd')
+if zstd is None:
+    print('  ::warning:: no zstd entry in cpmfile')
+    raise SystemExit(0)
+if zstd.get('version') == '33618c8':
+    print('  zstd already pinned to 33618c8')
+    raise SystemExit(0)
+zstd.pop('sha', None)
+zstd['version'] = '33618c8'
+zstd['min_version'] = '1.5'
+zstd['hash'] = (
+    '2b006c3c110c38bd2f5896b42d36a38931c8eae261f30552f9a9fd04458d218d8f1a'
+    '1425f117fd12af545ed77042e4b2d1a1a9b6286c4d0b9d74ef79f20a8f08'
+)
+data['zstd'] = collections.OrderedDict(sorted(zstd.items()))
+with open(path, 'w', encoding='utf-8') as handle:
+    json.dump(data, handle, indent=4, ensure_ascii=False)
+    handle.write('\n')
+print('  zstd pinned to 33618c8 (ARM64 NCZ fix)')
+PYZSTD
+  if ! grep -q '"33618c8"' "$CPMFILE"; then
+    echo "ERROR: zstd pin not raised — solid NSZ will fail on arm64" >&2
+    exit 1
+  fi
+else
+  echo "  ::warning:: cpmfile.json not found; zstd pin unchanged" >&2
+fi
+
 # Новые .cpp сами в список не попадут: upstream_changes.patch перечисляет
 # файлы common руками, а хунки в нём уже сдвинуты. Поэтому список
 # дополняется здесь, и отдельно проверяется результат: без строки в CMake

@@ -134,28 +134,52 @@ class KenjiProbeService : Service() {
          * в удобный момент.
          */
         fun crashMessage(context: Context): String {
+            // PID процесса :kenji — он же PID упавшего ядра. Нужен в тексте,
+            // чтобы строки журнала можно было сверить с отчётом глазами.
+            val ownPid = android.os.Process.myPid()
             val file = runCatching { KenjiBridge.crashReportFile(context) }.getOrNull()
             val text = runCatching { file?.takeIf { it.isFile }?.readText() }.getOrNull().orEmpty()
             val report = KenjiCrash.parse(text)
 
             val body = StringBuilder(KenjiCrash.format(report))
 
-            // Текст исключения .NET живёт не в отчёте о сигнале, а в журнале
-            // системы. Без него при SIGABRT видно только «код остановился».
-            val lines = KenjiCrash.fatalLines(captureLogcat())
+            // В отчёте о сигнале есть адреса, но нет текста. Текст исключения
+            // .NET печатается в stderr ядра и перенаправлен в файл — это
+            // буквально сообщение рантайма, поэтому оно идёт первым.
+            val said = runCatching {
+                KenjiBridge.stdioFile(context).takeIf { it.isFile }?.readText()
+            }.getOrNull().orEmpty()
+            val exception = KenjiCrash.exceptionLines(said)
+            if (exception.isNotEmpty()) {
+                body.append("\n\nЧто сказало ядро перед остановкой:\n")
+                exception.forEach { body.append("• ").append(it.take(200)).append('\n') }
+            }
+
+            val own = captureLogcat()
+            val lines = KenjiCrash.fatalLines(own)
             if (lines.isNotEmpty()) {
-                body.append("\n\nИз журнала системы:\n")
+                body.append("\n\nИз журнала системы (только свой процесс, PID $ownPid):\n")
                 lines.forEach { body.append("• ").append(it.take(160)).append('\n') }
+            } else if (exception.isEmpty()) {
+                // Молчание хуже строки: человек думает, что отчёт неполный,
+                // и не знает, что журнала именно этого процесса нет.
+                body.append("\n\nЖурнала этого процесса нет: строки своего PID $ownPid")
+                    .append(" система не отдала. Это не ошибка приложения.")
             }
             return body.toString().trim()
         }
 
         /**
-         * Последние строки журнала.
+         * Последние строки журнала ЭТОГО процесса.
          *
-         * `logcat -d` из приложения отдаёт только записи своего UID — этого
-         * достаточно, потому что оба процесса (:kenji и основной) наши. Отказ
-         * системы не ошибка: тогда строк просто не будет.
+         * Раньше здесь стоял `logcat -d -t 400` без фильтра, и в отчёт попали
+         * строки PID 4628 при процессе 24319 — то есть чужое, уже закрытое
+         * падение. Читать такой журнал вредно: он объясняет не ту причину.
+         * Теперь `--pid`, а ниже — повторная фильтрация по колонке PID на
+         * случай, если система флаг не поддержала.
+         *
+         * Отказ системы не ошибка: строк просто не будет, и об этом сказано
+         * человеку прямым текстом.
          */
         private fun captureLogcat(): String = runCatching {
             // СНАЧАЛА БУФЕР КРАШЕЙ, ПОТОМ ОБЩИЙ.
@@ -166,9 +190,12 @@ class KenjiProbeService : Service() {
             // строками за секунды, и в первом отчёте с устройства поэтому
             // оказались только адреса. Два вызова, потому что порядок важен:
             // без свободного места общий буфер вытеснил бы краш-строки.
-            val crash = read("logcat", "-b", "crash", "-d", "-v", "brief")
-            val main = read("logcat", "-d", "-v", "brief", "-t", "400")
-            (crash + "\n" + main).trim()
+            // Только строки СВОЕГО процесса. Служба живёт в `:kenji`, значит
+            // myPid() — это PID упавшего ядра, а не лаунчера.
+            val pid = android.os.Process.myPid()
+            val crash = read(*KenjiCrash.logcatArgs(pid, buffer = "crash").toTypedArray())
+            val main = read(*KenjiCrash.logcatArgs(pid).toTypedArray())
+            KenjiCrash.filterByPid(crash + "\n" + main, pid)
         }.getOrDefault("")
 
         /** Один вызов logcat. Ошибку не бросаем: журнала может не быть. */

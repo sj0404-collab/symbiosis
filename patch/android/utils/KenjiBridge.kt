@@ -116,6 +116,16 @@ object KenjiBridge {
         File(File(context.getExternalFilesDir(null), "kenji"), "kenji-crash.txt")
 
     /**
+     * Файл, в который мост перенаправляет stdout и stderr процесса `:kenji`.
+     *
+     * Именно там .NET-ядро печатает необработанное исключение перед abort().
+     * Имя обязано совпадать с тем, что строит `ArmStdioCapture` в C++:
+     * `kenji-stdout.txt` рядом с отчётом о падении.
+     */
+    fun stdioFile(context: Context): File =
+        File(crashReportFile(context).parentFile, "kenji-stdout.txt")
+
+    /**
      * Начать новый отчёт о падении.
      *
      * Старый стирается: файл переживает смерть процесса, и без стирания
