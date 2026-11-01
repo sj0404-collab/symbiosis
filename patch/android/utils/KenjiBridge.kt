@@ -106,6 +106,29 @@ object KenjiBridge {
     private external fun nativePlayStop()
     private external fun nativeWindowOf(surface: android.view.Surface): Long
 
+    /**
+     * Файл отчёта о падении — рядом с данными второго ядра.
+     *
+     * Путь живёт здесь, а не в [KenjiCrash]: разбор отчёта проверяется тестом
+     * на хосте, и ему нельзя тянуть за собой android.content.Context.
+     */
+    fun crashReportFile(context: Context): File =
+        File(File(context.getExternalFilesDir(null), "kenji"), "kenji-crash.txt")
+
+    /**
+     * Начать новый отчёт о падении.
+     *
+     * Старый стирается: файл переживает смерть процесса, и без стирания
+     * вчерашнее падение выдавалось бы за сегодняшнее. Вызывается в процессе
+     * `:kenji` перед первым касанием ядра.
+     */
+    fun armCrashReport(context: Context) {
+        ensureBridge()?.let { return }
+        val file = crashReportFile(context)
+        runCatching { file.parentFile?.mkdirs() }
+        runCatching { nativeSetCrashLog(file.absolutePath) }
+    }
+
     data class Status(
         val ok: Boolean,
         val message: String,
