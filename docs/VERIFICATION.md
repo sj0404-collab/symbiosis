@@ -625,6 +625,20 @@ MD5 `f0f17b2738005ae0b6ba09a7435d0895`, 43.3 МБ. Артефакт скачан
 - Патч целиком применён к Eden v0.2.1 (`PATCH_APPLIED files=187`), проверки
   JNI/Kotlin/строк — 0 проблем, весь набор тестов — **46/0**.
 
+### Что подтверждено в собранном APK
+
+Сборка `41303690241` из `82f18ba`: https://gofile.io/d/G01D6IHN,
+MD5 `1702a540134eab3b968c04720226bcd9`. Артефакт скачан и распакован,
+MD5 совпал с посчитанным на runner.
+
+| Проверка | Результат |
+|---|---|
+| `classes*.dex` | `RomSniff`, `KenjiCrash`, `ConverterReasons` — новые классы внутри APK |
+| `nm libsymbiosis_kenji.so` | `Java_..._KenjiBridge_nativeSetCrashLog`, `..._nativeSetStep` |
+| там же | `debug_break`, `setRenderingThread`, `setCurrentTransform` — по-прежнему экспортируются для ядра |
+| `strings libsymbiosis_kenji.so` | `crash signal=%d name=%s addr=%p code=%d step=%s`, `pc=%s+0x%lx` — обработчик в сборке |
+| `nm libyuzu-android.so` | `Java_..._NativeSymbiosis_setRomWorkDir` — рабочий каталог распаковки |
+
 ### Чего здесь по-прежнему нет
 
 Причина падения второго ядра на этом телефоне **ещё не установлена**: отчёт
