@@ -1399,7 +1399,9 @@ class EmulationFragment : Fragment(), SurfaceHolder.Callback {
                 text = "$ms мс"
                 textSize = 13f
                 isAllCaps = false
-                cornerRadius = spacing.toFloat()
+                // setCornerRadius в Material 1.12 принимает пиксели (int), а
+                // не float: прогон 41329247719 упал именно на этом.
+                cornerRadius = spacing
                 minWidth = 0
                 minimumWidth = 0
                 insetTop = 0
