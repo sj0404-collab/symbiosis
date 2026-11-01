@@ -205,6 +205,15 @@
         android:id="@+id/action_global_sourcesFragment"
         app:destination="@id/sourcesFragment" />
 
+    <!-- Ровность кадров: почему прыгает картинка и почему рвётся звук. -->
+    <fragment
+        android:id="@+id/performanceFragment"
+        android:name="org.yuzu.yuzu_emu.fragments.PerformanceFragment"
+        android:label="PerformanceFragment" />
+    <action
+        android:id="@+id/action_global_performanceFragment"
+        app:destination="@id/performanceFragment" />
+
     <fragment
         android:id="@+id/toolsFragment"
         android:name="org.yuzu.yuzu_emu.fragments.ToolsFragment"

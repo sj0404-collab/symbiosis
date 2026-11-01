@@ -290,7 +290,8 @@ jobs:
                        SourceRangeServer SourcePlayerActivity \
                        TorrentBencode TorrentMeta TorrentPlan TorrentWire \
                        TorrentTracker TorrentAnnounce TorrentDownload \
-                       MagnetMeta; do
+                       MagnetMeta FramePacing FrameMetricsText \
+                       PerformanceFragment; do
               if strings classes*.dex | grep -q "$sym"; then echo "  ok   $sym in dex"
               else echo "  MISSING $sym"; fail=1; fi
             done
@@ -321,6 +322,21 @@ jobs:
           n=$("$NM" -D lib/arm64-v8a/libyuzu-android.so | grep -c NativeSymbiosis || true)
           echo "  JNI symbols exported: $n"
           [ "$n" -ge 50 ] || { echo "  too few JNI symbols"; fail=1; }
+
+          # Ровность кадров. Счётчик живёт в нативной части, но хунки в самом
+          # Eden (perf_stats, sink_stream, vk_pipeline_cache) в APK не попадают:
+          # они в libyuzu-android.so как вызовы, а не как экспорт. Поэтому
+          # проверяем экспорт JNI и то, что экран действительно лёг в dex:
+          # без экрана снимок некому показать.
+          for sym in FrameMetricsText FramePacing; do
+            if [ "$MINIFIED" = 0 ]; then
+              grep -qa "$sym" /tmp/x/classes*.dex \
+                || { echo "  missing Kotlin class: $sym"; fail=1; }
+            fi
+          done
+          "$NM" -D lib/arm64-v8a/libyuzu-android.so \
+            | grep -q "Java_org_yuzu_yuzu_emu_utils_NativeSymbiosis_frameMetrics" \
+            || { echo "  missing JNI export: frameMetrics"; fail=1; }
 
           # The Kenji bridge, in both names. The core dlopen()s libkenjinxjni
           # and calls debug_break from inside deviceInitialize, so a missing

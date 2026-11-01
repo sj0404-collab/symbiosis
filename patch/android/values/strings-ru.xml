@@ -1532,4 +1532,6 @@
     <string name="kernel_log_description">Что говорило ядро в этом и прошлом запуске. Копировать, отправить, очистить.</string>
     <string name="sources_title">Источники</string>
     <string name="sources_description">Ссылка на каталог, файл, торрент или magnet: показать файлы, скачать или смотреть по частям.</string>
+    <string name="performance_title">Ровность кадров</string>
+    <string name="performance_description">Почему прыгает картинка и почему рвётся звук: факты, причина, что менять.</string>
 </resources>

@@ -120,6 +120,14 @@ class ToolsFragment : Fragment() {
             )
             add(
                 HomeSetting(
+                    R.string.performance_title,
+                    R.string.performance_description,
+                    R.drawable.ic_speed,
+                    { nav(R.id.action_global_performanceFragment) }
+                )
+            )
+            add(
+                HomeSetting(
                     R.string.fps_tuning,
                     R.string.fps_tuning_description,
                     R.drawable.ic_speed,

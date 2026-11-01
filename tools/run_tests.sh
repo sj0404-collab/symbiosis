@@ -185,6 +185,13 @@ if command -v kotlinc >/dev/null 2>&1; then
         $HERE/patch/android/utils/SourceIndex.kt" ;;
       # Скачивание по-настоящему: локальный трекер и локальный пир на
       # 127.0.0.1, настоящие сокеты. Log — заглушка из tests/host.
+      # Ровность кадров: почему «60 → 15 → 45 → 5» и когда виноват звук, а не
+      # картинка. Чистая арифметика над рядами длительностей кадров.
+      FramePacingTest) echo "$HERE/patch/android/utils/FramePacing.kt" ;;
+      # Разбор снимка от нативной части: мусор и пустой ответ не должны
+      # ронять экран диагностики.
+      FrameMetricsTextTest) echo "$HERE/patch/android/utils/FrameMetricsText.kt \
+        $HERE/patch/android/utils/FramePacing.kt" ;;
       TorrentDownloadTest) echo "$HERE/patch/android/utils/TorrentBencode.kt \
         $HERE/patch/android/utils/TorrentMeta.kt \
         $HERE/patch/android/utils/TorrentPlan.kt \

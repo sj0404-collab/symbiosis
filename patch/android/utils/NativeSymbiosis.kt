@@ -81,6 +81,22 @@ object NativeSymbiosis {
             )
         }.getOrElse { Thermal("Unknown", -1, -1, "", "") }
 
+    // --- Ровность кадров ---------------------------------------------------
+    /**
+     * Снимок того, что происходило с кадрами и звуком во время игры.
+     *
+     * Счётчики живут в нативной части и переживают выход из игры: поиграли,
+     * вышли, открыли экран — данные на месте. Разбор — в [FrameMetricsText].
+     */
+    external fun frameMetrics(): String
+
+    /** Начать новый замер. */
+    external fun resetFrameMetrics()
+
+    /** Снимок, уже разобранный. Пустой, если нативная часть недоступна. */
+    fun frameSnapshot(): FrameMetricsText.Snapshot =
+        FrameMetricsText.parse(runCatching { frameMetrics() }.getOrDefault(""))
+
     // --- Profiles --------------------------------------------------------
     private external fun getProfilesForDevice(): String
     private external fun getAllProfiles(): String

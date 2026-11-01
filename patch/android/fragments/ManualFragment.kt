@@ -194,6 +194,7 @@ class ManualFragment : Fragment() {
             Manual.Go.FPS -> R.id.action_global_fpsTuningFragment
             Manual.Go.DIAGNOSTICS -> R.id.action_global_diagnosticsFragment
             Manual.Go.SOURCES -> R.id.action_global_sourcesFragment
+            Manual.Go.PERFORMANCE -> R.id.action_global_performanceFragment
             Manual.Go.SETTINGS_GUIDE -> R.id.action_global_guideFragment
             Manual.Go.PANEL -> R.id.action_global_livePanelFragment
             Manual.Go.CONVERT -> 0

@@ -2199,4 +2199,6 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
     <string name="kernel_log_description">What the core said in this and the previous run. Copy, share, clear.</string>
     <string name="sources_title">Sources</string>
     <string name="sources_description">Paste a link to a folder, file, torrent or magnet: list the files, download them or stream in parts.</string>
+    <string name="performance_title">Frame pacing</string>
+    <string name="performance_description">Why the picture stutters and the audio crackles: facts, cause, what to change.</string>
 </resources>

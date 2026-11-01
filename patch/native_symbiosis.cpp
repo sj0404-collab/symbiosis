@@ -26,6 +26,7 @@
 #include "common/symbiosis/game_catalogue.h"
 #include "common/symbiosis/rom_tools.h"
 #include "common/symbiosis/settings_audit.h"
+#include "common/symbiosis/frame_metrics.h"
 #include "common/symbiosis/settings_guide.h"
 #include "common/symbiosis/save_guard.h"
 #include "common/symbiosis/mali_tuning.h"
@@ -258,6 +259,24 @@ Java_org_yuzu_yuzu_1emu_utils_NativeSymbiosis_applyProfile(JNIEnv* env, jobject,
     LOG_INFO(Frontend, "[Symbiosis] applied profile '{}': {} of {} setting(s)", id, applied,
              target->tweaks.size());
     return applied;
+}
+
+/**
+ * Снимок кадров и звука для экрана «Ровность кадров».
+ *
+ * Возвращает текст «ключ=значение», который разбирает FrameMetricsText на
+ * Kotlin: так формат нельзя разобрать «почти» — либо ключ есть, либо нет.
+ */
+JNIEXPORT jstring JNICALL
+Java_org_yuzu_yuzu_1emu_utils_NativeSymbiosis_frameMetrics(JNIEnv* env, jobject) {
+    const std::string snapshot = Symbiosis::FrameMetrics::Snapshot();
+    return env->NewStringUTF(snapshot.c_str());
+}
+
+/** Начать новый замер: забыть кадры, провалы звука и сборки шейдеров. */
+JNIEXPORT void JNICALL
+Java_org_yuzu_yuzu_1emu_utils_NativeSymbiosis_resetFrameMetrics(JNIEnv*, jobject) {
+    Symbiosis::FrameMetrics::Reset();
 }
 
 /**
