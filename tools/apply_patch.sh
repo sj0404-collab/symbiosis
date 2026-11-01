@@ -542,10 +542,13 @@ zstd = data.get('zstd')
 if zstd is None:
     print('  ::warning:: no zstd entry in cpmfile')
     raise SystemExit(0)
-if zstd.get('version') == '33618c8':
-    print('  zstd already pinned to 33618c8')
-    raise SystemExit(0)
-zstd.pop('sha', None)
+# Поля ровно в той форме, которую понимает CPMUtil ЭТОЙ версии Eden
+# (v0.2.1). В master Eden поле `version` само служит ссылкой на коммит —
+# там достаточно version+hash. Здесь так нельзя: CPMUtil v0.2.1 ищет TAG,
+# SHA или BRANCH, а на `version` только предупреждает «REPO defined but no
+# TAG, SHA, BRANCH, or URL», уходит на master zstd и падает на скачивании.
+# Это и случилось в прогоне 41327290304 — сборка легла на zstd-populate.
+zstd['sha'] = '33618c8'
 zstd['version'] = '33618c8'
 zstd['min_version'] = '1.5'
 zstd['hash'] = (
