@@ -291,7 +291,7 @@ jobs:
                        TorrentBencode TorrentMeta TorrentPlan TorrentWire \
                        TorrentTracker TorrentAnnounce TorrentDownload \
                        MagnetMeta FramePacing FrameMetricsText \
-                       PerformanceFragment RomSniff KenjiCrash; do
+                       PerformanceFragment RomSniff KenjiCrash QuickPanel; do
               if strings classes*.dex | grep -q "$sym"; then echo "  ok   $sym in dex"
               else echo "  MISSING $sym"; fail=1; fi
             done

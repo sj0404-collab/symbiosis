@@ -140,7 +140,13 @@ object KenjiCrash {
      * всего лишь был в стеке. Ответ даёт первый настоящий кадр.
      */
     fun verdict(report: Report): String {
-        val top = report.frames.firstOrNull { !it.startsWith("[") }
+        // libc и [vdso] — это не виновник, а механизм: abort() живёт в libc и
+        // вызывает raise(), поэтому при SIGABRT два верхних кадра всегда
+        // системные. Считать виновником первый попавшийся кадр значило бы
+        // каждый раз отвечать «виновата система».
+        val top = report.frames.firstOrNull { frame ->
+            !frame.startsWith("[") && SYSTEM_LIBS.none { frame.startsWith(it) }
+        } ?: report.frames.firstOrNull { !it.startsWith("[") }
         val points = mutableListOf<String>()
 
         when {
@@ -149,8 +155,15 @@ object KenjiCrash {
 
             top.startsWith("libkenji.so") ->
                 points.add(
-                    "Падение внутри libkenji.so — это файл ядра. Первое, что стоит исключить: " +
-                        "скачанный файл повреждён."
+                    if (report.signal == 6) {
+                        "abort() вызван изнутри libkenji.so: ядро загрузилось, но само " +
+                            "остановилось на шаге «${stepLabel(report.step)}». Это не сбой " +
+                            "загрузки и не нехватка памяти — так заканчивается необработанное " +
+                            "исключение в самом ядре."
+                    } else {
+                        "Падение внутри libkenji.so — это файл ядра. Первое, что стоит " +
+                            "исключить: скачанный файл повреждён."
+                    }
                 )
 
             top.startsWith("libsymbiosis_kenji.so") ->
@@ -205,8 +218,11 @@ object KenjiCrash {
      */
     fun fatalLines(logcat: String, limit: Int = 8): List<String> {
         val interesting = listOf(
-            "unhandled exception", "failfast", "abort message", "fatal exception",
-            "kenji", "libkenji", "symbiosiskenji", "system.", "exception:"
+            // Сначала то, что прямо называет причину.
+            "abort message", "unhandled exception", "failfast", "fatal exception",
+            "signal 6", "exception:", "system.",
+            // Затем наши собственные отметки: по ним видно, докуда дошли.
+            "kenji", "libkenji", "symbiosiskenji"
         )
         return logcat.lineSequence()
             .map { it.trim() }
@@ -219,6 +235,9 @@ object KenjiCrash {
             .toList()
             .takeLast(limit)
     }
+
+    /** Библиотеки, которые только передают сигнал, а не вызывают его. */
+    private val SYSTEM_LIBS = listOf("libc.so", "libc++", "libdl.so", "libm.so", "[vdso]")
 
     private fun stepLabel(step: String): String = when (step) {
         "" -> "не записан"

@@ -185,6 +185,9 @@ if command -v kotlinc >/dev/null 2>&1; then
         $HERE/patch/android/utils/SourceIndex.kt" ;;
       # Скачивание по-настоящему: локальный трекер и локальный пир на
       # 127.0.0.1, настоящие сокеты. Log — заглушка из tests/host.
+      # Панель быстрых настроек: что применяется сразу, а что только после
+      # перезапуска игры. Ошибка здесь = «настройка включена, эффекта нет».
+      QuickPanelTest) echo "$HERE/patch/android/utils/QuickPanel.kt" ;;
       # Формат по первым байтам: самый частый отказ конвертера — выбран не
       # образ, а архив, и раньше это выяснялось через сорок минут.
       RomSniffTest) echo "$HERE/patch/android/utils/RomSniff.kt" ;;

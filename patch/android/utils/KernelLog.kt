@@ -152,6 +152,28 @@ object KernelLog {
      * Единственный способ что-то потерять — удалить приложение вместе с его
      * папкой данных; копия в общей памяти переживает и это.
      */
+    /**
+     * Системный журнал приложения — запасной источник.
+     *
+     * ЗАЧЕМ. На устройстве экран «Журнал ядра» показал `eden_log.txt · 0 КБ ·
+     * ошибок: 0` и «журнал пуст» — при том, что игры запускались. Значит файл
+     * создан, а писать в него ядро не стало (свой файловый журнал включается
+     * отдельно от системного). Совет «запустите игру» в этом случае неверен и
+     * второй раз не поможет.
+     *
+     * А вот система всё это время писала своё: старт ядра, наши отметки
+     * SymbiosisKenji, fatal-строки того же процесса. Это не журнал ядра, но
+     * ответить на вопрос «что произошло» по нему можно.
+     */
+    fun systemLog(lines: Int = 400): String = runCatching {
+        val process = ProcessBuilder("logcat", "-d", "-v", "brief", "-t", lines.toString())
+            .redirectErrorStream(true)
+            .start()
+        val output = process.inputStream.bufferedReader().use { it.readText() }
+        process.waitFor()
+        output
+    }.getOrDefault("")
+
     fun exportToDownloads(context: Context, chunk: Chunk?): String? {
         val text = chunk?.text.orEmpty()
         if (text.isBlank()) return null

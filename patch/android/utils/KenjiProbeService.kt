@@ -158,9 +158,22 @@ class KenjiProbeService : Service() {
          * системы не ошибка: тогда строк просто не будет.
          */
         private fun captureLogcat(): String = runCatching {
-            val process = ProcessBuilder("logcat", "-d", "-v", "brief", "-t", "800")
-                .redirectErrorStream(true)
-                .start()
+            // СНАЧАЛА БУФЕР КРАШЕЙ, ПОТОМ ОБЩИЙ.
+            //
+            // Самое нужное сообщение при SIGABRT — «Abort message»: Android
+            // кладёт tombstone с текстом исключения именно в отдельный буфер
+            // `crash`. В общем буфере его уже нет — он вытесняется обычными
+            // строками за секунды, и в первом отчёте с устройства поэтому
+            // оказались только адреса. Два вызова, потому что порядок важен:
+            // без свободного места общий буфер вытеснил бы краш-строки.
+            val crash = read("logcat", "-b", "crash", "-d", "-v", "brief")
+            val main = read("logcat", "-d", "-v", "brief", "-t", "400")
+            (crash + "\n" + main).trim()
+        }.getOrDefault("")
+
+        /** Один вызов logcat. Ошибку не бросаем: журнала может не быть. */
+        private fun read(vararg command: String): String = runCatching {
+            val process = ProcessBuilder(*command).redirectErrorStream(true).start()
             val output = process.inputStream.bufferedReader().use { it.readText() }
             process.waitFor()
             output

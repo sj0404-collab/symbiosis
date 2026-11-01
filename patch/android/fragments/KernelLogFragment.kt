@@ -55,6 +55,9 @@ class KernelLogFragment : Fragment() {
 
     /** Что сейчас открыто: ядро, слой или прошлый сеанс. */
     private var source = SOURCE_KERNEL
+
+    /** Текст системного журнала: читается по кнопке, а не при каждом входе. */
+    private var systemText: String = ""
     private var current: KernelLog.Chunk? = null
     private var layerText = ""
 
@@ -232,15 +235,21 @@ class KernelLogFragment : Fragment() {
         LinearLayout.LayoutParams.WRAP_CONTENT
     ).apply { rightMargin = dp(6) }
 
-    private fun visibleText(): String =
-        if (source == SOURCE_LAYER) layerText else current?.text.orEmpty()
+    private fun visibleText(): String = when (source) {
+        SOURCE_LAYER -> layerText
+        SOURCE_SYSTEM -> systemText
+        else -> current?.text.orEmpty()
+    }
 
     private fun refresh() {
         val ctx = requireContext().applicationContext
         summary.text = "читаю…"
         lifecycleScope.launch {
             val loaded = withContext(Dispatchers.IO) {
-                if (source == SOURCE_LAYER) {
+                if (source == SOURCE_SYSTEM) {
+                    systemText = KernelLog.systemLog()
+                    null
+                } else if (source == SOURCE_LAYER) {
                     layerText = runCatching {
                         NativeSymbiosis.logDump(null, NativeSymbiosis.LogLevel.Debug)
                     }.getOrDefault("")
@@ -267,6 +276,14 @@ class KernelLogFragment : Fragment() {
     }
 
     private fun describe(chunk: KernelLog.Chunk?, text: String): String {
+        if (source == SOURCE_SYSTEM) {
+            return if (text.isBlank()) {
+                "системный журнал недоступен: система не отдала записи этого приложения"
+            } else {
+                "система · ${text.lineSequence().count()} строк · ошибок " +
+                    "${KernelLog.countProblems(text)}"
+            }
+        }
         if (source == SOURCE_LAYER) {
             return if (text.isBlank()) "слой ничего не записал"
             else "решения слоя · ${text.lineSequence().count()} строк"
@@ -296,9 +313,27 @@ class KernelLogFragment : Fragment() {
      */
     private fun emptyReason(): String {
         val dir = KernelLog.directory()?.absolutePath ?: "папка журнала не определена"
+
+        // Файл есть, но в нём ноль байт — это ДРУГОЙ случай, чем «файла нет».
+        // Раньше оба давали один совет «запустите игру», и на устройстве он
+        // был неверным: игра запускалась, а ядро в свой файл не писало.
+        val emptyFile = KernelLog.files().firstOrNull { it.length() == 0L }
+        if (emptyFile != null) {
+            return "Файл журнала создан, но пуст: ${emptyFile.name} · 0 КБ.\n\n" +
+                "Значит ядро до него не писало — свой файловый журнал включается " +
+                "отдельно от системного. Что делать:\n" +
+                "• откройте «Отладка» в настройках и включите запись журнала, если она " +
+                "выключена;\n" +
+                "• переключитесь на источник «Система» — система писала всё это время, " +
+                "даже когда файл ядра молчал.\n\n" +
+                "Файлы лежат в:\n$dir"
+        }
+
         return "Журнал пуст.\n\n" +
             "Ядро пишет его, когда запускается игра. Запустите проблемную игру, " +
             "вернитесь сюда и нажмите «Обновить».\n\n" +
+            "Если игра уже запускалась, переключитесь на источник «Система»: " +
+            "системный журнал пишется всегда.\n\n" +
             "Файлы лежат в:\n$dir"
     }
 
@@ -307,12 +342,17 @@ class KernelLogFragment : Fragment() {
         private const val SOURCE_SESSIONS = "sessions"
         private const val SOURCE_PREVIOUS = "previous"
         private const val SOURCE_LAYER = "layer"
+        private const val SOURCE_SYSTEM = "system"
 
         private val SOURCES = listOf(
             SOURCE_KERNEL to "ядро",
             SOURCE_PREVIOUS to "прошлый запуск",
             SOURCE_SESSIONS to "сеансы",
-            SOURCE_LAYER to "Symbiosis"
+            SOURCE_LAYER to "Symbiosis",
+            // Последним, а не первым: это запасной источник, и он не должен
+            // выглядеть основным. Но он есть всегда — в отличие от файла ядра,
+            // который на устройстве оказался созданным и пустым.
+            SOURCE_SYSTEM to "система"
         )
     }
 }

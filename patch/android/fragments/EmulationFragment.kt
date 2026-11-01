@@ -46,6 +46,9 @@ import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.updateLayoutParams
 import androidx.drawerlayout.widget.DrawerLayout
 import androidx.drawerlayout.widget.DrawerLayout.DrawerListener
+import android.widget.HorizontalScrollView
+import android.widget.LinearLayout
+import android.graphics.Typeface
 import androidx.fragment.app.Fragment
 import androidx.fragment.app.activityViewModels
 import androidx.lifecycle.lifecycleScope
@@ -74,6 +77,7 @@ import org.yuzu.yuzu_emu.databinding.FragmentEmulationBinding
 import org.yuzu.yuzu_emu.dialogs.QuickSettings
 import org.yuzu.yuzu_emu.features.input.NativeInput
 import org.yuzu.yuzu_emu.features.settings.model.BooleanSetting
+import org.yuzu.yuzu_emu.features.settings.model.ByteSetting
 import org.yuzu.yuzu_emu.features.settings.model.IntSetting
 import org.yuzu.yuzu_emu.features.settings.model.Settings
 import org.yuzu.yuzu_emu.features.settings.model.Settings.EmulationOrientation
@@ -96,6 +100,7 @@ import org.yuzu.yuzu_emu.utils.CloudSync
 import org.yuzu.yuzu_emu.utils.ExitTrace
 import org.yuzu.yuzu_emu.utils.Log
 import org.yuzu.yuzu_emu.utils.NativeConfig
+import org.yuzu.yuzu_emu.utils.QuickPanel
 import org.yuzu.yuzu_emu.utils.NativeFreedrenoConfig
 import org.yuzu.yuzu_emu.utils.ViewUtils
 import org.yuzu.yuzu_emu.utils.ViewUtils.setVisible
@@ -155,6 +160,14 @@ class EmulationFragment : Fragment(), SurfaceHolder.Callback {
     private var pausedFrameBitmap: Bitmap? = null
 
     var shouldUseCustom = false
+
+    /**
+     * Ключи, которые меняли в панели за этот запуск игры.
+     *
+     * Нужны, чтобы честно сказать «это применится после перезапуска» и
+     * показать кнопку перезапуска только тогда, когда она действительно нужна.
+     */
+    private val quickChanges = mutableSetOf<String>()
     private var isQuickSettingsMenuOpen = false
     private val quickSettings = QuickSettings(this)
 
@@ -1205,7 +1218,227 @@ class EmulationFragment : Fragment(), SurfaceHolder.Callback {
                 R.array.rendererAntiAliasingNames,
                 R.array.rendererAntiAliasingValues
             )
+
+            // --- то, чего здесь не было -------------------------------
+            //
+            // Стандартная панель умеет десять пунктов, и в ней нет ни
+            // разрешения, ни звука. Отсюда и «качество поменять не могу»:
+            // настройка есть в общих настройках, но в игре её не достать.
+            addSymbiosisQuickSettings(container)
         }
+    }
+
+    /**
+     * Дополнительные пункты панели: изображение целиком и звук целиком.
+     *
+     * Каждый пункт подписан «сразу» или «после перезапуска» — по таблице из
+     * [QuickPanel], собранной по коду ядра. Без подписи человек меняет
+     * разрешение, не видит разницы и решает, что настройки не работают.
+     */
+    private fun addSymbiosisQuickSettings(container: ViewGroup) {
+        val ctx = requireContext()
+
+        fun header(text: String): TextView = TextView(ctx).apply {
+            this.text = text
+            setPadding(0, resources.getDimensionPixelSize(R.dimen.spacing_small), 0, 0)
+            setTextColor(MaterialColors.getColor(this, com.google.android.material.R.attr.colorPrimary))
+            textSize = 13f
+            setTypeface(typeface, Typeface.BOLD)
+        }
+
+        fun badge(entry: QuickPanel.Entry): TextView = TextView(ctx).apply {
+            text = QuickPanel.badge(entry)
+            textSize = 11f
+            setTextColor(
+                MaterialColors.getColor(
+                    this,
+                    if (entry.live) android.R.attr.textColorSecondary
+                    else com.google.android.material.R.attr.colorError
+                )
+            )
+            setPadding(0, 0, 0, resources.getDimensionPixelSize(R.dimen.spacing_small))
+        }
+
+        fun entryOf(key: String): QuickPanel.Entry =
+            QuickPanel.entries.first { it.key == key }
+
+        quickSettings.addDivider(container)
+        container.addView(header("Изображение"))
+        container.addView(badge(entryOf("resolution_setup")))
+
+        quickSettings.addIntSetting(
+            R.string.renderer_resolution,
+            container,
+            IntSetting.RENDERER_RESOLUTION,
+            R.array.rendererResolutionNames,
+            R.array.rendererResolutionValues
+        ) { markQuickChange("resolution_setup") }
+
+        quickSettings.addIntSetting(
+            R.string.renderer_vsync,
+            container,
+            IntSetting.RENDERER_VSYNC,
+            R.array.rendererVSyncNames,
+            R.array.rendererVSyncValues
+        ) { markQuickChange("use_vsync") }
+
+        quickSettings.addDivider(container)
+        container.addView(header("Звук"))
+        // Громкость — единственная звуковая настройка, которая меняется на
+        // ходу, поэтому она первая: если человек просто хочет тише, ему не
+        // нужно ничего перезапускать.
+        container.addView(header("Громкость · ${QuickPanel.badge(entryOf("audio_volume"))}"))
+        container.addView(
+            com.google.android.material.slider.Slider(ctx).apply {
+                valueFrom = 0f
+                valueTo = 100f
+                stepSize = 1f
+                // Громкость — байтовая настройка (ByteSetting.AUDIO_VOLUME),
+                // а не целочисленная: getInt по её ключу вернул бы 0, и ползунок
+                // каждый раз показывал бы «тишину».
+                value = runCatching { ByteSetting.AUDIO_VOLUME.getByte(needsGlobal = false) }
+                    .getOrDefault(100).toInt().coerceIn(0, 100).toFloat()
+                addOnChangeListener { _, value, fromUser ->
+                    if (!fromUser) return@addOnChangeListener
+                    runCatching { ByteSetting.AUDIO_VOLUME.setByte(value.toInt().toByte()) }
+                    runCatching { NativeConfig.saveGlobalConfig() }
+                    if (shouldUseCustom) runCatching { NativeConfig.savePerGameConfig() }
+                }
+            },
+            LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            )
+        )
+
+        container.addView(badge(entryOf("output_engine")))
+
+        quickSettings.addIntSetting(
+            R.string.audio_output_engine,
+            container,
+            IntSetting.AUDIO_OUTPUT_ENGINE,
+            R.array.outputEngineEntries,
+            R.array.outputEngineValues
+        ) { markQuickChange("output_engine") }
+
+        // Буфер звука: чипы, а не поле ввода. Значений мало и они
+        // осмысленные, а промахнуться пальцем по числу — легко.
+        container.addView(TextView(ctx).apply {
+            text = "Буфер звука"
+            textSize = 15f
+            setPadding(0, resources.getDimensionPixelSize(R.dimen.spacing_small), 0, 0)
+        })
+        container.addView(TextView(ctx).apply {
+            text = QuickPanel.bufferHint(currentAudioBufferMs())
+            textSize = 12f
+            setTextColor(MaterialColors.getColor(this, android.R.attr.textColorSecondary))
+        })
+        val chips = LinearLayout(ctx).apply {
+            orientation = LinearLayout.HORIZONTAL
+            setPadding(0, resources.getDimensionPixelSize(R.dimen.spacing_small), 0, 0)
+        }
+        QuickPanel.bufferChoices.forEach { ms ->
+            val selected = currentAudioBufferMs() == ms
+            chips.addView(
+                com.google.android.material.button.MaterialButton(ctx).apply {
+                    text = "$ms мс"
+                    textSize = 13f
+                    isAllCaps = false
+                    cornerRadius = resources.getDimensionPixelSize(R.dimen.spacing_small)
+                    minWidth = 0
+                    minimumWidth = 0
+                    insetTop = 0
+                    insetBottom = 0
+                    if (selected) {
+                        backgroundTintList = android.content.res.ColorStateList.valueOf(
+                            MaterialColors.getColor(this, com.google.android.material.R.attr.colorPrimary)
+                        )
+                        setTextColor(
+                            MaterialColors.getColor(this, com.google.android.material.R.attr.colorOnPrimary)
+                        )
+                    } else {
+                        backgroundTintList = android.content.res.ColorStateList.valueOf(
+                            MaterialColors.getColor(this, com.google.android.material.R.attr.colorSurfaceVariant)
+                        )
+                        setTextColor(
+                            MaterialColors.getColor(this, android.R.attr.textColorSecondary)
+                        )
+                    }
+                    setOnClickListener {
+                        runCatching { NativeConfig.setInt(QuickPanel.BUFFER_KEY, ms) }
+                        runCatching { NativeConfig.saveGlobalConfig() }
+                        if (shouldUseCustom) runCatching { NativeConfig.savePerGameConfig() }
+                        markQuickChange(QuickPanel.BUFFER_KEY)
+                        addQuickSettings()
+                    }
+                },
+                LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.WRAP_CONTENT,
+                    LinearLayout.LayoutParams.WRAP_CONTENT
+                ).apply { rightMargin = resources.getDimensionPixelSize(R.dimen.spacing_small) }
+            )
+        }
+        val chipsScroll = HorizontalScrollView(ctx).apply {
+            isHorizontalScrollBarEnabled = false
+            addView(chips)
+        }
+        container.addView(chipsScroll)
+        container.addView(badge(entryOf("symbiosis_audio_buffer_ms")))
+
+        // Итог: что уже работает, а что ждёт перезапуска, и одна кнопка,
+        // чтобы это сделать. Без кнопки человек ищет «как перезапустить» сам.
+        val status = TextView(ctx).apply {
+            text = QuickPanel.statusLine(quickChanges).ifEmpty {
+                "Громкость и предел кадров применяются сразу; разрешение, vsync и звук — после перезапуска."
+            }
+            textSize = 12f
+            setTextColor(MaterialColors.getColor(this, android.R.attr.textColorSecondary))
+            setPadding(0, resources.getDimensionPixelSize(R.dimen.spacing_small), 0, 0)
+        }
+        container.addView(status)
+
+        if (QuickPanel.needsRestart(quickChanges)) {
+            container.addView(
+                com.google.android.material.button.MaterialButton(ctx).apply {
+                    text = "Перезапустить игру"
+                    textSize = 14f
+                    isAllCaps = false
+                    setOnClickListener { restartGameWithSettings() }
+                },
+                LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT,
+                    LinearLayout.LayoutParams.WRAP_CONTENT
+                ).apply { topMargin = resources.getDimensionPixelSize(R.dimen.spacing_small) }
+            )
+        }
+    }
+
+    /** Запомнить, что пункт меняли: от этого зависит и подпись, и кнопка. */
+    private fun markQuickChange(key: String) {
+        quickChanges.add(key)
+        if (isAdded) runCatching { addQuickSettings() }
+    }
+
+    private fun currentAudioBufferMs(): Int =
+        runCatching { NativeConfig.getInt(QuickPanel.BUFFER_KEY, false) }
+            .getOrDefault(20).let { if (it <= 0) 20 else it }
+
+    /**
+     * Перезапуск игры с сохранёнными настройками.
+     *
+     * Настройки, которые ядро читает при запуске, иначе не применить: оно не
+     * перечитывает их на ходу. Порядок важен — сначала сохранить, потом
+     * закрыть: закрытие сбрасывает состояние настроек в ядре.
+     */
+    private fun restartGameWithSettings() {
+        val target = game ?: return
+        val activity = emulationActivity ?: return
+        runCatching { NativeConfig.saveGlobalConfig() }
+        if (shouldUseCustom) runCatching { NativeConfig.savePerGameConfig() }
+        quickChanges.clear()
+        runCatching { NativeLibrary.stopEmulation() }
+        activity.finish()
+        EmulationActivity.launch(activity, target)
     }
 
     private fun isFsrScalingFilterSelected(): Boolean {

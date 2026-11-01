@@ -129,12 +129,40 @@ fun main() {
     check("верхний кадр — ядро: виноват файл ядра",
         KenjiCrash.verdict(coreOnTop).contains("файл ядра"))
 
-    val systemOnTop = handlerOnTop.copy(frames = listOf("libc.so+0x530f4", "libkenji.so+0x1"))
-    check("верхний кадр — система", KenjiCrash.verdict(systemOnTop).contains("вне обеих"))
+    // «Система» — это библиотека, которая не наша и не ядро. libc сюда не
+    // годится: она механизм abort/raise и пропускается намеренно.
+    val systemOnTop = handlerOnTop.copy(frames = listOf("libc.so+0x530f4", "libart.so+0x1"))
+    check("верхний кадр — система", KenjiCrash.verdict(systemOnTop).contains("вне обеих"),
+        KenjiCrash.verdict(systemOnTop))
 
     // SIGABRT — это не сбой памяти, и это должно быть сказано отдельно.
     check("SIGABRT объяснён", handlerVerdict.contains("остановка по требованию"), handlerVerdict)
     check("SIGABRT не объясняется как порча памяти", !handlerVerdict.contains("память побилась"))
+
+    // ── настоящий отчёт с устройства ───────────────────────────────────
+    //
+    // Пришло ровно это: сверху два кадра libc (abort и raise), ниже — ядро.
+    // Такая картина обязана читаться как «ядро само вызвало abort()», а не
+    // «виновата система».
+    val realReport = KenjiCrash.parse(
+        """
+        step=javaInitialize
+        crash signal=6 name=SIGABRT addr=0x2e53000005a6 code=-6 step=javaInitialize
+        pc=libc.so+0x530f4
+        pc=libc.so+0x530c8
+        pc=libkenji.so+0x173c214
+        """.trimIndent()
+    )
+    check("настоящий отчёт разобран", realReport != null)
+    val realVerdict = KenjiCrash.verdict(realReport!!)
+    check("libc не обвинён", !realVerdict.contains("виновата система"), realVerdict)
+    check("сказано, что abort из ядра", realVerdict.contains("abort() вызван изнутри libkenji.so"),
+        realVerdict)
+    check("назван шаг словами", realVerdict.contains("передача ядру пути к данным"), realVerdict)
+
+    // Сигнал не 6 — про abort не говорим.
+    val segv = realReport.copy(signal = 11, signalName = "SIGSEGV")
+    check("без SIGABRT про abort молчим", !KenjiCrash.verdict(segv).contains("abort()"))
 
     // ── журнал системы ─────────────────────────────────────────────────
     val logcat = """
@@ -143,6 +171,7 @@ fun main() {
         11-01 15:27:10.000  1234  1250 I DotNet  : Unhandled exception. System.DllNotFoundException
         11-01 15:27:10.000  1234  1250 I chatty  : uid=10200 identical 2 lines
         11-01 15:27:09.000  1234  1234 I SymbiosisKenji: core loaded and verified
+        11-01 15:27:10.000  1234  1250 F DEBUG   : Abort message: 'Unhandled exception. System.TypeInitializationException'
         11-01 15:27:09.000  1234  1234 I unrelated: something else entirely
     """.trimIndent()
 
@@ -150,8 +179,13 @@ fun main() {
     check("журнал отфильтрован", picked.size in 1..8, picked.toString())
     check("в журнале есть исключение .NET",
         picked.any { it.contains("Unhandled exception") }, picked.toString())
+    check("Abort message не потерян",
+        picked.any { it.contains("Abort message") }, picked.toString())
+    // Повтор одной и той же строки — это дубль; разные строки про одно и то
+    // же исключение (само сообщение и Abort message) обе полезны.
     check("повторы убраны",
-        picked.count { it.contains("Unhandled exception") } == 1, picked.toString())
+        picked.count { it.contains("Unhandled exception. System.DllNotFoundException") } == 1,
+        picked.toString())
     check("посторонние строки не попали",
         picked.none { it.contains("unrelated") }, picked.toString())
     check("лимит соблюдён", KenjiCrash.fatalLines(logcat, limit = 2).size <= 2)
