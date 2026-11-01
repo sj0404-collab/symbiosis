@@ -130,6 +130,18 @@ public:
                           std::string& error_out);
 
     /// Note explaining why NSZ compression is not offered as an encoder.
+    /**
+     * Куда складывать временные части распаковки.
+     *
+     * Почему это настройка, а не temp_directory_path(). На Android переменная
+     * TMPDIR в процессе приложения не выставлена, а /tmp не существует. Тогда
+     * std::filesystem::temp_directory_path() бросает исключение - и распаковка
+     * NSZ/XCZ на телефоне заканчивалась ничем ещё до чтения файла. Путь
+     * приходит из Kotlin (кэш приложения), а если его не задали, остаётся
+     * прежнее поведение и запасной вариант рядом с результатом.
+     */
+    static void SetWorkDir(const std::string& path);
+
     [[nodiscard]] static std::string CompressionNote();
 };
 

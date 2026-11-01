@@ -22,6 +22,20 @@ package org.yuzu.yuzu_emu.utils
  */
 object ConverterReasons {
 
+    /**
+     * Текст итогового уведомления.
+     *
+     * Здесь была ошибка, которую видно только на телефоне: при отказе в
+     * шторке показывался путь («Файлы здесь: …»), а причина терялась.
+     * Человек читал «закончилось без результата» и не знал, что чинить.
+     * Функция чистая, чтобы это проверялось тестом на хосте.
+     */
+    fun outcomeText(ok: Boolean, message: String, where: String): String {
+        if (ok) return where
+        val reason = message.trim().ifBlank { "распаковка не удалась" }
+        return if (where.isBlank()) reason else reason + "\n" + where
+    }
+
     fun text(error: String): String {
         val e = error.lowercase()
         return when {
@@ -43,6 +57,20 @@ object ConverterReasons {
                 "контейнер NSP повреждён: не читается список файлов"
             e.contains("partition") || e.contains("secure") ->
                 "образ XCI повреждён: не найден раздел с игрой"
+            // --- не тот файл ----------------------------------------------
+            //
+            // Самая частая причина «закончилось без результата» — выбран не
+            // образ, а архив или что-то постороннее. Отдельные строки нужны,
+            // чтобы это не сливалось с «повреждён».
+            e.contains("not an nsz") ->
+                "это не сжатый образ: внутри нет ни NSZ, ни XCZ, ни NCZ"
+            // --- куда писать -------------------------------------------------
+            e.contains("no writable work directory") ->
+                "некуда распаковать: рабочая папка недоступна или на телефоне мало места"
+            e.contains("could not copy the already-openable file") ->
+                "не удалось скопировать файл в папку результата"
+            e.contains("could not open the source file") ->
+                "не удалось открыть исходный файл"
             // --- почему файл не подошёл целиком ---------------------------
             e.contains("too short") || e.contains("short of a header") ->
                 "файл слишком мал: скачивание не завершилось"

@@ -871,6 +871,18 @@ Java_org_yuzu_yuzu_1emu_utils_NativeSymbiosis_getRomCompressionNote(JNIEnv* env,
     return Common::Android::ToJString(env, Symbiosis::RomTools::CompressionNote());
 }
 
+/**
+ * Куда распаковке класть временные части.
+ *
+ * Путь приходит из Kotlin: temp_directory_path() на Android не работает (см.
+ * RomTools::SetWorkDir), а значит без этого вызова распаковка NSZ/XCZ
+ * заканчивалась ничем.
+ */
+JNIEXPORT void JNICALL
+Java_org_yuzu_yuzu_1emu_utils_NativeSymbiosis_setRomWorkDir(JNIEnv* env, jobject, jstring j_dir) {
+    Symbiosis::RomTools::SetWorkDir(j_dir ? Common::Android::GetJString(env, j_dir) : std::string{});
+}
+
 /// "bytes|error"
 JNIEXPORT jstring JNICALL
 Java_org_yuzu_yuzu_1emu_utils_NativeSymbiosis_decompressDump(JNIEnv* env, jobject,

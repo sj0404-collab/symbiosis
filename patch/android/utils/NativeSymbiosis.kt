@@ -232,6 +232,15 @@ object NativeSymbiosis {
 
     private external fun decompressDump(source: String, destination: String): String
 
+    /**
+     * Куда распаковке класть временные части (кэш приложения).
+     *
+     * Без этого вызова нативный код зовёт std::filesystem::temp_directory_path(),
+     * который на Android бросает исключение: TMPDIR не выставлен, а /tmp нет.
+     * Исключение в JNI - это abort, то есть падение приложения на ровном месте.
+     */
+    external fun setRomWorkDir(dir: String)
+
     fun decompress(source: String, destination: String): Pair<Long, String> {
         val raw = runCatching { decompressDump(source, destination) }.getOrDefault("0|failed")
         val parts = raw.split('|', limit = 2)

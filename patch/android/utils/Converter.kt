@@ -251,6 +251,28 @@ object Converter {
             incoming.delete()
             return@runCatching fail("не удалось прочитать файл", name)
         }
+        // Что это на самом деле — по первым байтам, до всякой распаковки.
+        //
+        // Раньше здесь проверялось только расширение, и `.zip` с образом
+        // внутри уходил в нативную распаковку: она отвечала «Not an NSZ, XCZ
+        // or NCZ file», человек получал «закончилось без результата», а
+        // причина к нему не доезжала. Заодно впустую копировался большой файл.
+        val kind = runCatching {
+            RomSniff.kind(incoming.headerBytes(RomSniff.HEADER_BYTES), name)
+        }.getOrElse { RomSniff.Kind.UNKNOWN }
+        if (!RomSniff.shouldProcess(kind)) {
+            incoming.delete()
+            return@runCatching fail(RomSniff.advice(kind, name), name)
+        }
+
+        // Нативный код на Android не может взять системный временный каталог:
+        // TMPDIR не выставлен, /tmp нет, temp_directory_path() бросает
+        // исключение и роняет процесс. Даём ему наш кэш.
+        runCatching {
+            val work = File(context.cacheDir, "rom-work").apply { mkdirs() }
+            NativeSymbiosis.setRomWorkDir(work.absolutePath)
+        }
+
         val ext = name.substringAfterLast('.', "").lowercase()
         val outName = when (ext) {
             "nsz" -> stem(name) + ".nsp"
@@ -342,6 +364,20 @@ object Converter {
             put("message", if (launch) "можно открыть" else reason)
         }
     }
+
+    /** Первые [count] байт файла — для определения контейнера. */
+    private fun File.headerBytes(count: Int): ByteArray = runCatching {
+        inputStream().use { input ->
+            val buffer = ByteArray(count)
+            var read = 0
+            while (read < count) {
+                val n = input.read(buffer, read, count - read)
+                if (n <= 0) break
+                read += n
+            }
+            if (read == count) buffer else buffer.copyOf(read)
+        }
+    }.getOrDefault(ByteArray(0))
 
     private fun displayName(context: Context, uri: Uri): String {
         val q = runCatching {

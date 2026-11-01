@@ -49,8 +49,11 @@
 #include <csetjmp>
 #include <csignal>
 #include <cstring>
+#include <unwind.h>
+#include <link.h>
 #include <string>
 #include <mutex>
+#include <atomic>
 
 #define LOG_TAG "SymbiosisKenji"
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO,  LOG_TAG, __VA_ARGS__)
@@ -73,6 +76,126 @@ std::string g_lastError;
 // thing rather than on the app.
 volatile sig_atomic_t g_inCore = 0;
 
+// ── отчёт о падении ─────────────────────────────────────────────────
+//
+// Процесс :kenji умирает от сигнала, и приложение узнаёт только «связь
+// потеряна». Ни номера сигнала, ни кадра стека Android наружу не отдаёт.
+// Поэтому отчёт пишется ДО смерти процесса в файл, который переживает его:
+//
+//   step=<шаг>              — пишет Kotlin перед каждым вызовом в ядро
+//   crash signal=… addr=…   — пишет обработчик сигнала
+//   pc=<библиотека>+0x…     — кадры стека, сверху вниз
+//
+// Всё это делается примитивами, разрешёнными в обработчике сигнала: open,
+// write, close. Никаких std::string и malloc — после SIGSEGV куча может быть
+// уже испорчена, и тогда обработчик упадёт вместо записи.
+
+char g_crashPath[512] = {0};
+char g_step[96] = "не указан";
+std::atomic<int> g_inHandler{0};
+
+const char* SignalName(int sig) {
+    switch (sig) {
+    case SIGSEGV: return "SIGSEGV";
+    case SIGBUS:  return "SIGBUS";
+    case SIGILL:  return "SIGILL";
+    case SIGFPE:  return "SIGFPE";
+    case SIGABRT: return "SIGABRT";
+    default:      return "signal";
+    }
+}
+
+int OpenCrashFile() {
+    if (g_crashPath[0] == '\0') return -1;
+    return ::open(g_crashPath, O_WRONLY | O_CREAT | O_APPEND, 0600);
+}
+
+/** Дописать строку в отчёт. Безопасно вызывать когда файл не задан. */
+void AppendCrashLine(const char* line) {
+    const int fd = OpenCrashFile();
+    if (fd < 0) return;
+    ::write(fd, line, ::strlen(line));
+    ::close(fd);
+}
+
+struct UnwindState {
+    int fd;
+    int depth;
+};
+
+_Unwind_Reason_Code UnwindCallback(_Unwind_Context* ctx, void* arg) {
+    auto* state = static_cast<UnwindState*>(arg);
+    const uintptr_t pc = _Unwind_GetIP(ctx);
+    if (pc != 0) {
+        Dl_info info{};
+        char line[320];
+        const int n = ::dladdr(reinterpret_cast<void*>(pc - 1), &info) != 0 && info.dli_fname
+                          ? ::snprintf(line, sizeof(line), "pc=%s+0x%lx\n",
+                                       ::strrchr(info.dli_fname, '/') ? ::strrchr(info.dli_fname, '/') + 1
+                                                                     : info.dli_fname,
+                                       static_cast<unsigned long>(pc -
+                                           reinterpret_cast<uintptr_t>(info.dli_fbase)))
+                          : ::snprintf(line, sizeof(line), "pc=0x%lx\n",
+                                       static_cast<unsigned long>(pc));
+        if (n > 0) ::write(state->fd, line, static_cast<size_t>(n));
+    }
+    return ++state->depth < 12 ? _URC_NO_REASON : _URC_END_OF_STACK;
+}
+
+void CrashHandler(int sig, siginfo_t* info, void*) {
+    // Обработчик не должен вызываться вложенно: второе падение внутри него
+    // оставило бы процесс в неопределённом состоянии вместо честной смерти.
+    if (g_inHandler.exchange(1) != 0) {
+        ::signal(sig, SIG_DFL);
+        ::raise(sig);
+        return;
+    }
+
+    const int fd = OpenCrashFile();
+    if (fd >= 0) {
+        // Шаг отдельной строкой: файл читают и глазами, а разбор в Kotlin
+        // берёт его и отсюда, и из строки crash - если одна строка не дошла
+        // (процесс убили посреди записи), шаг всё равно известен.
+        char stepLine[128];
+        const int sn = ::snprintf(stepLine, sizeof(stepLine), "step=%s\n", g_step);
+        if (sn > 0) ::write(fd, stepLine, static_cast<size_t>(sn));
+
+        char head[320];
+        const int n = ::snprintf(head, sizeof(head),
+                                 "crash signal=%d name=%s addr=%p code=%d step=%s\n", sig,
+                                 SignalName(sig), info ? info->si_addr : nullptr,
+                                 info ? info->si_code : 0, g_step);
+        if (n > 0) ::write(fd, head, static_cast<size_t>(n));
+        UnwindState state{fd, 0};
+        _Unwind_Backtrace(UnwindCallback, &state);
+        ::close(fd);
+    }
+
+    // Отчёт записан - отдаём сигнал системе, чтобы она сделала свой tombstone.
+    // Глотать сигнал нельзя: приложение продолжило бы работу с испорченной
+    // памятью ядра и упало бы позже и непонятнее.
+    ::signal(sig, SIG_DFL);
+    ::raise(sig);
+}
+
+/** Сменить текущий шаг отчёта. Строка копируется, владение не передаётся. */
+void NoteStep(const char* name) {
+    if (name == nullptr) return;
+    ::strncpy(g_step, name, sizeof(g_step) - 1);
+    g_step[sizeof(g_step) - 1] = '\0';
+}
+
+void InstallCrashHandlers() {
+    struct sigaction action {};
+    action.sa_sigaction = CrashHandler;
+    action.sa_flags = SA_SIGINFO | SA_ONSTACK;
+    ::sigemptyset(&action.sa_mask);
+    for (int sig : {SIGSEGV, SIGBUS, SIGILL, SIGFPE, SIGABRT}) {
+        struct sigaction old {};
+        ::sigaction(sig, &action, &old);
+    }
+}
+
 } // namespace
 
 extern "C" {
@@ -88,6 +211,12 @@ JNIEXPORT void setRenderingThread() {
 // deviceInitialize. Logging it turns an invisible abort into a breadcrumb.
 JNIEXPORT void debug_break(int code) {
     LOGI("core debug_break(%d)", code);
+    // То же самое - в отчёт о падении. Если ядро зовёт debug_break и следом
+    // умирает, код остаётся в файле: «упало после debug_break(1)» говорит
+    // гораздо больше, чем «процесс завершился».
+    char line[48];
+    const int n = ::snprintf(line, sizeof(line), "debug_break=%d\n", code);
+    if (n > 0) AppendCrashLine(line);
 }
 
 // Window rotation. Without a surface attached there is nothing to rotate, but
@@ -138,12 +267,52 @@ bool hasAll(void* handle, std::string& missing) {
 extern "C" {
 
 /**
+ * Запомнить шаг, который сейчас выполняется.
+ *
+ * Пишется ДО вызова в ядро, а не после: если оно упадёт внутри, обработчик
+ * сигнала возьмёт именно это имя, и отчёт скажет «шаг javaInitialize», а не
+ * «неизвестно где». Kotlin может звать это сам, но надёжнее ставить метку
+ * здесь: тогда её не забудут в новом вызове.
+ */
+JNIEXPORT void JNICALL
+Java_org_yuzu_yuzu_1emu_utils_KenjiBridge_nativeSetStep(JNIEnv* env, jobject, jstring jstep) {
+    if (jstep == nullptr) return;
+    const char* step = env->GetStringUTFChars(jstep, nullptr);
+    if (step == nullptr) return;
+    NoteStep(step);
+    env->ReleaseStringUTFChars(jstep, step);
+}
+
+/**
+ * Включить отчёт о падении: файл, обработчики сигналов, обнуление старого.
+ *
+ * Старый отчёт стирается намеренно. Файл переживает смерть процесса, поэтому
+ * без стирания вчерашнее падение выдавалось бы за сегодняшнее - и человек
+ * чинил бы то, что уже починено.
+ */
+JNIEXPORT void JNICALL
+Java_org_yuzu_yuzu_1emu_utils_KenjiBridge_nativeSetCrashLog(JNIEnv* env, jobject, jstring jpath) {
+    if (jpath == nullptr) return;
+    const char* path = env->GetStringUTFChars(jpath, nullptr);
+    if (path == nullptr) return;
+    ::strncpy(g_crashPath, path, sizeof(g_crashPath) - 1);
+    g_crashPath[sizeof(g_crashPath) - 1] = '\0';
+    env->ReleaseStringUTFChars(jpath, path);
+
+    const int fd = ::open(g_crashPath, O_WRONLY | O_CREAT | O_TRUNC, 0600);
+    if (fd >= 0) ::close(fd);
+    InstallCrashHandlers();
+    LOGI("crash report armed: %s", g_crashPath);
+}
+
+/**
  * Load the core and verify it before letting anything call into it.
  *
  * Returns an empty string on success, or a sentence fit to show a person.
  */
 JNIEXPORT jstring JNICALL
 Java_org_yuzu_yuzu_1emu_utils_KenjiBridge_nativeLoad(JNIEnv* env, jobject, jstring jpath) {
+    NoteStep("dlopen");
     std::lock_guard<std::mutex> guard(g_lock);
 
     if (g_core != nullptr) {
@@ -230,6 +399,7 @@ Java_org_yuzu_yuzu_1emu_utils_KenjiBridge_nativeLastError(JNIEnv* env, jobject) 
 JNIEXPORT jstring JNICALL
 Java_org_yuzu_yuzu_1emu_utils_KenjiBridge_nativeInitialize(JNIEnv* env, jobject,
                                                            jstring jdataPath) {
+    NoteStep("javaInitialize");
     std::lock_guard<std::mutex> guard(g_lock);
     if (g_core == nullptr) {
         return env->NewStringUTF("ядро не загружено");
@@ -285,6 +455,7 @@ Java_org_yuzu_yuzu_1emu_utils_KenjiBridge_nativeDeviceInit(
         jint fsGlobalAccessLogMode, jstring jtimeZone,
         jboolean ignoreMissingServices) {
     std::lock_guard<std::mutex> guard(g_lock);
+    NoteStep("deviceInitialize");
     if (g_core == nullptr) return env->NewStringUTF("ядро не загружено");
     using Fn = bool (*)(int, bool, int, int, int, int,
                         bool, bool, bool, bool, bool, bool,
@@ -314,6 +485,7 @@ Java_org_yuzu_yuzu_1emu_utils_KenjiBridge_nativeGraphicsInit(
         jboolean enableMacroHLE, jboolean enableShaderCache,
         jboolean enableTextureRecompression, jint backendThreading) {
     std::lock_guard<std::mutex> guard(g_lock);
+    NoteStep("graphicsInitialize");
     if (g_core == nullptr) return env->NewStringUTF("ядро не загружено");
     using Fn = bool (*)(float, float, bool, bool, bool, bool, bool, bool, int);
     auto fn = reinterpret_cast<Fn>(dlsym(g_core, "graphicsInitialize"));
@@ -334,6 +506,7 @@ JNIEXPORT jstring JNICALL
 Java_org_yuzu_yuzu_1emu_utils_KenjiBridge_nativeAttachSurface(JNIEnv* env, jobject, jobject surface,
                                                              jint width, jint height) {
     std::lock_guard<std::mutex> guard(g_lock);
+    NoteStep("attachSurface");
     if (g_core == nullptr) return env->NewStringUTF("ядро не загружено");
     if (auto infn = reinterpret_cast<void (*)(int, int)>(dlsym(g_core, "inputInitialize"))) {
         g_inCore = 1;
@@ -371,6 +544,7 @@ Java_org_yuzu_yuzu_1emu_utils_KenjiBridge_nativeAttachSurface(JNIEnv* env, jobje
 
 JNIEXPORT jstring JNICALL
 Java_org_yuzu_yuzu_1emu_utils_KenjiBridge_nativeLoadGame(JNIEnv* env, jobject, jint fd, jint type) {
+    NoteStep("deviceLoadDescriptor");
     std::lock_guard<std::mutex> guard(g_lock);
     if (g_core == nullptr) return env->NewStringUTF("ядро не загружено");
     if (fd < 0) return env->NewStringUTF("нет дескриптора файла");
@@ -389,6 +563,7 @@ Java_org_yuzu_yuzu_1emu_utils_KenjiBridge_nativeLoadGame(JNIEnv* env, jobject, j
 
 JNIEXPORT jstring JNICALL
 Java_org_yuzu_yuzu_1emu_utils_KenjiBridge_nativeRunLoop(JNIEnv* env, jobject) {
+    NoteStep("graphicsRendererRunLoop");
     using RunFn = void (*)();
     void* core = nullptr;
     {

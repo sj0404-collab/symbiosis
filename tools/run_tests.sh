@@ -185,6 +185,15 @@ if command -v kotlinc >/dev/null 2>&1; then
         $HERE/patch/android/utils/SourceIndex.kt" ;;
       # Скачивание по-настоящему: локальный трекер и локальный пир на
       # 127.0.0.1, настоящие сокеты. Log — заглушка из tests/host.
+      # Формат по первым байтам: самый частый отказ конвертера — выбран не
+      # образ, а архив, и раньше это выяснялось через сорок минут.
+      RomSniffTest) echo "$HERE/patch/android/utils/RomSniff.kt" ;;
+      # Текст в шторке: при отказе причина должна быть первой строкой, а не
+      # заменяться путём к папке.
+      ConverterOutcomeTest) echo "$HERE/patch/android/utils/ConverterReasons.kt" ;;
+      # Разбор отчёта о падении второго ядра: файл пишет обработчик сигнала,
+      # читает обычный код после смерти процесса.
+      KenjiCrashTest) echo "$HERE/patch/android/utils/KenjiCrash.kt" ;;
       # Ровность кадров: почему «60 → 15 → 45 → 5» и когда виноват звук, а не
       # картинка. Чистая арифметика над рядами длительностей кадров.
       FramePacingTest) echo "$HERE/patch/android/utils/FramePacing.kt" ;;

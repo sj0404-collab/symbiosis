@@ -61,6 +61,12 @@ object KenjiBridge {
     // Empty string means success everywhere below - a null return from JNI
     // would be indistinguishable from a failed call.
     private external fun nativeLoad(path: String): String
+
+    /** Включить отчёт о падении в файл (обработчики сигналов ставит C++). */
+    private external fun nativeSetCrashLog(path: String)
+
+    /** Отметить шаг, чтобы падение можно было к нему привязать. */
+    private external fun nativeSetStep(step: String)
     private external fun nativeInitialize(dataPath: String): String
     private external fun nativeSymbolCount(): Int
     private external fun nativeIsLoaded(): Boolean
@@ -159,6 +165,7 @@ object KenjiBridge {
         // and firmware are shared; internal caches are not.
         val dataDir = File(context.getExternalFilesDir(null), "kenji").apply { mkdirs() }
 
+        if (bridgeLoaded) runCatching { nativeSetStep("javaInitialize") }
         val err = try {
             nativeInitialize(dataDir.absolutePath)
         } catch (e: Throwable) {

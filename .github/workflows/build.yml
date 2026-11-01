@@ -291,7 +291,7 @@ jobs:
                        TorrentBencode TorrentMeta TorrentPlan TorrentWire \
                        TorrentTracker TorrentAnnounce TorrentDownload \
                        MagnetMeta FramePacing FrameMetricsText \
-                       PerformanceFragment; do
+                       PerformanceFragment RomSniff KenjiCrash; do
               if strings classes*.dex | grep -q "$sym"; then echo "  ok   $sym in dex"
               else echo "  MISSING $sym"; fail=1; fi
             done
@@ -337,10 +337,17 @@ jobs:
           # Пакет org.yuzu.yuzu_emu в JNI-имени становится yuzu_1emu (подчёркивание
           # кодируется как _1). С yuzu_emu проверка не нашла бы символ, который
           # на месте, и уронила бы сборку после двадцати пяти минут работы.
-          for sym in frameMetrics resetFrameMetrics; do
+          for sym in frameMetrics resetFrameMetrics setRomWorkDir; do
             "$NM" -D lib/arm64-v8a/libyuzu-android.so \
               | grep -q "Java_org_yuzu_yuzu_1emu_utils_NativeSymbiosis_$sym" \
               || { echo "  missing JNI export: $sym"; fail=1; }
+          done
+
+          # Отчёт о падении второго ядра: и символ включения, и сам обработчик.
+          for sym in nativeSetCrashLog nativeSetStep; do
+            "$NM" -D lib/arm64-v8a/libsymbiosis_kenji.so \
+              | grep -q "Java_org_yuzu_yuzu_1emu_utils_KenjiBridge_$sym" \
+              || { echo "  missing JNI export in the bridge: $sym"; fail=1; }
           done
 
           # The Kenji bridge, in both names. The core dlopen()s libkenjinxjni

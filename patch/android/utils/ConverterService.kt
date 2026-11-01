@@ -99,11 +99,19 @@ class ConverterService : Service() {
             done.ok -> getString(R.string.converter_done, done.count)
             else -> getString(R.string.converter_done_with_problems)
         }
-        val text = if (done.where.isNotBlank()) {
+        // ЧТО БЫЛО НЕ ТАК. Раньше текст брался по одному признаку - «где лежат
+        // файлы», - и при отказе в шторке оставалось «Распаковка закончилась
+        // без результата. Файлы здесь: …». Причина (битый файл, архив вместо
+        // образа, нет места) терялась ровно в тот момент, когда она нужна одна.
+        //
+        // Теперь при отказе на первом месте причина, а путь - второй строкой:
+        // он всё ещё полезен, но он не ответ на вопрос «почему».
+        val where = if (done.where.isNotBlank()) {
             getString(R.string.converter_done_where, done.where)
         } else {
-            done.message
+            ""
         }
+        val text = ConverterReasons.outcomeText(done.ok, done.message, where)
         val builder = baseBuilder().apply {
             setContentTitle(title)
             setContentText(text)

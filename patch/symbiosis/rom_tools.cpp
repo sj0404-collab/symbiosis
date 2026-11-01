@@ -660,6 +660,15 @@ bool UnpackPfs0(std::ifstream& in, u64 base, u64 span, const std::filesystem::pa
 
 } // namespace
 
+namespace {
+/// Каталог для временных частей, заданный снаружи (кэш приложения на Android).
+std::string g_workDir;
+} // namespace
+
+void RomTools::SetWorkDir(const std::string& path) {
+    g_workDir = path;
+}
+
 u64 RomTools::Decompress(const std::string& source, const std::string& destination,
                          std::string& error_out) {
     error_out.clear();
@@ -694,11 +703,37 @@ u64 RomTools::Decompress(const std::string& source, const std::string& destinati
     }
 
     std::error_code ec;
-    const auto work = std::filesystem::temp_directory_path() /
-                      ("eden-nsz-" + std::to_string(report.file_size) + "-" +
-                       std::to_string(static_cast<unsigned long long>(
-                           std::chrono::steady_clock::now().time_since_epoch().count())));
+
+    // Где работать. Порядок: заданный извне каталог, затем системный
+    // temp_directory_path(), затем папка рядом с результатом.
+    //
+    // temp_directory_path() на Android бросает исключение: TMPDIR не задан, а
+    // /tmp не существует. Необработанное исключение в JNI - это abort, то
+    // есть падение всего приложения на ровном месте. Отсюда try/catch и
+    // запасной вариант: папка результата всегда доступна на запись, раз мы
+    // уже смогли создать в ней файл.
+    std::filesystem::path base;
+    if (!g_workDir.empty()) {
+        base = g_workDir;
+    } else {
+        try {
+            base = std::filesystem::temp_directory_path();
+        } catch (...) {
+            base = std::filesystem::path(destination).parent_path();
+        }
+    }
+    if (base.empty()) base = std::filesystem::path(destination).parent_path();
+
+    const auto work = base / ("eden-nsz-" + std::to_string(report.file_size) + "-" +
+                              std::to_string(static_cast<unsigned long long>(
+                                  std::chrono::steady_clock::now().time_since_epoch().count())));
     std::filesystem::create_directories(work, ec);
+    if (ec) {
+        // Пишем причину, а не «не удалось»: без каталога для частей распаковка
+        // обречена, и человеку надо знать, что дело в месте, а не в файле.
+        error_out = "No writable work directory: " + work.string();
+        return 0;
+    }
     const auto wipe_work = [&]() { std::filesystem::remove_all(work, ec); };
 
     if (report.format == DumpFormat::Ncz) {

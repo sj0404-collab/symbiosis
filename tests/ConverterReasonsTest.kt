@@ -48,7 +48,11 @@ fun main() {
     says("XCZ has no secure partition.", "раздел с игрой")
     says("Could not write the decompressed NCA: storage may be full.", "мало места")
     says("This build has no zstd decoder, so compressed blocks cannot be read.", "ошибка сборки")
-    says("Not an NSZ, XCZ or NCZ file.", "распаковка не удалась")
+    // Раньше здесь ожидалось общее «распаковка не удалась»: причина была
+    // известна, но не называлась. На устройстве это выглядело как
+    // «закончилось без результата» без единой подсказки, поэтому теперь у
+    // «не тот файл» есть своя фраза.
+    says("Not an NSZ, XCZ or NCZ file.", "не сжатый образ")
 
     // Пустое сообщение — не повод показать пустоту.
     check("пустое сообщение даёт фразу", ConverterReasons.text("").isNotBlank())

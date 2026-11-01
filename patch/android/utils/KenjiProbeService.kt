@@ -96,14 +96,16 @@ class KenjiProbeService : Service() {
                 // This is the whole point. The isolated process crashing lands
                 // here instead of taking the app with it.
                 override fun onServiceDisconnected(name: ComponentName?) {
-                    // Official Kenji already runs on this phone. A crash here
-                    // is our bridge dying, not a hardware incompatibility.
-                    finish(
-                        false,
-                        "наш мост упал в :kenji — это не «телефон не тянет». " +
-                            "Официальный Kenji на этом устройстве уже играет. " +
-                            "Откройте пространство Kenji и отдайте игру их APK, либо смотрите logcat."
-                    )
+                    // ЧТО ЗДЕСЬ БЫЛО НЕ ТАК. Раньше отсюда выдавался готовый
+                    // ответ: «наш мост упал, это не телефон не тянет,
+                    // официальный Kenji уже играет». Первая половина была
+                    // догадкой, вторая - утверждением, которое никто не
+                    // проверял: отчёт с устройства её не подтвердил, зато
+                    // отправил человека искать проблему не там.
+                    //
+                    // Теперь причина берётся из файла, который процесс успел
+                    // записать перед смертью: шаг, сигнал, кадры стека.
+                    finish(false, crashMessage(app))
                 }
             }
 
@@ -123,6 +125,19 @@ class KenjiProbeService : Service() {
                 finish(false, "ядро не ответило за ${timeoutMs / 1000} с")
             }, timeoutMs)
         }
+
+        /**
+         * Текст о падении по файлу отчёта.
+         *
+         * Отдельной функцией, потому что её проверяют тестом на хосте: разбор
+         * чужого файла не должен зависеть от того, что процесс успел умереть
+         * в удобный момент.
+         */
+        fun crashMessage(context: Context): String {
+            val file = runCatching { KenjiBridge.crashReportFile(context) }.getOrNull()
+            val text = runCatching { file?.takeIf { it.isFile }?.readText() }.getOrNull().orEmpty()
+            return KenjiCrash.format(KenjiCrash.parse(text))
+        }
     }
 
     private val messenger = Messenger(object : Handler(Looper.getMainLooper()) {
@@ -131,8 +146,15 @@ class KenjiProbeService : Service() {
             val reply = msg.replyTo ?: return
 
             // Everything below runs in :kenji. If it dies, it dies alone.
+            // Отчёт включается ДО первого касания ядра: файл переживёт смерть
+            // процесса, и в нём останется шаг, на котором всё оборвалось.
+            KenjiBridge.armCrashReport(this@KenjiProbeService)
             val status = runCatching { KenjiBridge.start(this@KenjiProbeService) }
                 .getOrElse { KenjiBridge.Status(false, "исключение: ${it.message ?: it.javaClass.simpleName}") }
+
+            if (status.ok) {
+                runCatching { KenjiBridge.crashReportFile(this@KenjiProbeService).delete() }
+            }
 
             val out = Message.obtain(null, MSG_RESULT)
             out.data.putBoolean(KEY_OK, status.ok)
