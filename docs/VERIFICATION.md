@@ -529,6 +529,23 @@ logcat приложению недоступен, кольцевой буфер 
   `grep` подтвердил все пять файлов: `RecordFrame`, `NoteAudioUnderrun`,
   `SymbiosisAudioBufferFrames` (×3), `NoteShaderCompile`, `symbiosis_audio_buffer_ms`.
 
+### Что подтверждено в собранном APK
+
+Сборка `41297710209` из `79f1f7f`: https://gofile.io/d/DQaLtDAz,
+MD5 `f0f17b2738005ae0b6ba09a7435d0895`, 43.3 МБ. Артефакт скачан и
+распакован: MD5 совпал с тем, что посчитал runner.
+
+| Проверка | Результат |
+|---|---|
+| `classes13.dex` | `PerformanceFragment` — экран действительно внутри APK |
+| `classes3.dex` | `FramePacing`, `FrameMetricsText` — анализ и разбор на месте |
+| `nm lib/arm64-v8a/libyuzu-android.so` | `Java_org_yuzu_yuzu_1emu_utils_NativeSymbiosis_frameMetrics` и `..._resetFrameMetrics` |
+| там же | `Symbiosis::FrameMetrics::RecordFrame`, `NoteAudioUnderrun`, `NoteShaderCompile`, `Reset`, `Snapshot` — счётчики скомпилированы |
+| `strings libyuzu-android.so` | `symbiosis_audio_buffer_ms` — настройка буфера доехала до нативного дерева |
+
+Это проверка «код внутри APK», а не «сборка позеленела»: символы ищутся в
+готовом файле после скачивания.
+
 **Чего здесь нет.** Причины называются по числам, а не по названию игры, и ни один
 совет не выдаётся за проверенный на конкретном телефоне: экран показывает, что
 именно происходит, а переносить это на Mali-G57 нужно замером на месте.
