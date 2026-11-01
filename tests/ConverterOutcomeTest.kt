@@ -53,6 +53,13 @@ fun main() {
     val multi = ConverterReasons.outcomeText(false, "первая\nвторая", "путь")
     eq("многострочная причина", multi, "первая\nвторая\nпуть")
 
+    // Имя файла в сообщении: «сжатые данные повреждены» без имени не говорит,
+    // какой из выбранных файлов чинить. С устройства пришло именно сообщение
+    // без файла.
+    val fromQueue = "«Zelda.nsz»: сжатые данные внутри файла повреждены"
+    val shown = ConverterReasons.outcomeText(false, fromQueue, "Файлы здесь: /x")
+    check("имя файла видно в первой строке", shown.lines()[0].contains("Zelda.nsz"), shown)
+
     println()
     println("passed=$passed failed=${failures.size}")
     failures.forEach { println("FAIL  $it") }

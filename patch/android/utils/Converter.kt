@@ -215,7 +215,13 @@ object Converter {
                 if (obj.optBoolean("ok")) {
                     okCount++
                 } else {
-                    lastError = obj.optString("message")
+                    // Имя файла в сообщении обязательно: «сжатые данные
+                    // повреждены» без него не отвечает, какой из выбранных
+                    // файлов чинить. Именно этого не хватило в отчёте с
+                    // устройства - причина была, а файла в ней не было.
+                    val who = obj.optString("source").ifBlank { item.second }
+                    val why = obj.optString("message").ifBlank { "не удалось" }
+                    lastError = "«$who»: $why"
                 }
                 synchronized(done) { done.add(obj) }
             }
@@ -257,9 +263,9 @@ object Converter {
         // внутри уходил в нативную распаковку: она отвечала «Not an NSZ, XCZ
         // or NCZ file», человек получал «закончилось без результата», а
         // причина к нему не доезжала. Заодно впустую копировался большой файл.
-        val kind = runCatching {
-            RomSniff.kind(incoming.headerBytes(RomSniff.HEADER_BYTES), name)
-        }.getOrElse { RomSniff.Kind.UNKNOWN }
+        val header = runCatching { incoming.headerBytes(RomSniff.HEADER_BYTES) }
+            .getOrDefault(ByteArray(0))
+        val kind = RomSniff.kind(header, name)
         if (!RomSniff.shouldProcess(kind)) {
             incoming.delete()
             return@runCatching fail(RomSniff.advice(kind, name), name)
@@ -286,7 +292,15 @@ object Converter {
         incoming.delete()
         if (bytes <= 0L || !dest.isFile) {
             dest.delete()
-            return@runCatching fail(reasonText(error), name)
+            // error - английская строка из ядра; она уходит в журнал и в
+            // «подробности», а человеку показывается перевод.
+            //
+            // Отдельный текстовый файл рядом с результатом: на устройстве
+            // причину «сжатые данные повреждены» не с чем сопоставить — не
+            // видно ни имени файла, ни того, на каком блоке оборвалось. Файл
+            // можно открыть и переслать, не разбирая журналы.
+            writeFailureReport(name, incoming.length(), kind, header, error)
+            return@runCatching fail(reasonText(error), name, error)
         }
         val card = probeFile(dest)
         card.put("ok", card.optBoolean("canLaunch"))
@@ -299,6 +313,36 @@ object Converter {
         card.toString()
     }.getOrElse {
         fail(it.message ?: "сбой конвертера", "?")
+    }
+
+    /**
+     * Записать подробности последнего отказа рядом с результатом.
+     *
+     * ПОЧЕМУ ФАЙЛ, А НЕ УВЕДОМЛЕНИЕ. В шторке нужна одна понятная строка.
+     * Диагностика требует другого: какое имя, сколько байт, что в первых
+     * байтах и что сказало ядро слово в слово. Это не помещается в
+     * уведомление и не должно в него попадать.
+     */
+    private fun writeFailureReport(name: String, bytes: Long, kind: RomSniff.Kind, header: ByteArray,
+                                   raw: String) {
+        runCatching {
+            val hex = header.joinToString(" ") { "%02X".format(it) }
+            File(dir(), "последняя-ошибка.txt").writeText(
+                buildString {
+                    append("Symbiosis · распаковка\n")
+                    append("файл: ").append(name).append('\n')
+                    append("размер: ").append(bytes).append(" Б\n")
+                    append("определён как: ").append(kind).append('\n')
+                    append("первые байты: ").append(hex.ifBlank { "(файл пуст)" }).append('\n')
+                    append("ответ ядра: ").append(raw.ifBlank { "(пусто)" }).append('\n')
+                    append("перевод: ").append(reasonText(raw)).append('\n')
+                    append('\n')
+                    append("Если ответ ядра называет номер блока — файл прочитан до этого\n")
+                    append("места и повреждён дальше; если «truncated» — скачивание не\n")
+                    append("завершилось. Тот же ответ есть в «Журнале ядра».\n")
+                }
+            )
+        }
     }
 
     /** Причина отказа: см. [ConverterReasons]. */
@@ -396,7 +440,7 @@ object Converter {
         return n.substringBeforeLast('.').ifBlank { n }
     }
 
-    private fun fail(reason: String, file: String): String =
+    private fun fail(reason: String, file: String, detail: String = ""): String =
         JSONObject().put("ok", false).put("canLaunch", false).put("message", reason)
-            .put("file", file).put("reason", reason).toString()
+            .put("file", file).put("reason", reason).put("detail", detail).toString()
 }

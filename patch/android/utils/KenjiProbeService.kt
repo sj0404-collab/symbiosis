@@ -136,8 +136,35 @@ class KenjiProbeService : Service() {
         fun crashMessage(context: Context): String {
             val file = runCatching { KenjiBridge.crashReportFile(context) }.getOrNull()
             val text = runCatching { file?.takeIf { it.isFile }?.readText() }.getOrNull().orEmpty()
-            return KenjiCrash.format(KenjiCrash.parse(text))
+            val report = KenjiCrash.parse(text)
+
+            val body = StringBuilder(KenjiCrash.format(report))
+
+            // Текст исключения .NET живёт не в отчёте о сигнале, а в журнале
+            // системы. Без него при SIGABRT видно только «код остановился».
+            val lines = KenjiCrash.fatalLines(captureLogcat())
+            if (lines.isNotEmpty()) {
+                body.append("\n\nИз журнала системы:\n")
+                lines.forEach { body.append("• ").append(it.take(160)).append('\n') }
+            }
+            return body.toString().trim()
         }
+
+        /**
+         * Последние строки журнала.
+         *
+         * `logcat -d` из приложения отдаёт только записи своего UID — этого
+         * достаточно, потому что оба процесса (:kenji и основной) наши. Отказ
+         * системы не ошибка: тогда строк просто не будет.
+         */
+        private fun captureLogcat(): String = runCatching {
+            val process = ProcessBuilder("logcat", "-d", "-v", "brief", "-t", "800")
+                .redirectErrorStream(true)
+                .start()
+            val output = process.inputStream.bufferedReader().use { it.readText() }
+            process.waitFor()
+            output
+        }.getOrDefault("")
     }
 
     private val messenger = Messenger(object : Handler(Looper.getMainLooper()) {

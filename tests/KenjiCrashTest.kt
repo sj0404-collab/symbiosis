@@ -101,6 +101,62 @@ fun main() {
     )
     check("шаг объяснён словами", stepText.contains("deviceInitialize — настройка устройства"), stepText)
 
+    // ── кто виноват: решает ВЕРХНИЙ кадр ──────────────────────────────
+    //
+    // Отчёт с устройства: сверху стоял наш же обработчик сигнала, ниже —
+    // libkenji.so. Прежняя проверка «есть ли libkenji где-нибудь» обвинила
+    // ядро по кадру, который всего лишь был в стеке.
+    val handlerOnTop = KenjiCrash.Report(
+        step = "javaInitialize", signal = 6, signalName = "SIGABRT", address = "0x2e5300005fb0",
+        frames = listOf(
+            "libsymbiosis_kenji.so+0x2b968",
+            "[vdso]+0x89c",
+            "libc.so+0x530f4",
+            "libkenji.so+0x1a2b3"
+        ),
+        debugBreaks = emptyList()
+    )
+    val handlerVerdict = KenjiCrash.verdict(handlerOnTop)
+    check("верхний кадр — наш: виноват мост", handlerVerdict.contains("нашей части"), handlerVerdict)
+    // Именно фраза обвинения, а не слово «ядро»: последняя строка совета
+    // говорит «чинить файл ядра или мост» и остаётся всегда.
+    check("ядро не обвинено по нижнему кадру",
+        !handlerVerdict.contains("Падение внутри libkenji.so"), handlerVerdict)
+
+    val coreOnTop = handlerOnTop.copy(
+        frames = listOf("libkenji.so+0x1a2b3", "libsymbiosis_kenji.so+0x44")
+    )
+    check("верхний кадр — ядро: виноват файл ядра",
+        KenjiCrash.verdict(coreOnTop).contains("файл ядра"))
+
+    val systemOnTop = handlerOnTop.copy(frames = listOf("libc.so+0x530f4", "libkenji.so+0x1"))
+    check("верхний кадр — система", KenjiCrash.verdict(systemOnTop).contains("вне обеих"))
+
+    // SIGABRT — это не сбой памяти, и это должно быть сказано отдельно.
+    check("SIGABRT объяснён", handlerVerdict.contains("остановка по требованию"), handlerVerdict)
+    check("SIGABRT не объясняется как порча памяти", !handlerVerdict.contains("память побилась"))
+
+    // ── журнал системы ─────────────────────────────────────────────────
+    val logcat = """
+        11-01 15:27:10.000  1234  1250 F libc    : Fatal signal 6 (SIGABRT), code -1 (SI_QUEUE) in tid 1250
+        11-01 15:27:10.000  1234  1250 I DotNet  : Unhandled exception. System.DllNotFoundException
+        11-01 15:27:10.000  1234  1250 I DotNet  : Unhandled exception. System.DllNotFoundException
+        11-01 15:27:10.000  1234  1250 I chatty  : uid=10200 identical 2 lines
+        11-01 15:27:09.000  1234  1234 I SymbiosisKenji: core loaded and verified
+        11-01 15:27:09.000  1234  1234 I unrelated: something else entirely
+    """.trimIndent()
+
+    val picked = KenjiCrash.fatalLines(logcat)
+    check("журнал отфильтрован", picked.size in 1..8, picked.toString())
+    check("в журнале есть исключение .NET",
+        picked.any { it.contains("Unhandled exception") }, picked.toString())
+    check("повторы убраны",
+        picked.count { it.contains("Unhandled exception") } == 1, picked.toString())
+    check("посторонние строки не попали",
+        picked.none { it.contains("unrelated") }, picked.toString())
+    check("лимит соблюдён", KenjiCrash.fatalLines(logcat, limit = 2).size <= 2)
+    check("пустой журнал — пустой список", KenjiCrash.fatalLines("").isEmpty())
+
     println()
     println("passed=$passed failed=${failures.size}")
     failures.forEach { println("FAIL  $it") }

@@ -51,6 +51,7 @@
 #include <cstring>
 #include <unwind.h>
 #include <link.h>
+#include <ucontext.h>
 #include <string>
 #include <mutex>
 #include <atomic>
@@ -118,6 +119,68 @@ void AppendCrashLine(const char* line) {
     ::close(fd);
 }
 
+/** Одна строка отчёта на кадр: `pc=<библиотека>+0x…`. */
+void WriteFrame(int fd, uintptr_t pc) {
+    if (pc == 0) return;
+    Dl_info info{};
+    char line[320];
+    int n;
+    if (::dladdr(reinterpret_cast<void*>(pc - 1), &info) != 0 && info.dli_fname != nullptr) {
+        const char* slash = ::strrchr(info.dli_fname, '/');
+        n = ::snprintf(line, sizeof(line), "pc=%s+0x%lx\n", slash ? slash + 1 : info.dli_fname,
+                       static_cast<unsigned long>(pc - reinterpret_cast<uintptr_t>(info.dli_fbase)));
+    } else {
+        n = ::snprintf(line, sizeof(line), "pc=0x%lx\n", static_cast<unsigned long>(pc));
+    }
+    if (n > 0) ::write(fd, line, static_cast<size_t>(n));
+}
+
+#if defined(__aarch64__)
+/**
+ * Кадры упавшего потока — по цепочке frame pointer из ucontext.
+ *
+ * ЗАЧЕМ НЕ _Unwind_Backtrace
+ *   Первый отчёт с устройства показал ровно это: `libsymbiosis_kenji.so+0x2b968
+ *   → [vdso] → libc.so+0x530f4`. Первый кадр — сам обработчик сигнала, дальше
+ *   мусор: _Unwind_Backtrace, запущенный из обработчика, не умеет пройти через
+ *   сигнальный кадр и останавливается на нём. То есть обработчик «сработал», а
+ *   виновника не назвал.
+ *
+ *   ucontext, который система передаёт в обработчик, содержит РЕГИСТРЫ
+ *   упавшего потока: pc и цепочку x29 (frame pointer). По ней можно пройти
+ *   вверх по стеку без libunwind, и первый же кадр будет настоящим адресом
+ *   падения.
+ */
+void WriteCrashFrames(int fd, void* uctx) {
+    auto* uc = static_cast<ucontext_t*>(uctx);
+    if (uc == nullptr) return;
+
+    const uintptr_t pc = uc->uc_mcontext.pc;
+    uintptr_t frame = uc->uc_mcontext.regs[29];      // x29: frame pointer
+    const uintptr_t link = uc->uc_mcontext.regs[30]; // x30: адрес возврата
+
+    WriteFrame(fd, pc);
+    WriteFrame(fd, link);
+
+    // Каждый кадр пишется сразу: если цепочка приведёт в нечитаемую память,
+    // в файле останутся все кадры до неё - частичный отчёт лучше пустого.
+    for (int i = 0; i < 14 && frame != 0; ++i) {
+        if ((frame & 0x7) != 0 || frame < 0x1000) break;
+        const auto* words = reinterpret_cast<const uintptr_t*>(frame);
+        const uintptr_t next = words[0];
+        const uintptr_t ret = words[1];
+        WriteFrame(fd, ret);
+        if (next <= frame) break;   // цепочка должна расти вверх по стеку
+        frame = next;
+    }
+}
+#else
+/**
+ * Хост-сборка (проверка на x86_64): обычный обратный проход.
+ *
+ * Ветка существует, чтобы обработчик можно было проверить настоящим SIGSEGV в
+ * дочернем процессе на хосте, а не только глазами на телефоне.
+ */
 struct UnwindState {
     int fd;
     int depth;
@@ -125,24 +188,18 @@ struct UnwindState {
 
 _Unwind_Reason_Code UnwindCallback(_Unwind_Context* ctx, void* arg) {
     auto* state = static_cast<UnwindState*>(arg);
-    const uintptr_t pc = _Unwind_GetIP(ctx);
-    if (pc != 0) {
-        Dl_info info{};
-        char line[320];
-        const int n = ::dladdr(reinterpret_cast<void*>(pc - 1), &info) != 0 && info.dli_fname
-                          ? ::snprintf(line, sizeof(line), "pc=%s+0x%lx\n",
-                                       ::strrchr(info.dli_fname, '/') ? ::strrchr(info.dli_fname, '/') + 1
-                                                                     : info.dli_fname,
-                                       static_cast<unsigned long>(pc -
-                                           reinterpret_cast<uintptr_t>(info.dli_fbase)))
-                          : ::snprintf(line, sizeof(line), "pc=0x%lx\n",
-                                       static_cast<unsigned long>(pc));
-        if (n > 0) ::write(state->fd, line, static_cast<size_t>(n));
-    }
+    WriteFrame(state->fd, _Unwind_GetIP(ctx));
     return ++state->depth < 12 ? _URC_NO_REASON : _URC_END_OF_STACK;
 }
 
-void CrashHandler(int sig, siginfo_t* info, void*) {
+void WriteCrashFrames(int fd, void* uctx) {
+    (void)uctx;
+    UnwindState state{fd, 0};
+    _Unwind_Backtrace(UnwindCallback, &state);
+}
+#endif
+
+void CrashHandler(int sig, siginfo_t* info, void* uctx) {
     // Обработчик не должен вызываться вложенно: второе падение внутри него
     // оставило бы процесс в неопределённом состоянии вместо честной смерти.
     if (g_inHandler.exchange(1) != 0) {
@@ -166,8 +223,7 @@ void CrashHandler(int sig, siginfo_t* info, void*) {
                                  SignalName(sig), info ? info->si_addr : nullptr,
                                  info ? info->si_code : 0, g_step);
         if (n > 0) ::write(fd, head, static_cast<size_t>(n));
-        UnwindState state{fd, 0};
-        _Unwind_Backtrace(UnwindCallback, &state);
+        WriteCrashFrames(fd, uctx);
         ::close(fd);
     }
 
