@@ -53,22 +53,37 @@ echo "eden : $E"
 
 cd "$E"
 
-# --3way needs history, hence the depth-50 clone; the icon is excluded because
-# a binary delete cannot be applied without a full index line.
-# Capture the outcome rather than swallowing it. A shallow clone makes --3way
-# fall back to direct application, which drops files and still exits 0 - the
-# build then succeeds against a half-applied patch, which is worse than failing.
+# --3way needs history to fall back to a merge when a hunk's context has
+# drifted; the icon is excluded because a binary delete cannot be applied
+# without a full index line.
+#
+# A "lacks the necessary blob" line is NOT fatal on its own. git only says it
+# cannot 3-way merge that one file and applies it directly instead - which is
+# exactly what happens to the files this project patches twice (a second diff
+# block appended later carries no index line). Treating that message as a hard
+# error failed the build on a patch that applied perfectly.
+#
+# What must stay fatal is a half-applied tree, so the real check is the reverse
+# one below: if every hunk is in the tree, git can undo the whole patch against
+# it. A dropped file or a skipped hunk cannot be reversed and is caught there.
+# The check has to run HERE, before the copy steps start overwriting files the
+# patch itself touched.
 apply_log=$(git apply --3way --exclude='*ic_launcher_foreground.png' \
   "$P/upstream_changes.patch" 2>&1 || true)
-printf '%s\n' "$apply_log" | grep -v cleanly || true
-
+printf '%s\n' "$apply_log" | grep -v cleanly | grep -v "lacks the necessary blob" \
+  | grep -v "Falling back to direct application" || true
 if printf '%s' "$apply_log" | grep -q "lacks the necessary blob"; then
-  echo "ERROR: shallow checkout. git apply --3way needs full history:" >&2
-  echo "  git clone --branch <tag> https://git.eden-emu.dev/eden-emu/eden.git" >&2
-  exit 1
+  echo "  note: some files applied without a 3-way merge (no preimage blob);"
+  echo "        the reverse check below decides whether that was harmless."
 fi
-if printf '%s' "$apply_log" | grep -q "patch does not apply"; then
-  echo "ERROR: the patch does not apply to this checkout." >&2
+
+if git apply --reverse --check --exclude='*ic_launcher_foreground.png' \
+     "$P/upstream_changes.patch" >/dev/null 2>&1; then
+  echo "  ok   every hunk of upstream_changes.patch is in the tree"
+else
+  echo "ERROR: the patch did not apply in full - a file or hunk was dropped:" >&2
+  printf '%s\n' "$apply_log" | tail -20 | sed 's/^/        /' >&2
+  echo "  (a shallow checkout is the usual cause: clone with full history)" >&2
   exit 1
 fi
 if git status --porcelain | grep -qE '^(UU|AA)'; then
@@ -76,6 +91,7 @@ if git status --porcelain | grep -qE '^(UU|AA)'; then
   git status --porcelain | grep -E '^(UU|AA)' >&2
   exit 1
 fi
+
 rm -f "$A/res/drawable/ic_launcher_foreground.png"
 
 # C++ layer
@@ -509,7 +525,10 @@ PYCONV
 # линковка libyuzu-android — через двадцать минут и без указания на причину.
 CMCOMMON="$E/src/common/CMakeLists.txt"
 for extra in symbiosis/ncz.cpp symbiosis/ncz.h symbiosis/aes128.cpp symbiosis/aes128.h symbiosis/zstd_include.h; do
-  [ -f "$E/src/$extra" ] || echo "  ::warning:: $extra не скопирован" >&2
+  # Путь был $E/src/$extra, а файлы лежат в src/common/ - предупреждение
+  # печаталось всегда, даже когда всё на месте. Постоянный ложный warn
+  # приучает не читать лог, и настоящая пропажа проходит незамеченной.
+  [ -f "$E/src/common/$extra" ] || echo "  ::warning:: $extra не скопирован" >&2
 done
 if [ -f "$CMCOMMON" ] && ! grep -q "symbiosis/ncz.cpp" "$CMCOMMON"; then
 python3 - "$CMCOMMON" <<'PYNCZ'
