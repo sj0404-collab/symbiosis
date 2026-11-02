@@ -335,6 +335,31 @@ object KenjiCrash {
      * на самый конец журнала процесса — причина всегда последняя, а знакомых
      * слов в ней может не быть вовсе.
      */
+    /**
+     * Что ядро спрашивало у Java — самое важное в файле перехвата.
+     *
+     * ПОЧЕМУ НЕ ВЕСЬ ФАЙЛ. Там сотни строк вроде `NewGlobalRef` и
+     * `CallObjectMethod`, по которым ничего не видно. Значение имеют запросы
+     * имён: `FindClass`, `GetMethodID`, `GetStaticMethodID`, `ThrowNew` — и
+     * отметки о том, что в очереди осталось исключение. Если ядро упало после
+     * `FindClass(org/kenji/...)`, причина названа: класса нет.
+     */
+    fun jniLines(dump: String, limit: Int = 14): List<String> {
+        if (dump.isBlank()) return emptyList()
+        val interesting = listOf(
+            "FindClass", "GetMethodID", "GetStaticMethodID", "GetFieldID",
+            "GetStaticFieldID", "RegisterNatives", "ThrowNew", "ИСКЛЮЧЕНИЕ"
+        )
+        val kept = dump.lineSequence()
+            .map { it.trim().trimEnd('\r') }
+            .filter { line -> line.isNotEmpty() && interesting.any { line.contains(it) } }
+            .distinct()
+            .map { it.take(200) }
+            .toList()
+        // Хвост, а не начало: важно то, что было прямо перед падением.
+        return kept.takeLast(limit)
+    }
+
     fun tailLines(text: String, limit: Int = 12): List<String> = text.lineSequence()
         .map { it.trim().trimEnd('\r') }
         .filter { it.isNotEmpty() }

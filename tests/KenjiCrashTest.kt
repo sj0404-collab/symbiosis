@@ -375,6 +375,31 @@ fun main() {
     val regsText = KenjiCrash.format(regsReport)
     check("регистры в тексте", regsText.contains("регистры: x0=7f1234"), regsText)
 
+    // ── перехват JNI: что ядро спрашивало у Java ──────────────────────
+    //
+    // Файл перехвата большой и шумный: вызовы CallObjectMethod и
+    // NewGlobalRef ничего не объясняют. Значение имеют запросы имён и
+    // отметки об исключении.
+    val jniDump = """
+        NewGlobalRef
+        FindClass(org/kenji/android/KenjiActivity)
+        GetMethodID(getContext, ()Landroid/content/Context;)
+        CallObjectMethod
+        GetStaticMethodID(getFilesDir, ()Ljava/io/File;)
+        ExceptionCheck -> в очереди ИСКЛЮЧЕНИЕ
+        FindClass(android/os/Build)
+    """.trimIndent()
+    val asked = KenjiCrash.jniLines(jniDump)
+    check("классы видны", asked.any { it.contains("FindClass(org/kenji") }, asked.toString())
+    check("методы видны", asked.any { it.contains("GetMethodID") }, asked.toString())
+    check("исключение видно", asked.any { it.contains("ИСКЛЮЧЕНИЕ") }, asked.toString())
+    check("шум отброшен", asked.none { it == "CallObjectMethod" || it == "NewGlobalRef" },
+        asked.toString())
+    check("хвост, а не начало",
+        KenjiCrash.jniLines(jniDump, limit = 2).last().contains("android/os/Build"),
+        KenjiCrash.jniLines(jniDump, limit = 2).toString())
+    check("пустой перехват — пусто", KenjiCrash.jniLines("").isEmpty())
+
     // ── формулировки самого рантайма .NET ──────────────────────────────
     //
     // NativeAOT пишет «Process terminated. …» и «Fatal error. Invalid Program:

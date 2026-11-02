@@ -334,9 +334,10 @@ jobs:
           # «Что сказало ядро» без файла stderr не покажет ничего, поэтому
           # проверяются оба имени.
           for text in "kenji-stdout.txt" "ui-crash.txt" "kenji-pid.txt" \
-                      "kenji-exit.txt" "почему-не-открывается.txt" \
+                      "kenji-exit.txt" "kenji-jni.txt" "почему-не-открывается.txt" \
                       "Что сказало ядро перед остановкой" \
                       "Что записала система о конце процесса" \
+                      "Что ядро спрашивало у Java" \
                       "Прошлый запуск остановился"; do
             if grep -qa "$text" /tmp/x/classes*.dex; then
               echo "  ok   \"$text\" in dex"

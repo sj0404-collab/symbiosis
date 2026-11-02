@@ -48,6 +48,7 @@
 #include <android/log.h>
 #include <csetjmp>
 #include <csignal>
+#include <cstdarg>
 #include <cstring>
 #include <unwind.h>
 #include <link.h>
@@ -378,6 +379,251 @@ void InstallCrashHandlers() {
     }
 }
 
+
+} // namespace
+
+// ── JNI-перехват ────────────────────────────────────────────────────
+//
+// ЗАЧЕМ. Ядру передаётся JNIEnv, и дальше оно разговаривает с Java само:
+// ищет классы и методы, вызывает их. На устройстве оно умирает сразу после
+// «core loaded and verified», молча — ни текста в stderr, ни строк в журнале.
+// Значит вопрос не в том, что ядро ответило, а в том, ЧТО ОНО СПРОСИЛО и что
+// ему ответили. Обычный виновник — FindClass, вернувший null: нужного класса
+// в приложении нет или он называется иначе, а ядро на null не проверяет и
+// падает внутри.
+//
+// КАК. libc и ART перехватить нельзя, но можно дать ядру СВОЮ таблицу JNI:
+// копию настоящей, где часть функций заменена обёртками. Обёртка пишет вызов
+// в файл и передаёт его дальше, в настоящий ART. Ядру передаётся указатель на
+// эту таблицу — для него ничего не меняется.
+//
+// ПОЧЕМУ ИНДЕКСЫ, А НЕ ИМЕНА ПОЛЕЙ. Имена в jni.h у Android и OpenJDK
+// совпадают не полностью, а порядок функций задан спецификацией JNI и
+// одинаков везде. Индексы посчитаны по каноническому jni.h
+// (offsetof(JNINativeInterface_, FindClass) / sizeof(void*)): FindClass = 6,
+// GetMethodID = 33, NewStringUTF = 167 и так далее.
+//
+// ЧЕГО ЭТО СТОИТ. Один цикл копирования 234 указателей при инициализации и
+// одна строка в файл на каждый интересный вызов. Если что-то пойдёт не так
+// (GetEnv не ответит, таблица не скопируется), ядру уходит настоящий env и
+// поведение остаётся прежним — перехват не может сломать запуск.
+namespace {
+
+constexpr int kTapSlots = 234;   // все функции JNI 1.6, включая 4 зарезервированные
+void* g_tapTable[kTapSlots] = {nullptr};
+void** g_tapEnv = g_tapTable;    // то, на что будет указывать подменённый JNIEnv
+JavaVM* g_tapVm = nullptr;
+bool g_tapReady = false;
+int g_tapLines = 0;
+constexpr int kTapMaxLines = 800;
+
+char g_jniLogPath[512] = {0};
+
+/** Дописать строку в файл перехвата. Без std::string: зовётся из JNI. */
+void TapLog(const char* fn, const char* a, const char* b) {
+    if (g_jniLogPath[0] == '\0' || g_tapLines >= kTapMaxLines) return;
+    ++g_tapLines;
+    char line[384];
+    int n;
+    if (a != nullptr && b != nullptr) {
+        n = ::snprintf(line, sizeof(line), "%s(%s, %s)\n", fn, a, b);
+    } else if (a != nullptr) {
+        n = ::snprintf(line, sizeof(line), "%s(%s)\n", fn, a);
+    } else {
+        n = ::snprintf(line, sizeof(line), "%s\n", fn);
+    }
+    if (n <= 0) return;
+    const int fd = ::open(g_jniLogPath, O_WRONLY | O_CREAT | O_APPEND, 0600);
+    if (fd < 0) return;
+    ::write(fd, line, static_cast<size_t>(n));
+    ::close(fd);
+}
+
+/** Строка считается текстом, если в ней нет управляющих байтов. */
+const char* Printable(const char* text) {
+    if (text == nullptr) return nullptr;
+    for (const char* p = text; *p != '\0' && p - text < 120; ++p) {
+        const unsigned char c = static_cast<unsigned char>(*p);
+        if (c < 0x20 || c == 0x7f) return nullptr;
+    }
+    return text;
+}
+
+/** Настоящий JNIEnv этого потока. */
+JNIEnv* RealJni() {
+    if (g_tapVm == nullptr) return nullptr;
+    JNIEnv* env = nullptr;
+    if (g_tapVm->GetEnv(reinterpret_cast<void**>(&env), JNI_VERSION_1_6) != JNI_OK) {
+        return nullptr;
+    }
+    return env;
+}
+
+// ── обёртки: пишут вызов и передают его в ART как есть ─────────────
+
+jclass Tap_FindClass(JNIEnv*, const char* name) {
+    TapLog("FindClass", Printable(name), nullptr);
+    JNIEnv* real = RealJni();
+    return real != nullptr ? real->FindClass(name) : nullptr;
+}
+
+jmethodID Tap_GetMethodID(JNIEnv*, jclass cls, const char* name, const char* sig) {
+    TapLog("GetMethodID", Printable(name), Printable(sig));
+    JNIEnv* real = RealJni();
+    return real != nullptr ? real->GetMethodID(cls, name, sig) : nullptr;
+}
+
+jmethodID Tap_GetStaticMethodID(JNIEnv*, jclass cls, const char* name, const char* sig) {
+    TapLog("GetStaticMethodID", Printable(name), Printable(sig));
+    JNIEnv* real = RealJni();
+    return real != nullptr ? real->GetStaticMethodID(cls, name, sig) : nullptr;
+}
+
+jfieldID Tap_GetFieldID(JNIEnv*, jclass cls, const char* name, const char* sig) {
+    TapLog("GetFieldID", Printable(name), Printable(sig));
+    JNIEnv* real = RealJni();
+    return real != nullptr ? real->GetFieldID(cls, name, sig) : nullptr;
+}
+
+jfieldID Tap_GetStaticFieldID(JNIEnv*, jclass cls, const char* name, const char* sig) {
+    TapLog("GetStaticFieldID", Printable(name), Printable(sig));
+    JNIEnv* real = RealJni();
+    return real != nullptr ? real->GetStaticFieldID(cls, name, sig) : nullptr;
+}
+
+jclass Tap_GetObjectClass(JNIEnv*, jobject obj) {
+    TapLog("GetObjectClass", nullptr, nullptr);
+    JNIEnv* real = RealJni();
+    return real != nullptr ? real->GetObjectClass(obj) : nullptr;
+}
+
+jstring Tap_NewStringUTF(JNIEnv*, const char* text) {
+    TapLog("NewStringUTF", Printable(text), nullptr);
+    JNIEnv* real = RealJni();
+    return real != nullptr ? real->NewStringUTF(text) : nullptr;
+}
+
+jint Tap_RegisterNatives(JNIEnv*, jclass cls, const JNINativeMethod* methods, jint count) {
+    TapLog("RegisterNatives", nullptr, nullptr);
+    JNIEnv* real = RealJni();
+    return real != nullptr ? real->RegisterNatives(cls, methods, count) : JNI_ERR;
+}
+
+jboolean Tap_ExceptionCheck(JNIEnv*) {
+    JNIEnv* real = RealJni();
+    const jboolean pending = real != nullptr ? real->ExceptionCheck() : JNI_FALSE;
+    if (pending) TapLog("ExceptionCheck -> в очереди ИСКЛЮЧЕНИЕ", nullptr, nullptr);
+    return pending;
+}
+
+void Tap_ExceptionDescribe(JNIEnv*) {
+    TapLog("ExceptionDescribe", nullptr, nullptr);
+    JNIEnv* real = RealJni();
+    if (real != nullptr) real->ExceptionDescribe();
+}
+
+jthrowable Tap_ExceptionOccurred(JNIEnv*) {
+    JNIEnv* real = RealJni();
+    jthrowable thrown = real != nullptr ? real->ExceptionOccurred() : nullptr;
+    if (thrown != nullptr) TapLog("ExceptionOccurred -> ЕСТЬ ИСКЛЮЧЕНИЕ", nullptr, nullptr);
+    return thrown;
+}
+
+jint Tap_ThrowNew(JNIEnv*, jclass cls, const char* message) {
+    TapLog("ThrowNew", Printable(message), nullptr);
+    JNIEnv* real = RealJni();
+    return real != nullptr ? real->ThrowNew(cls, message) : JNI_ERR;
+}
+
+jobject Tap_NewGlobalRef(JNIEnv*, jobject obj) {
+    JNIEnv* real = RealJni();
+    return real != nullptr ? real->NewGlobalRef(obj) : nullptr;
+}
+
+jobject Tap_CallObjectMethod(JNIEnv*, jobject obj, jmethodID mid, ...) {
+    TapLog("CallObjectMethod", nullptr, nullptr);
+    JNIEnv* real = RealJni();
+    if (real == nullptr) return nullptr;
+    va_list args;
+    va_start(args, mid);
+    const jobject result = real->CallObjectMethodV(obj, mid, args);
+    va_end(args);
+    return result;
+}
+
+jobject Tap_CallStaticObjectMethod(JNIEnv*, jclass cls, jmethodID mid, ...) {
+    TapLog("CallStaticObjectMethod", nullptr, nullptr);
+    JNIEnv* real = RealJni();
+    if (real == nullptr) return nullptr;
+    va_list args;
+    va_start(args, mid);
+    const jobject result = real->CallStaticObjectMethodV(cls, mid, args);
+    va_end(args);
+    return result;
+}
+
+void Tap_CallVoidMethod(JNIEnv*, jobject obj, jmethodID mid, ...) {
+    TapLog("CallVoidMethod", nullptr, nullptr);
+    JNIEnv* real = RealJni();
+    if (real == nullptr) return;
+    va_list args;
+    va_start(args, mid);
+    real->CallVoidMethodV(obj, mid, args);
+    va_end(args);
+}
+
+/** Путь к файлу перехвата: рядом с отчётом о падении. */
+void TapSetLogPath(const char* crashPath) {
+    if (crashPath == nullptr) return;
+    const char* slash = ::strrchr(crashPath, '/');
+    if (slash == nullptr) return;
+    const std::size_t dir_len = static_cast<std::size_t>(slash - crashPath) + 1;
+    const char* name = "kenji-jni.txt";
+    if (dir_len + ::strlen(name) + 1 >= sizeof(g_jniLogPath)) return;
+    ::memcpy(g_jniLogPath, crashPath, dir_len);
+    ::strcpy(g_jniLogPath + dir_len, name);
+}
+
+/**
+ * Поставить перехват. Возвращает JNIEnv для передачи ядру: свой (прозрачный)
+ * при успехе, настоящий — при любой неудаче.
+ */
+JNIEnv* InstallJniTap(JNIEnv* real) {
+    if (real == nullptr) return real;
+    if (g_tapVm == nullptr) {
+        real->GetJavaVM(&g_tapVm);
+    }
+    const void* const* source = reinterpret_cast<const void* const*>(real->functions);
+    if (source == nullptr) return real;
+
+    for (int i = 0; i < kTapSlots; ++i) {
+        g_tapTable[i] = const_cast<void*>(source[i]);
+    }
+
+    // Индексы — из канонического jni.h (см. комментарий выше).
+    g_tapTable[6] = reinterpret_cast<void*>(&Tap_FindClass);
+    g_tapTable[33] = reinterpret_cast<void*>(&Tap_GetMethodID);
+    g_tapTable[113] = reinterpret_cast<void*>(&Tap_GetStaticMethodID);
+    g_tapTable[94] = reinterpret_cast<void*>(&Tap_GetFieldID);
+    g_tapTable[144] = reinterpret_cast<void*>(&Tap_GetStaticFieldID);
+    g_tapTable[31] = reinterpret_cast<void*>(&Tap_GetObjectClass);
+    g_tapTable[167] = reinterpret_cast<void*>(&Tap_NewStringUTF);
+    g_tapTable[215] = reinterpret_cast<void*>(&Tap_RegisterNatives);
+    g_tapTable[228] = reinterpret_cast<void*>(&Tap_ExceptionCheck);
+    g_tapTable[16] = reinterpret_cast<void*>(&Tap_ExceptionDescribe);
+    g_tapTable[15] = reinterpret_cast<void*>(&Tap_ExceptionOccurred);
+    g_tapTable[14] = reinterpret_cast<void*>(&Tap_ThrowNew);
+    g_tapTable[21] = reinterpret_cast<void*>(&Tap_NewGlobalRef);
+    g_tapTable[34] = reinterpret_cast<void*>(&Tap_CallObjectMethod);
+    g_tapTable[114] = reinterpret_cast<void*>(&Tap_CallStaticObjectMethod);
+    g_tapTable[61] = reinterpret_cast<void*>(&Tap_CallVoidMethod);
+
+    g_tapReady = true;
+    // JNIEnv в C++ — это структура, первое слово которой — указатель на
+    // таблицу функций. Подсовываем свою таблицу этим словом.
+    return reinterpret_cast<JNIEnv*>(&g_tapEnv);
+}
+
 } // namespace
 
 extern "C" {
@@ -485,6 +731,7 @@ Java_org_yuzu_yuzu_1emu_utils_KenjiBridge_nativeSetCrashLog(JNIEnv* env, jobject
     if (fd >= 0) ::close(fd);
     InstallCrashHandlers();
     ArmStdioCapture();
+    TapSetLogPath(g_crashPath);
     LOGI("crash report armed: %s", g_crashPath);
 }
 
@@ -601,8 +848,11 @@ Java_org_yuzu_yuzu_1emu_utils_KenjiBridge_nativeInitialize(JNIEnv* env, jobject,
 
     // Official Kenji: javaInitialize(path, JNIEnv*). Passing JavaVM* here
     // made Interop.GetVirtualMachine dereference garbage and killed :kenji.
+    // Перехват ставится ровно здесь: до этого вызова ядро JNIEnv не получало,
+    // после — получает только от нас.
+    JNIEnv* passedEnv = InstallJniTap(env);
     g_inCore = 1;
-    bool ok = fn(const_cast<char*>(dataPath), env);
+    bool ok = fn(const_cast<char*>(dataPath), passedEnv);
     g_inCore = 0;
 
     env->ReleaseStringUTFChars(jdataPath, dataPath);

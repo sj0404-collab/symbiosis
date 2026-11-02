@@ -139,6 +139,18 @@ object KenjiBridge {
         File(crashReportFile(context).parentFile, "kenji-pid.txt")
 
     /**
+     * Файл, в который мост записывает JNI-вызовы ядра.
+     *
+     * ЗАЧЕМ. Ядро умирало молча, и вопрос был не в том, что оно ответило, а в
+     * том, ЧТО ОНО СПРОСИЛО у Java и что ему ответили. Обычный виновник —
+     * FindClass, вернувший null: класса нет в приложении, а ядро на null не
+     * проверяет и падает внутри. Имя обязано совпадать с тем, что строит
+     * `TapSetLogPath` в C++: `kenji-jni.txt` рядом с отчётом о падении.
+     */
+    fun jniLogFile(context: Context): File =
+        File(crashReportFile(context).parentFile, "kenji-jni.txt")
+
+    /**
      * Начать новый отчёт о падении.
      *
      * Старый стирается: файл переживает смерть процесса, и без стирания

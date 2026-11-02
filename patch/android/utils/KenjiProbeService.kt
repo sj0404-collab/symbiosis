@@ -175,6 +175,24 @@ class KenjiProbeService : Service() {
                 body.append("\n\nФайла вывода ядра нет: перенаправление не сработало.")
             }
 
+            // Третий источник: что ядро спрашивало у Java.
+            //
+            // Ядро умирало молча и без текста. Между тем почти все такие
+            // смерти — это ответ на собственный вопрос: FindClass вернул null,
+            // а ядро на null не проверяет. Файл перехвата называет вопрос
+            // дословно, поэтому он идёт сразу после вывода самого ядра.
+            val jniFile = runCatching { KenjiBridge.jniLogFile(context) }.getOrNull()
+            val jniText = runCatching {
+                jniFile?.takeIf { it.isFile }?.readText()
+            }.getOrNull().orEmpty()
+            val asked = KenjiCrash.jniLines(jniText)
+            if (asked.isNotEmpty()) {
+                body.append("\n\nЧто ядро спрашивало у Java перед остановкой:\n")
+                asked.forEach { body.append("• ").append(it).append('\n') }
+                body.append("  (если выше есть FindClass на класс, которого нет в приложении,")
+                    .append(" причина именно в этом — ядро не проверяет пустой ответ.)")
+            }
+
             // Второй, независимый источник: снимок, который ведёт система.
             // Именно там лежит «Abort message» — текст, с которым процесс сам
             // себя остановил, и кадры, уже сопоставленные с функциями.
