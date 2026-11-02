@@ -85,7 +85,29 @@ object KenjiCrash {
         val frames = mutableListOf<String>()
         val breaks = mutableListOf<Int>()
 
-        text.lineSequence().map { it.trim() }.filter { it.isNotEmpty() }.forEach { line ->
+        // ФАЙЛ ДОПИСЫВАЕТСЯ, А НЕ ПЕРЕЗАПИСЫВАЕТСЯ. Каждый запуск ядра
+        // добавляет свои строки в конец, поэтому старый разбор «все строки
+        // подряд» показывал ПЕРВОЕ падение за всю историю файла: на телефоне
+        // окно снова и снова показывало отчёт от прежней сборки, и отличить
+        // его от нового было нельзя. Разбираем последний прогон.
+        val all = text.split('\n').map { it.trim() }.filter { it.isNotEmpty() }
+        // Начало последнего прогона — его собственная строка step=. Перед ней
+        // стоят строки состояния перехвата того же прогона, поэтому поднимаемся
+        // выше, пока они идут подряд; кадры предыдущего прогона (pc=) так
+        // остаются позади и в отчёт не попадают.
+        var from = all.indexOfLast { it.startsWith("step=") }
+        if (from < 0) {
+            from = all.indexOfLast { it.startsWith("crash ") }
+        }
+        if (from < 0) {
+            from = 0
+        }
+        while (from > 0 && (all[from - 1].startsWith("abort interposer:") ||
+                    all[from - 1].startsWith("got patch:"))
+        ) {
+            --from
+        }
+        all.drop(from).forEach { line ->
             when {
                 line.startsWith("step=") ->
                     step = line.removePrefix("step=").trim()
@@ -140,7 +162,7 @@ object KenjiCrash {
      * делать дальше. Шаг называется по имени функции, потому что именно он
      * отличает «файл не открылся» от «ядро отказалось стартовать».
      */
-    fun format(report: Report?, stepNow: String = ""): String {
+    fun format(report: Report?, stepNow: String = "", buildStamp: String = ""): String {
         if (report == null) {
             val where = if (stepNow.isNotBlank()) "на шаге «$stepNow»" else "во время запуска"
             return "Процесс второго ядра завершился $where, но отчёта о падении нет: " +
@@ -151,6 +173,11 @@ object KenjiCrash {
 
         val builder = StringBuilder()
         builder.append("Отчёт о падении второго ядра:\n")
+        // Какая сборка это написала. Без этой строки отчёт с телефона нельзя
+        // привязать к версии, и один круг уже потерялся именно на этом.
+        if (buildStamp.isNotBlank()) {
+            builder.append("• сборка: ").append(buildStamp).append('\n')
+        }
         builder.append("• шаг: ").append(stepLabel(report.step.ifBlank { stepNow })).append('\n')
         if (report.signal != 0) {
             builder.append("• сигнал: ").append(report.signal)

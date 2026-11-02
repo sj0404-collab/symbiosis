@@ -498,6 +498,39 @@ fun main() {
     check("и причина правки таблицы названа", notArmedVerdict.contains("нет таблицы переходов"),
         notArmedVerdict)
 
+    // ── файл дописывается: показывать надо последний прогон ─────────────
+    //
+    // С устройства пришёл отчёт, который оказался старым, и отличить его от
+    // нового было нельзя. Причина: файл дописывается, а разбор шёл по всем
+    // строкам подряд — то есть показывал ПЕРВОЕ падение за всю историю файла.
+    val twoRuns = """
+        abort interposer: активен
+        got patch: abort — подменено слотов: 1
+        step=javaInitialize
+        crash signal=6 name=SIGABRT addr=0x1111 code=-1 step=javaInitialize
+        pc=libkenji.so+0xAAAA
+
+        abort interposer: активен
+        got patch: abort — подменено слотов: 1
+        step=javaInitialize
+        crash signal=6 name=SIGABRT addr=0x2222 code=-1 step=javaInitialize
+        pc=libkenji.so+0xBBBB
+        abort-caller=libkenji.so+0xBBBB
+    """.trimIndent()
+    val latest = KenjiCrash.parse(twoRuns)
+    check("разобран последний прогон", latest?.address == "0x2222", latest?.address ?: "null")
+    check("кадры только последнего прогона", latest?.frames == listOf("libkenji.so+0xBBBB"),
+        latest?.frames?.toString() ?: "null")
+    check("перехват из последнего прогона", latest?.abortCaller == "libkenji.so+0xBBBB",
+        latest?.abortCaller ?: "null")
+
+    // ── штамп сборки ────────────────────────────────────────────────────
+    val stamped = KenjiCrash.format(latest!!, buildStamp = "0.2.1-257-ga1b2c3d (20261102), файл отчёта изменён 02.11 21:04")
+    check("в отчёте названа сборка", stamped.contains("• сборка: 0.2.1-257"), stamped)
+    check("в отчёте время файла", stamped.contains("файл отчёта изменён"), stamped)
+    check("без штампа строка не появляется",
+        !KenjiCrash.format(latest).contains("• сборка:"), KenjiCrash.format(latest))
+
     println()
     println("passed=$passed failed=${failures.size}")
     failures.forEach { println("FAIL  $it") }

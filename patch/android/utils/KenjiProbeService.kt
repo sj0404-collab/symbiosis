@@ -14,6 +14,7 @@ import android.os.Looper
 import android.os.Message
 import android.os.Messenger
 import android.os.Process
+import org.yuzu.yuzu_emu.BuildConfig
 import java.io.File
 
 /**
@@ -148,7 +149,21 @@ class KenjiProbeService : Service() {
             val text = runCatching { file?.takeIf { it.isFile }?.readText() }.getOrNull().orEmpty()
             val report = KenjiCrash.parse(text)
 
-            val body = StringBuilder(KenjiCrash.format(report))
+            // Штамп сборки и время файла: по ним видно, к какой версии
+            // относится отчёт и не показан ли вчерашний. Один круг уже
+            // потерялся на том, что отчёт старой сборки выглядел как новый.
+            val stamp = runCatching {
+                val version = BuildConfig.VERSION_NAME
+                val when_ = file?.takeIf { it.isFile }
+                    ?.let { java.text.SimpleDateFormat("dd.MM HH:mm", java.util.Locale.ROOT)
+                        .format(java.util.Date(it.lastModified())) }
+                buildString {
+                    append(version)
+                    append(" (").append(BuildConfig.VERSION_CODE).append(')')
+                    if (when_ != null) append(", файл отчёта изменён ").append(when_)
+                }
+            }.getOrDefault("")
+            val body = StringBuilder(KenjiCrash.format(report, buildStamp = stamp))
 
             // В отчёте о сигнале есть адреса, но нет текста. Текст исключения
             // .NET печатается в stderr ядра и перенаправлен в файл — это
