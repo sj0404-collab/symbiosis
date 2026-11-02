@@ -259,6 +259,37 @@ object KenjiCrash {
     }
 
     /**
+     * Короткая выжимка записи о падении — для диалога.
+     *
+     * Показывать весь стек нельзя: его не прочитать. Но и «приложение
+     * остановилось» бесполезно. Поэтому: первая строка (сигнал для нативного
+     * сбоя, тип и текст для Java) и до [limit] кадров.
+     */
+    fun uiSummary(text: String, limit: Int = 4): String {
+        val lines = text.lineSequence().map { it.trimEnd() }.filter { it.isNotBlank() }.toList()
+        if (lines.isEmpty()) return ""
+        // Первая строка записи — не всегда причина: у Java-падения там стоит
+        // время и имя потока, а тип ошибки на следующей. Поэтому причиной
+        // считаем первую строку, которая ею выглядит.
+        val cause = Regex("""(Exception|Error|Throwable)""")
+        val head = lines.firstOrNull {
+            it.contains("crash signal=") || cause.containsMatchIn(it)
+        } ?: lines.first()
+        val frames = lines.filter { it !== head }.filter {
+            it.startsWith("pc=") || it.trimStart().startsWith("at ")
+        }
+        val shown = frames.take(limit)
+        return buildString {
+            append(head.trim())
+            if (shown.isNotEmpty()) {
+                append('\n')
+                shown.forEach { append("  ").append(it.trim()).append('\n') }
+            }
+            if (frames.size > shown.size) append("  … ещё ${frames.size - shown.size}")
+        }.trim()
+    }
+
+    /**
      * Как записать необработанное исключение приложения, чтобы его потом
      * прочитали глазами, а не искали в logcat.
      */
@@ -307,8 +338,13 @@ object KenjiCrash {
     fun fatalLines(logcat: String, limit: Int = 8): List<String> {
         val interesting = listOf(
             // Сначала то, что прямо называет причину.
-            "abort message", "unhandled exception", "failfast", "fatal exception",
-            "signal 6", "exception:", "system.",
+            "abort message", "unhandled exception", "unhandled exception:", "failfast",
+            "fatal exception", "signal 6", "exception:", "system.",
+            // .NET на Android печатает необработанное исключение не в stderr, а
+            // в журнал с меткой DOTNET: у него Console/stderr перенаправлены в
+            // logd. Поэтому «ядро молчит в stderr» и «в журнале ничего нет» —
+            // разные вещи, и искать надо здесь.
+            "dotnet",
             // Затем наши собственные отметки: по ним видно, докуда дошли.
             "kenji", "libkenji", "symbiosiskenji"
         )

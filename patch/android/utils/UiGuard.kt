@@ -54,11 +54,62 @@ object UiGuard {
         }
     }
 
+    /**
+     * Включить отчёт для НАТИВНЫХ падений основного процесса.
+     *
+     * Java-обработчик выше не видит SIGSEGV внутри libyuzu-android.so: процесс
+     * умирает, не дойдя до Java. А именно так и выглядит падение эмуляции —
+     * «Приложение остановлено» и ни слова больше. Нативный обработчик пишет в
+     * тот же файл шапку и кадры стека: по ним видно библиотеку.
+     */
+    fun armNative(context: Context) {
+        if (nativeArmed) return
+        nativeArmed = true
+        runCatching {
+            val target = file(context)
+            target.parentFile?.mkdirs()
+            NativeSymbiosis.armMainCrashLog(target.absolutePath)
+        }
+    }
+
+    @Volatile
+    private var nativeArmed = false
+
     private fun write(context: Context, thread: Thread, error: Throwable) {
         val target = file(context)
         target.parentFile?.mkdirs()
         val stamp = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).format(Date())
         target.appendText(KenjiCrash.describeThrowable(thread.name, error, stamp) + "\n")
+    }
+
+    /**
+     * Причина прошлого падения, если она есть.
+     *
+     * Читается при следующем запуске: человек должен узнать причину, а не
+     * гадать по надписи в шторке. Возвращает null, когда падения не было.
+     */
+    fun pending(context: Context): String? = runCatching {
+        val target = file(context)
+        if (!target.isFile) return null
+        val text = target.readText().trim()
+        if (text.isEmpty()) return null
+        text
+    }.getOrNull()
+
+    /**
+     * Забрать запись: переименовать в `ui-crash-last.txt`.
+     *
+     * Нужно, чтобы одна и та же причина не показывалась при каждом запуске.
+     * Файл не стирается — его видно в папке, и он остаётся для отчёта.
+     */
+    fun consume(context: Context) {
+        runCatching {
+            val target = file(context)
+            if (!target.isFile) return@runCatching
+            val last = File(target.parentFile, "ui-crash-last.txt")
+            if (last.exists()) last.delete()
+            target.renameTo(last)
+        }
     }
 
     /** Последние строки записи — для показа рядом с отчётом о сбое ядра. */

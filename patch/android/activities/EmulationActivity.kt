@@ -60,6 +60,7 @@ import org.yuzu.yuzu_emu.model.Game
 import org.yuzu.yuzu_emu.network.NetPlayManager
 import org.yuzu.yuzu_emu.utils.InputHandler
 import org.yuzu.yuzu_emu.utils.Log
+import org.yuzu.yuzu_emu.utils.KenjiCrash
 import org.yuzu.yuzu_emu.utils.UiGuard
 import org.yuzu.yuzu_emu.utils.MemoryUtil
 import org.yuzu.yuzu_emu.utils.NativeConfig
@@ -131,8 +132,14 @@ class EmulationActivity : AppCompatActivity(), SensorEventListener, InputManager
         // `<внешние файлы>/symbiosis/ui-crash.txt`, иначе от него остаётся
         // только «приложение остановлено».
         runCatching { UiGuard.install(this) }
+        runCatching { UiGuard.armNative(this) }
 
         super.onCreate(savedInstanceState)
+
+        // Причина прошлого падения — сразу, а не в переписке. Читаем ДО
+        // первого кадра эмуляции: если процесс снова упадёт, файл уже
+        // переименован и новая причина не смешается со старой.
+        showPreviousCrash()
 
         InputHandler.updateControllerData()
         val players = NativeConfig.getInputSettings(true)
@@ -288,6 +295,53 @@ class EmulationActivity : AppCompatActivity(), SensorEventListener, InputManager
         runPictureInPictureAction("enter picture-in-picture mode") {
             enterPictureInPictureMode(pictureInPictureParamsBuilder.build())
         }
+    }
+
+    /**
+     * Показать причину прошлого падения, если она записана.
+     *
+     * Диалог, а не уведомление: падение игры человек и так заметил, ему нужно
+     * прочитать, что случилось, и, если надо, скопировать текст для отчёта.
+     * Всё в runCatching — сам показ причины не имеет права уронить игру.
+     */
+    private fun showPreviousCrash() {
+        val text = runCatching { UiGuard.pending(this) }.getOrNull() ?: return
+        runCatching { UiGuard.consume(this) }
+        val summary = runCatching { KenjiCrash.uiSummary(text) }.getOrNull().orEmpty()
+        if (summary.isEmpty()) return
+        runCatching {
+            val body = android.widget.TextView(this).apply {
+                this.text = summary
+                textSize = 13f
+                typeface = android.graphics.Typeface.MONOSPACE
+                setPadding(24, 16, 24, 0)
+                setTextIsSelectable(true)
+            }
+            val scroll = android.widget.ScrollView(this).apply { addView(body) }
+            com.google.android.material.dialog.MaterialAlertDialogBuilder(this)
+                .setTitle("Прошлый запуск остановился")
+                .setView(scroll)
+                .setPositiveButton("Скопировать", null)
+                .setNegativeButton("Закрыть", null)
+                .create()
+                .apply {
+                    setOnShowListener {
+                        getButton(android.app.AlertDialog.BUTTON_POSITIVE).setOnClickListener {
+                            val clipboard = getSystemService(android.content.Context.CLIPBOARD_SERVICE)
+                                    as android.content.ClipboardManager
+                            clipboard.setPrimaryClip(
+                                android.content.ClipData.newPlainText("Symbiosis", text)
+                            )
+                            android.widget.Toast.makeText(
+                                this@EmulationActivity,
+                                "Причина скопирована",
+                                android.widget.Toast.LENGTH_SHORT
+                            ).show()
+                        }
+                    }
+                    show()
+                }
+        }.onFailure { Log.warning("[Symbiosis] не удалось показать причину падения: ${it.message}") }
     }
 
     override fun onNewIntent(intent: Intent) {

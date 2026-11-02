@@ -134,9 +134,15 @@ class KenjiProbeService : Service() {
          * в удобный момент.
          */
         fun crashMessage(context: Context): String {
-            // PID процесса :kenji — он же PID упавшего ядра. Нужен в тексте,
-            // чтобы строки журнала можно было сверить с отчётом глазами.
-            val ownPid = android.os.Process.myPid()
+            // PID УПАВШЕГО процесса, а не своего.
+            //
+            // Отчёт собирается в основном процессе — служба :kenji к этому
+            // моменту мертва. Раньше здесь стоял Process.myPid(), то есть номер
+            // лаунчера: журнал фильтровался по нему и, разумеется, пустел.
+            // Число записано в файл тем процессом, который потом упал.
+            val fallenPid = runCatching {
+                KenjiBridge.pidFile(context).takeIf { it.isFile }?.readText()?.trim()?.toIntOrNull()
+            }.getOrNull()
             val file = runCatching { KenjiBridge.crashReportFile(context) }.getOrNull()
             val text = runCatching { file?.takeIf { it.isFile }?.readText() }.getOrNull().orEmpty()
             val report = KenjiCrash.parse(text)
@@ -162,18 +168,22 @@ class KenjiProbeService : Service() {
                     .append(saidFile.name).append(" создан, но пуст.")
             }
 
-            val own = captureLogcat()
+            val own = captureLogcat(fallenPid)
             val lines = KenjiCrash.fatalLines(own)
             if (lines.isNotEmpty()) {
-                body.append("\n\nИз журнала системы (только свой процесс, PID $ownPid):\n")
+                body.append("\n\nИз журнала системы (только процесс ядра, PID $fallenPid):\n")
                 lines.forEach { body.append("• ").append(it.take(160)).append('\n') }
             } else if (exception.isEmpty()) {
-                // Молчание хуже строки: человек думает, что отчёт неполный,
-                // и не знает, что журнала именно этого процесса нет.
-                body.append("\n\nЖурнала этого процесса нет: строки своего PID $ownPid")
-                    .append(" система не отдала. Это не ошибка приложения, но и не ")
-                    .append("подтверждение, что ядро промолчало: .NET-ядра печатают ")
-                    .append("исключение в журнал с меткой DOTNET.")
+                // Молчание хуже строки: человек думает, что отчёт неполный, и
+                // не знает, что журнала именно этого процесса нет.
+                if (fallenPid == null) {
+                    body.append("\n\nPID упавшего процесса не записан: журнал не с чем сверить.")
+                        .append(" Это ошибка нашей сборки, а не устройства.")
+                } else {
+                    body.append("\n\nЖурнала процесса $fallenPid система не отдала.")
+                        .append(" На этой прошивке чтение журнала своего приложения, видимо,")
+                        .append(" закрыто. Тогда единственный источник — буфер крашеи, и он пуст.")
+                }
             }
             return body.toString().trim()
         }
@@ -193,16 +203,17 @@ class KenjiProbeService : Service() {
          * Если после фильтра пусто — это не повод молчать: в отчёт идёт
          * прямой строкой, что журнала своего процесса система не отдала.
          */
-        private fun captureLogcat(): String = runCatching {
-            val pid = android.os.Process.myPid()
-            val crash = read(*KenjiCrash.logcatArgs(buffer = "crash", lines = 400).toTypedArray())
-            val main = read(*KenjiCrash.logcatArgs().toTypedArray())
+        private fun captureLogcat(pid: Int?): String = runCatching {
+            if (pid == null) return@runCatching ""
+            val crash = read(*KenjiCrash.logcatArgs(buffer = "crash", lines = 600).toTypedArray())
+            val main = read(*KenjiCrash.logcatArgs(lines = 3000).toTypedArray())
             val filtered = KenjiCrash.filterByPid(crash + "\n" + main, pid)
             if (filtered.isNotEmpty()) return@runCatching filtered
 
-            // Второй заход: буферы могли смениться между вызовами, а на части
-            // прошивок `-b crash` закрыт и возвращает пустоту с ошибкой.
-            val again = read("logcat", "-d", "-v", "threadtime", "-t", "4000")
+            // Второй заход: `-b crash` на части прошивок закрыт и возвращает
+            // пустоту вместе с ошибкой, а общий буфер за это время мог
+            // прокрутиться.
+            val again = read("logcat", "-d", "-v", "threadtime", "-t", "8000")
             KenjiCrash.filterByPid(again, pid)
         }.getOrDefault("")
 
@@ -223,6 +234,13 @@ class KenjiProbeService : Service() {
             // Everything below runs in :kenji. If it dies, it dies alone.
             // Отчёт включается ДО первого касания ядра: файл переживёт смерть
             // процесса, и в нём останется шаг, на котором всё оборвалось.
+            //
+            // И PID — тоже до. Отчёт потом собирает основной процесс, а этот к
+            // тому времени мёртв; без записи журнал фильтровался по номеру
+            // лаунчера и не находил ни одной строки ядра.
+            runCatching {
+                KenjiBridge.pidFile(this@KenjiProbeService).writeText("${Process.myPid()}")
+            }
             KenjiBridge.armCrashReport(this@KenjiProbeService)
             val status = runCatching { KenjiBridge.start(this@KenjiProbeService) }
                 .getOrElse { KenjiBridge.Status(false, "исключение: ${it.message ?: it.javaClass.simpleName}") }

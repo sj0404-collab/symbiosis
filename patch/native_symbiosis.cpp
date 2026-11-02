@@ -7,8 +7,22 @@
  *        per-device tuning profile catalogue.
  */
 
+#include <atomic>
+#include <csignal>
+#include <cstdio>
+#include <cstring>
 #include <string>
 #include <vector>
+
+#include <dlfcn.h>
+#include <fcntl.h>
+#include <unistd.h>
+
+#if defined(__aarch64__)
+#include <ucontext.h>
+#else
+#include <unwind.h>
+#endif
 
 #include <jni.h>
 
@@ -90,7 +104,118 @@ Symbiosis::DriverOrigin CurrentOrigin() {
     return Symbiosis::DriverOrigin::System;
 }
 
-} // Anonymous namespace
+// ── Отчёт о падении ОСНОВНОГО процесса ────────────────────────────────
+//
+// ЗАЧЕМ. Второе ядро живёт в `:kenji` и у него свой отчёт — его пишет мост.
+// А падение самой эмуляции (libyuzu-android) до сих пор не оставляло ничего,
+// кроме «Eden Symbiosis Debug остановлено» в шторке. Именно так выглядело
+// падение при работе с панелью настроек: человек видел только факт.
+//
+// Обработчик сигнала пишет шапку и кадры стека из ucontext — по ним видно,
+// какая библиотека виновата. Файл читается при СЛЕДУЮЩЕМ запуске и
+// показывается диалогом: причина нужна сразу, а не в переписке.
+namespace {
+
+char g_mainCrashPath[512] = {0};
+std::atomic<int> g_mainInHandler{0};
+
+/**
+ * Что делало приложение в момент падения.
+ *
+ * Без метки в отчёте видно «libyuzu-android.so+0x…» и ничего больше. С меткой
+ * понятно, что это была панель настроек, а не, скажем, старт игры. Метка
+ * меняется на границах опасных действий — это одна запись строки, дешевле
+ * любого лога.
+ */
+char g_mainStep[96] = "приложение";
+
+void MainWriteFrame(int fd, uintptr_t pc) {
+    if (pc == 0) return;
+    Dl_info info{};
+    char line[320];
+    int n;
+    if (::dladdr(reinterpret_cast<void*>(pc - 1), &info) != 0 && info.dli_fname != nullptr) {
+        const char* slash = ::strrchr(info.dli_fname, '/');
+        n = ::snprintf(line, sizeof(line), "pc=%s+0x%lx\n", slash ? slash + 1 : info.dli_fname,
+                       static_cast<unsigned long>(pc -
+                                                  reinterpret_cast<uintptr_t>(info.dli_fbase)));
+    } else {
+        n = ::snprintf(line, sizeof(line), "pc=0x%lx\n", static_cast<unsigned long>(pc));
+    }
+    if (n > 0) ::write(fd, line, static_cast<size_t>(n));
+}
+
+#if defined(__aarch64__)
+void MainWriteFrames(int fd, void* uctx) {
+    auto* uc = static_cast<ucontext_t*>(uctx);
+    if (uc == nullptr) return;
+    const uintptr_t pc = uc->uc_mcontext.pc;
+    uintptr_t frame = uc->uc_mcontext.regs[29];
+    const uintptr_t link = uc->uc_mcontext.regs[30];
+    MainWriteFrame(fd, pc);
+    MainWriteFrame(fd, link);
+    for (int i = 0; i < 14 && frame != 0; ++i) {
+        if ((frame & 0x7) != 0 || frame < 0x1000) break;
+        const auto* words = reinterpret_cast<const uintptr_t*>(frame);
+        const uintptr_t next = words[0];
+        const uintptr_t ret = words[1];
+        MainWriteFrame(fd, ret);
+        if (next <= frame) break;
+        frame = next;
+    }
+}
+#else
+struct MainUnwindState {
+    int fd;
+    int depth;
+};
+
+_Unwind_Reason_Code MainUnwindCallback(_Unwind_Context* ctx, void* arg) {
+    auto* state = static_cast<MainUnwindState*>(arg);
+    MainWriteFrame(state->fd, _Unwind_GetIP(ctx));
+    return ++state->depth < 12 ? _URC_NO_REASON : _URC_END_OF_STACK;
+}
+
+void MainWriteFrames(int fd, void* uctx) {
+    (void)uctx;
+    MainUnwindState state{fd, 0};
+    _Unwind_Backtrace(MainUnwindCallback, &state);
+}
+#endif
+
+const char* MainSignalName(int sig) {
+    switch (sig) {
+    case SIGSEGV: return "SIGSEGV";
+    case SIGABRT: return "SIGABRT";
+    case SIGBUS: return "SIGBUS";
+    case SIGILL: return "SIGILL";
+    case SIGFPE: return "SIGFPE";
+    default: return "SIG";
+    }
+}
+
+void MainCrashHandler(int sig, siginfo_t* info, void* uctx) {
+    if (g_mainInHandler.exchange(1) != 0) {
+        ::signal(sig, SIG_DFL);
+        ::raise(sig);
+        return;
+    }
+    const int fd = ::open(g_mainCrashPath, O_WRONLY | O_CREAT | O_APPEND, 0600);
+    if (fd >= 0) {
+        char head[320];
+        const int n = ::snprintf(head, sizeof(head),
+                                 "crash signal=%d name=%s addr=%p code=%d step=%s\n", sig,
+                                 MainSignalName(sig), info ? info->si_addr : nullptr,
+                                 info ? info->si_code : 0, g_mainStep);
+        if (n > 0) ::write(fd, head, static_cast<size_t>(n));
+        MainWriteFrames(fd, uctx);
+        ::close(fd);
+    }
+    ::signal(sig, SIG_DFL);
+    ::raise(sig);
+}
+
+} // namespace
 
 extern "C" {
 
@@ -102,6 +227,54 @@ extern "C" {
  * там, где его файловый backend действительно создаёт, и после переноса
  * данных в общую папку экран продолжает работать.
  */
+/**
+ * Включить отчёт о падении для основного процесса.
+ *
+ * Вызывается при входе в игру: с этого момента сигнал (SIGSEGV, SIGABRT и
+ * прочие) оставляет в файле шапку и кадры стека. Файл создаётся сразу —
+ * «есть, но пуст» значит «падения не было», и это тоже нужный ответ.
+ */
+JNIEXPORT void JNICALL
+Java_org_yuzu_yuzu_1emu_utils_NativeSymbiosis_armMainCrashLog(JNIEnv* env, jobject,
+                                                              jstring jpath) {
+    const std::string path = Common::Android::GetJString(env, jpath);
+    if (path.empty()) return;
+    ::strncpy(g_mainCrashPath, path.c_str(), sizeof(g_mainCrashPath) - 1);
+    g_mainCrashPath[sizeof(g_mainCrashPath) - 1] = '\0';
+
+    const int fd = ::open(g_mainCrashPath, O_WRONLY | O_CREAT | O_TRUNC, 0600);
+    if (fd >= 0) ::close(fd);
+
+    // Альтернативный стек не ставим: обработчик пишет в файл, а на нём же
+    // может не хватить места, если падение случилось внутри записи журнала.
+    struct sigaction action {};
+    action.sa_sigaction = MainCrashHandler;
+    action.sa_flags = SA_SIGINFO | SA_ONSTACK;
+    ::sigemptyset(&action.sa_mask);
+    // Массив, а не список в фигурных скобках: последний требует
+    // <initializer_list>, и на голом TU это вылезает ошибкой сборки.
+    const int handled[] = {SIGSEGV, SIGABRT, SIGBUS, SIGILL, SIGFPE};
+    for (const int sig : handled) {
+        ::sigaction(sig, &action, nullptr);
+    }
+    LOG_INFO(Frontend, "[Symbiosis] main-process crash report armed: {}", g_mainCrashPath);
+}
+
+/**
+ * Отметить, что делает приложение: строка попадёт в отчёт о падении.
+ *
+ * Не потокобезопасно осознанно: это метка для человека, а не данные, и
+ * стоимость атомарной записи на каждый пункт меню не нужна. Худшее, что
+ * может случиться, — в отчёте окажется соседняя по времени метка.
+ */
+JNIEXPORT void JNICALL
+Java_org_yuzu_yuzu_1emu_utils_NativeSymbiosis_setMainStep(JNIEnv* env, jobject, jstring jstep) {
+    const std::string step = Common::Android::GetJString(env, jstep);
+    if (step.empty()) return;
+    ::strncpy(g_mainStep, step.c_str(), sizeof(g_mainStep) - 1);
+    g_mainStep[sizeof(g_mainStep) - 1] = '\0';
+}
+
 JNIEXPORT jstring JNICALL
 Java_org_yuzu_yuzu_1emu_utils_NativeSymbiosis_logDirectory(JNIEnv* env, jobject) {
     const auto& dir = Common::FS::GetEdenPath(Common::FS::EdenPath::LogDir);

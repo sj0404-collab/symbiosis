@@ -25,6 +25,25 @@ object NativeSymbiosis {
      */
     external fun logDirectory(): String
 
+    /**
+     * Включить отчёт о нативном падении этого процесса.
+     *
+     * Основная эмуляция живёт в libyuzu-android.so, и её SIGSEGV не доходит до
+     * Java-обработчика исключений: процесс умирает внутри нативной части.
+     * Обработчик в C++ пишет в файл шапку и кадры стека, а следующий запуск
+     * показывает их человеку ([UiGuard.pending]).
+     */
+    external fun armMainCrashLog(path: String)
+
+    /**
+     * Отметить текущее действие — оно попадёт в отчёт, если приложение упадёт.
+     *
+     * Зовётся на границах опасных операций (применение настроек, перезапуск
+     * игры). Одна строка в отчёте отделяет «упало на настройках» от «упало при
+     * запуске», и гадать потом не нужно.
+     */
+    external fun setMainStep(step: String)
+
     external fun getDriverTopology(): String
     external fun getMemoryState(): String
     external fun getMemoryJson(): String

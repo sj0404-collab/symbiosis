@@ -333,8 +333,9 @@ jobs:
           # Отчёт и запись падения: класс может доехать, а строки — нет.
           # «Что сказало ядро» без файла stderr не покажет ничего, поэтому
           # проверяются оба имени.
-          for text in "kenji-stdout.txt" "ui-crash.txt" \
-                      "Что сказало ядро перед остановкой"; do
+          for text in "kenji-stdout.txt" "ui-crash.txt" "kenji-pid.txt" \
+                      "Что сказало ядро перед остановкой" \
+                      "Прошлый запуск остановился"; do
             if grep -qa "$text" /tmp/x/classes*.dex; then
               echo "  ok   \"$text\" in dex"
             else
@@ -368,6 +369,14 @@ jobs:
           done
 
           # Отчёт о падении второго ядра: и символ включения, и сам обработчик.
+          # Отчёт о падении самого приложения: экспорт в libyuzu-android.so.
+          # Без него диалог «Прошлый запуск остановился» не получит ничего.
+          for sym in armMainCrashLog setMainStep; do
+            "$NM" -D lib/arm64-v8a/libyuzu-android.so \
+              | grep -q "Java_org_yuzu_yuzu_1emu_utils_NativeSymbiosis_$sym" \
+              || { echo "  missing JNI export: $sym"; fail=1; }
+          done
+
           for sym in nativeSetCrashLog nativeSetStep; do
             "$NM" -D lib/arm64-v8a/libsymbiosis_kenji.so \
               | grep -q "Java_org_yuzu_yuzu_1emu_utils_KenjiBridge_$sym" \

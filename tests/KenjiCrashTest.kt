@@ -260,6 +260,46 @@ fun main() {
     check("текст исключения", described.contains("панель упала"), described)
     check("стек записан", described.contains("KenjiCrashTest"), described)
 
+    // ── .NET пишет в журнал, а не в stderr ─────────────────────────────
+    //
+    // С телефона: «ядро ничего не написало в свой вывод» + «журнала нет».
+    // Оба верны и оба бесполезны: .NET на Android перенаправляет
+    // Console/stderr в logd, метка DOTNET. Ищем именно это.
+    val dotnetLog = """
+        05-02 14:09:58.101  8674  8674 I DOTNET  : Unhandled Exception:
+        05-02 14:09:58.101  8674  8674 I DOTNET  : System.DllNotFoundException: libkenjinxjni
+        05-02 14:09:58.102  8674  8674 I SymbiosisKenji: step=javaInitialize
+    """.trimIndent()
+    val dotnetPicked = KenjiCrash.fatalLines(dotnetLog)
+    check("строка DOTNET попадает в отчёт",
+        dotnetPicked.any { it.contains("DOTNET") }, dotnetPicked.toString())
+    check("тип исключения тоже",
+        dotnetPicked.any { it.contains("DllNotFoundException") }, dotnetPicked.toString())
+
+    // ── выжимка для диалога ───────────────────────────────────────────
+    val nativeDump = """
+        crash signal=11 name=SIGSEGV addr=0x1 code=1 step=приложение
+        pc=libyuzu-android.so+0x1a2b3
+        pc=libc.so+0x530f4
+        pc=libyuzu-android.so+0x991
+    """.trimIndent()
+    val nativeBrief = KenjiCrash.uiSummary(nativeDump, limit = 2)
+    check("шапка в выжимке", nativeBrief.startsWith("crash signal=11"), nativeBrief)
+    check("кадров не больше лимита",
+        nativeBrief.lines().count { it.trim().startsWith("pc=") } == 2, nativeBrief)
+    check("сказано, сколько скрыто", nativeBrief.contains("ещё 1"), nativeBrief)
+
+    val javaDump = """
+        2026-11-02 14:10:00 поток=main
+        java.lang.IllegalStateException: панель
+        	at org.yuzu.yuzu_emu.fragments.EmulationFragment.x(EmulationFragment.kt:1)
+        	at android.os.Handler.dispatchMessage(Handler.java:106)
+    """.trimIndent()
+    val briefJava = KenjiCrash.uiSummary(javaDump)
+    check("тип исключения в выжимке", briefJava.contains("IllegalStateException"), briefJava)
+    check("кадры Java тоже", briefJava.contains("Handler.dispatchMessage"), briefJava)
+    check("пустое — пусто", KenjiCrash.uiSummary("   \n \n").isEmpty())
+
     println()
     println("passed=$passed failed=${failures.size}")
     failures.forEach { println("FAIL  $it") }

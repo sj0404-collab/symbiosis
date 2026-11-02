@@ -100,6 +100,7 @@ import org.yuzu.yuzu_emu.utils.CloudSync
 import org.yuzu.yuzu_emu.utils.ExitTrace
 import org.yuzu.yuzu_emu.utils.Log
 import org.yuzu.yuzu_emu.utils.NativeConfig
+import org.yuzu.yuzu_emu.utils.NativeSymbiosis
 import org.yuzu.yuzu_emu.utils.QuickPanel
 import org.yuzu.yuzu_emu.utils.NativeFreedrenoConfig
 import org.yuzu.yuzu_emu.utils.ViewUtils
@@ -1316,7 +1317,10 @@ class EmulationFragment : Fragment(), SurfaceHolder.Callback {
             IntSetting.RENDERER_RESOLUTION,
             R.array.rendererResolutionNames,
             R.array.rendererResolutionValues
-        ) { markQuickChange("resolution_setup") }
+        ) {
+            runCatching { NativeSymbiosis.setMainStep("настройки: разрешение") }
+            markQuickChange("resolution_setup")
+        }
 
         quickSettings.addIntSetting(
             R.string.renderer_vsync,
@@ -1324,7 +1328,10 @@ class EmulationFragment : Fragment(), SurfaceHolder.Callback {
             IntSetting.RENDERER_VSYNC,
             R.array.rendererVSyncNames,
             R.array.rendererVSyncValues
-        ) { markQuickChange("use_vsync") }
+        ) {
+            runCatching { NativeSymbiosis.setMainStep("настройки: vsync") }
+            markQuickChange("use_vsync")
+        }
 
         quickSettings.addDivider(container)
         container.addView(header("Звук", top = 0))
@@ -1353,9 +1360,9 @@ class EmulationFragment : Fragment(), SurfaceHolder.Callback {
                     if (!fromUser) return@addOnChangeListener
                     // set_byte у Eden требует байт: значение 0..100 в него
                     // влезает, но тип приводим явно, иначе подпись не сойдётся.
-                    runCatching { ByteSetting.AUDIO_VOLUME.setByte(value.toInt().toByte()) }
-                    runCatching { NativeConfig.saveGlobalConfig() }
-                    if (shouldUseCustom) runCatching { NativeConfig.savePerGameConfig() }
+                    applySetting("громкость") {
+                        ByteSetting.AUDIO_VOLUME.setByte(value.toInt().toByte())
+                    }
                 }
             },
             LinearLayout.LayoutParams(
@@ -1372,7 +1379,10 @@ class EmulationFragment : Fragment(), SurfaceHolder.Callback {
             IntSetting.AUDIO_OUTPUT_ENGINE,
             R.array.outputEngineEntries,
             R.array.outputEngineValues
-        ) { markQuickChange("output_engine") }
+        ) {
+            runCatching { NativeSymbiosis.setMainStep("настройки: движок вывода") }
+            markQuickChange("output_engine")
+        }
 
         // Буфер звука: чипы, а не поле ввода. Значений мало и они
         // осмысленные, а промахнуться пальцем по числу — легко.
@@ -1408,9 +1418,7 @@ class EmulationFragment : Fragment(), SurfaceHolder.Callback {
                 insetBottom = 0
                 paintBufferChip(this, currentAudioBufferMs() == ms)
                 setOnClickListener {
-                    runCatching { NativeConfig.setInt(QuickPanel.BUFFER_KEY, ms) }
-                    runCatching { NativeConfig.saveGlobalConfig() }
-                    if (shouldUseCustom) runCatching { NativeConfig.savePerGameConfig() }
+                    applySetting("буфер звука") { NativeConfig.setInt(QuickPanel.BUFFER_KEY, ms) }
                     // Только подсветка и подписи — без removeAllViews.
                     bufferButtons.forEach { (chipMs, chip) -> paintBufferChip(chip, chipMs == ms) }
                     bufferHint.text = QuickPanel.bufferHint(ms)
@@ -1470,6 +1478,34 @@ class EmulationFragment : Fragment(), SurfaceHolder.Callback {
     }
 
     /**
+     * Применить настройку и записать её на диск, отметив шаг для отчёта.
+     *
+     * ОДНО МЕСТО ВМЕСТО ПЯТИ. Раньше каждая кнопка панели сама звала
+     * `saveGlobalConfig`/`savePerGameConfig`, и падение на любой из них
+     * выглядело одинаково: «приложение остановлено», без единого указания,
+     * какой пункт его уронил. Теперь шаг пишется в нативный отчёт до вызова,
+     * а исключение не выходит наружу: пункт, который не смог примениться,
+     * пишет причину в журнал и не забирает с собой игру.
+     */
+    private fun applySetting(label: String, change: () -> Unit) {
+        runCatching { NativeSymbiosis.setMainStep("настройки: $label") }
+        val result = runCatching { change() }
+            .onFailure { Log.error("[Symbiosis] настройка «$label» не применилась: ${it.message}") }
+        if (result.isFailure) {
+            runCatching {
+                Toast.makeText(
+                    requireContext(),
+                    "«$label» не применилось: ${result.exceptionOrNull()?.message ?: "неизвестная причина"}",
+                    Toast.LENGTH_LONG
+                ).show()
+            }
+            return
+        }
+        runCatching { NativeConfig.saveGlobalConfig() }
+        if (shouldUseCustom) runCatching { NativeConfig.savePerGameConfig() }
+    }
+
+    /**
      * Запомнить, что пункт меняли: от этого зависит и подпись, и кнопка.
      *
      * Панель при этом НЕ пересобирается — см. [quickPanelRefresh].
@@ -1502,9 +1538,26 @@ class EmulationFragment : Fragment(), SurfaceHolder.Callback {
     /**
      * Перезапуск игры с сохранёнными настройками.
      *
-     * Настройки, которые ядро читает при запуске, иначе не применить: оно не
-     * перечитывает их на ходу. Порядок важен — сначала сохранить, потом
-     * закрыть: закрытие сбрасывает состояние настроек в ядре.
+     * ЧЕГО ЗДЕСЬ БОЛЬШЕ НЕТ И ПОЧЕМУ.
+     *
+     * Раньше здесь было `NativeLibrary.stopEmulation()`, `activity.finish()`,
+     * а затем `EmulationActivity.launch(...)`. На телефоне это выглядело так:
+     * нажал «Перезапустить игру» — выскочила ошибка и приложение ушло на
+     * рабочий стол или в лаунчер.
+     *
+     * Причина в том, что эти три вызова обходят штатную смену игры в Eden.
+     * `EmulationActivity` объявлен `singleTop` и умеет ровно это: новый intent
+     * на него приходит в `onNewIntent`, оттуда — в `handleSwapIntent`, который
+     * ОСТАНАВЛИВАЕТ сессию правильно (`stopForRomSwap`), ДОЖИДАЕТСЯ остановки
+     * потока эмуляции (`notifyWhenEmulationThreadStops`) и только потом
+     * запускает игру заново. Мы же закрывали активити руками и просили старт
+     * у уже закрывающейся — Android такой запуск выбрасывает, и человек
+     * оставался в лаунчере. А `stopEmulation()` в обход фрагмента оставлял
+     * поверхность и поток в состоянии, из которого следующий кадр ронял
+     * процесс.
+     *
+     * Теперь: сохранить настройки и попросить тот же экран перезапуститься.
+     * Всё остальное — забота Eden, у которого для этого уже есть код.
      */
     private fun restartGameWithSettings() {
         val target = game ?: return
@@ -1512,9 +1565,20 @@ class EmulationFragment : Fragment(), SurfaceHolder.Callback {
         runCatching { NativeConfig.saveGlobalConfig() }
         if (shouldUseCustom) runCatching { NativeConfig.savePerGameConfig() }
         quickChanges.clear()
-        runCatching { NativeLibrary.stopEmulation() }
-        activity.finish()
-        EmulationActivity.launch(activity, target)
+        runCatching { NativeSymbiosis.setMainStep("перезапуск игры") }
+        // Меню закрываем до перезапуска: экран перезапускается, и открытая
+        // панель поверх него — это лишний шанс на «Cannot perform this action
+        // after onSaveInstanceState».
+        runCatching { binding.drawerLayout.closeDrawer(binding.quickSettingsSheet) }
+        runCatching { EmulationActivity.launch(activity, target) }
+            .onFailure {
+                Log.error("[Symbiosis] перезапуск игры не удался: ${it.message}")
+                Toast.makeText(
+                    activity,
+                    "Не удалось перезапустить игру: ${it.message ?: "неизвестная причина"}",
+                    Toast.LENGTH_LONG
+                ).show()
+            }
     }
 
     private fun isFsrScalingFilterSelected(): Boolean {
