@@ -23,6 +23,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.yuzu.yuzu_emu.NativeLibrary
+import org.yuzu.yuzu_emu.utils.ExtraKeys
 import org.yuzu.yuzu_emu.R
 import org.yuzu.yuzu_emu.YuzuApplication
 import org.yuzu.yuzu_emu.databinding.FragmentKeysFirmwareBinding
@@ -105,7 +106,7 @@ class KeysFirmwareFragment : Fragment() {
         // видит никто — и файл жалуется на MissingTitlekey при рабочих
         // остальных играх.
         extraKeysReport = runCatching {
-            keysDir?.let { NativeSymbiosis.loadExtraKeys(it.absolutePath) }.orEmpty()
+            keysDir?.let { ExtraKeys.apply(it) { NativeLibrary.reloadKeys() } }.orEmpty()
         }.getOrDefault("")
 
         val keysPresent = runCatching { NativeLibrary.areKeysPresent() }.getOrDefault(false)

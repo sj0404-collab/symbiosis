@@ -64,7 +64,7 @@ import org.yuzu.yuzu_emu.utils.KenjiCrash
 import org.yuzu.yuzu_emu.utils.UiGuard
 import org.yuzu.yuzu_emu.utils.MemoryUtil
 import org.yuzu.yuzu_emu.utils.NativeConfig
-import org.yuzu.yuzu_emu.utils.NativeSymbiosis
+import org.yuzu.yuzu_emu.utils.ExtraKeys
 import org.yuzu.yuzu_emu.utils.DirectoryInitialization
 import org.yuzu.yuzu_emu.utils.NfcReader
 import org.yuzu.yuzu_emu.utils.ParamPackage
@@ -453,7 +453,7 @@ class EmulationActivity : AppCompatActivity(), SensorEventListener, InputManager
         runCatching {
             val dir = DirectoryInitialization.userDirectory?.let { File(it, "keys") } ?: return
             if (!dir.exists()) return
-            val report = NativeSymbiosis.loadExtraKeys(dir.absolutePath)
+            val report = ExtraKeys.apply(dir) { NativeLibrary.reloadKeys() }
             if (report.isNotBlank()) {
                 Log.info("[Symbiosis] ключи: $report")
             }

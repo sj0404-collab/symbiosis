@@ -202,6 +202,10 @@ if command -v kotlinc >/dev/null 2>&1; then
       # Разбор отчёта о падении второго ядра: файл пишет обработчик сигнала,
       # читает обычный код после смерти процесса.
       KenjiCrashTest) echo "$HERE/patch/android/utils/KenjiCrash.kt" ;;
+      # Дополнительные ключи: какая строка — ключ игры, что дописывать в
+      # prod.keys/title.keys, чего не перезаписывать. Ошибка здесь снова
+      # оставила бы «нет ключа для этой игры» без объяснения.
+      ExtraKeysTest) echo "$HERE/patch/android/utils/ExtraKeys.kt" ;;
       # Ровность кадров: почему «60 → 15 → 45 → 5» и когда виноват звук, а не
       # картинка. Чистая арифметика над рядами длительностей кадров.
       FramePacingTest) echo "$HERE/patch/android/utils/FramePacing.kt" ;;
