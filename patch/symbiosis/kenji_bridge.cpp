@@ -745,7 +745,14 @@ void NoteAbortCaller(void* return_address, void** frame_pointer) {
 
 // Экспортируется: имя обязано быть ровно `abort`, иначе поиск символа не
 // найдёт его. Видимость по умолчанию (не скрыта) — это важно.
-extern "C" __attribute__((visibility("default"), noinline, noreturn)) void abort() noexcept {
+//
+// БЕЗ `noexcept`. В bionic <stdlib.h> для C++ abort объявлен с nothrow, но
+// разбор спецификации исключений в этом объявлении и в нашем должен совпадать
+// буквально: сборка 41504168958 упала на
+//   exception specification in declaration does not match previous declaration.
+// Убрать `noexcept` — единственный правленый способ: Noreturn и так говорит
+// всё, что нужно вызывающему коду.
+extern "C" __attribute__((visibility("default"), noinline, noreturn)) void abort() {
     // Считаем вызовы, чтобы отличить «наш abort никто не позвал» от «позвали
     // один раз и это оно».
     if (g_abortHits < 100) {
