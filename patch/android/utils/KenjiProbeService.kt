@@ -146,13 +146,20 @@ class KenjiProbeService : Service() {
             // В отчёте о сигнале есть адреса, но нет текста. Текст исключения
             // .NET печатается в stderr ядра и перенаправлен в файл — это
             // буквально сообщение рантайма, поэтому оно идёт первым.
+            val saidFile = runCatching { KenjiBridge.stdioFile(context) }.getOrNull()
             val said = runCatching {
-                KenjiBridge.stdioFile(context).takeIf { it.isFile }?.readText()
+                saidFile?.takeIf { it.isFile }?.readText()
             }.getOrNull().orEmpty()
             val exception = KenjiCrash.exceptionLines(said)
             if (exception.isNotEmpty()) {
                 body.append("\n\nЧто сказало ядро перед остановкой:\n")
                 exception.forEach { body.append("• ").append(it.take(200)).append('\n') }
+            } else if (saidFile != null && saidFile.isFile) {
+                // Файл есть, а строк нет: значит ядро в stderr ничего не
+                // написало. Это факт, а не сбой чтения, и его надо назвать —
+                // иначе выглядит так, будто мы не посмотрели.
+                body.append("\n\nЯдро ничего не написало в свой вывод: файл ")
+                    .append(saidFile.name).append(" создан, но пуст.")
             }
 
             val own = captureLogcat()
@@ -164,7 +171,9 @@ class KenjiProbeService : Service() {
                 // Молчание хуже строки: человек думает, что отчёт неполный,
                 // и не знает, что журнала именно этого процесса нет.
                 body.append("\n\nЖурнала этого процесса нет: строки своего PID $ownPid")
-                    .append(" система не отдала. Это не ошибка приложения.")
+                    .append(" система не отдала. Это не ошибка приложения, но и не ")
+                    .append("подтверждение, что ядро промолчало: .NET-ядра печатают ")
+                    .append("исключение в журнал с меткой DOTNET.")
             }
             return body.toString().trim()
         }
@@ -172,30 +181,29 @@ class KenjiProbeService : Service() {
         /**
          * Последние строки журнала ЭТОГО процесса.
          *
-         * Раньше здесь стоял `logcat -d -t 400` без фильтра, и в отчёт попали
-         * строки PID 4628 при процессе 24319 — то есть чужое, уже закрытое
-         * падение. Читать такой журнал вредно: он объясняет не ту причину.
-         * Теперь `--pid`, а ниже — повторная фильтрация по колонке PID на
-         * случай, если система флаг не поддержала.
+         * Порядок попыток важен:
          *
-         * Отказ системы не ошибка: строк просто не будет, и об этом сказано
-         * человеку прямым текстом.
+         *  1. буфер крашеи (`crash`) — там лежит «Abort message» и строки
+         *     libc о причине остановки;
+         *  2. общий буфер — там ядро и рантайм печатают своё.
+         *
+         * Фильтр по PID — у нас, а не флагом `--pid`: на телефоне logcat этот
+         * флаг не принял, и вместо журнала в отчёт попадало «строк нет».
+         *
+         * Если после фильтра пусто — это не повод молчать: в отчёт идёт
+         * прямой строкой, что журнала своего процесса система не отдала.
          */
         private fun captureLogcat(): String = runCatching {
-            // СНАЧАЛА БУФЕР КРАШЕЙ, ПОТОМ ОБЩИЙ.
-            //
-            // Самое нужное сообщение при SIGABRT — «Abort message»: Android
-            // кладёт tombstone с текстом исключения именно в отдельный буфер
-            // `crash`. В общем буфере его уже нет — он вытесняется обычными
-            // строками за секунды, и в первом отчёте с устройства поэтому
-            // оказались только адреса. Два вызова, потому что порядок важен:
-            // без свободного места общий буфер вытеснил бы краш-строки.
-            // Только строки СВОЕГО процесса. Служба живёт в `:kenji`, значит
-            // myPid() — это PID упавшего ядра, а не лаунчера.
             val pid = android.os.Process.myPid()
-            val crash = read(*KenjiCrash.logcatArgs(pid, buffer = "crash").toTypedArray())
-            val main = read(*KenjiCrash.logcatArgs(pid).toTypedArray())
-            KenjiCrash.filterByPid(crash + "\n" + main, pid)
+            val crash = read(*KenjiCrash.logcatArgs(buffer = "crash", lines = 400).toTypedArray())
+            val main = read(*KenjiCrash.logcatArgs().toTypedArray())
+            val filtered = KenjiCrash.filterByPid(crash + "\n" + main, pid)
+            if (filtered.isNotEmpty()) return@runCatching filtered
+
+            // Второй заход: буферы могли смениться между вызовами, а на части
+            // прошивок `-b crash` закрыт и возвращает пустоту с ошибкой.
+            val again = read("logcat", "-d", "-v", "threadtime", "-t", "4000")
+            KenjiCrash.filterByPid(again, pid)
         }.getOrDefault("")
 
         /** Один вызов logcat. Ошибку не бросаем: журнала может не быть. */

@@ -43,12 +43,19 @@ HERE = Path(__file__).resolve().parent
 NCA_HEADER = 0x4000
 
 
-def nca_header(tag: int) -> bytes:
-    """0x4000 байт с магией NCA3 — то, что копируется в выходной файл как есть."""
+def nca_header(tag: int, size: int | None = None) -> bytes:
+    """0x4000 байт с магией NCA3 — то, что копируется в выходной файл как есть.
+
+    size — размер NCA, записанный по смещению 0x08. В настоящем заголовке он
+    есть всегда, и именно он, а не таблица секций, говорит, какой длины файл
+    должен получиться. Поэтому фикстуры с «коротким блоком» его заполняют.
+    """
     header = bytearray(NCA_HEADER)
     header[0:4] = b"NCA3"
     for i in range(0x10, NCA_HEADER):
         header[i] = (i * 7 + tag) & 0xFF
+    if size is not None:
+        struct.pack_into("<Q", header, 0x08, size)
     return bytes(header)
 
 
@@ -74,7 +81,8 @@ def aes_ctr(section: dict, plain: bytes, offset: int) -> bytes:
     return AES.new(section["key"], AES.MODE_CTR, counter=ctr).encrypt(plain)
 
 
-def ncz(header: bytes, sections: list, payload: bytes, block_exponent: int | None) -> bytes:
+def ncz(header: bytes, sections: list, payload: bytes, block_exponent: int | None,
+        declared: int | None = None) -> bytes:
     """Собирает .ncz: заголовок, таблицу секций и сжатое тело.
 
     block_exponent=None — solid-режим: один zstd-поток на всё тело.
@@ -101,7 +109,7 @@ def ncz(header: bytes, sections: list, payload: bytes, block_exponent: int | Non
         compressed.append(packed if len(packed) < len(b) else b)
     head = b"NCZBLOCK" + bytes([2, 1, 0, block_exponent])
     head += struct.pack("<I", len(blocks))
-    head += struct.pack("<Q", len(payload))
+    head += struct.pack("<Q", len(payload) if declared is None else declared)
     head += b"".join(struct.pack("<I", len(c)) for c in compressed)
     out += head
     out += b"".join(compressed)
@@ -209,6 +217,41 @@ def make_block() -> None:
     (HERE / "block_b.nca").write_bytes(expected_b)
 
 
+def make_short_block() -> None:
+    """Последний блок короче своего места — и это НЕ порча файла.
+
+    Ровно этот случай пришёл с телефона: «Block 306 unpacked to 409600 bytes
+    instead of 1048576». zstd распаковал блок без единой жалобы; короче
+    оказался сам блок, а таблица секций обещала больше, чем в файле лежит.
+    Проверять надо не размер блока, а итог: совпал ли он с размером NCA из
+    заголовка.
+    """
+    payload = body(0x100000 + 0x64000, compressible=True, seed=41)  # 1 МиБ + 400 КиБ
+    nca_size = NCA_HEADER + len(payload)
+    header = nca_header(43, size=nca_size)
+    # Таблица секций обещает на 400 КиБ больше, чем реально сжато.
+    section = {
+        "offset": NCA_HEADER,
+        "size": len(payload) + 0x64000,
+        "crypto": 1,
+        "key": b"\x00" * 16,
+        "counter": b"\x00" * 16,
+    }
+    # Заявлено ровно столько же, сколько в таблице секций, а блоков хватает
+    # на меньшее — как в файле с телефона.
+    packed = ncz(header, [section], payload, block_exponent=20,
+                 declared=len(payload) + 0x64000)
+    (HERE / "short.ncz").write_bytes(packed)
+    (HERE / "short.nca").write_bytes(header + payload)
+
+    # Тот же файл, но заголовок NCA врёт про размер: тогда конец потока
+    # ни с чем не совпадает и распаковка обязана отказаться.
+    lying = nca_header(44, size=nca_size + 0x400000)
+    (HERE / "short_bad.ncz").write_bytes(
+        ncz(lying, [section], payload, block_exponent=20, declared=len(payload) + 0x64000)
+    )
+
+
 def make_xcz() -> None:
     header_a = nca_header(21)
     plain_a = body(0x600, compressible=False, seed=31)
@@ -259,6 +302,7 @@ def make_xcz() -> None:
 if __name__ == "__main__":
     make_solid()
     make_block()
+    make_short_block()
     make_xcz()
     for f in sorted(HERE.iterdir()):
         if f.suffix in {".ncz", ".nsz", ".xcz", ".nca"}:

@@ -214,10 +214,13 @@ fun main() {
     //
     // В отчёте с устройства были строки PID 4628, а процесс имел 24319.
     // Такой журнал хуже пустого: он показывает чужую причину.
-    val args = KenjiCrash.logcatArgs(24319)
-    check("фильтр по pid в аргументах", args.any { it == "--pid=24319" }, args.toString())
-    check("буфер задаётся", KenjiCrash.logcatArgs(1, buffer = "crash").contains("crash"))
-    check("без буфера флага нет", !KenjiCrash.logcatArgs(1).contains("-b"))
+    val args = KenjiCrash.logcatArgs()
+    // --pid убран осознанно: на телефоне logcat его не принял, напечатал
+    // ошибку в поток ошибок, и весь журнал был отфильтрован как «чужой».
+    check("без --pid: фильтруем сами", args.none { it.startsWith("--pid") }, args.toString())
+    check("формат threadtime: в нём есть колонка PID", args.contains("threadtime"), args.toString())
+    check("буфер задаётся", KenjiCrash.logcatArgs(buffer = "crash").contains("crash"))
+    check("без буфера флага нет", !args.contains("-b"))
 
     val log = """
         05-01 19:04:11.001  4628  4650 I SymbiosisKenji: чужое прошлое падение
@@ -226,6 +229,19 @@ fun main() {
         05-01 19:04:13.000 24319 24360 E AndroidRuntime: наша ошибка
         05-01 19:04:14.000  4628  4650 I SymbiosisKenji: снова чужое
     """.trimIndent()
+    // brief — второй формат, которым отвечает logcat на части прошивок.
+    val brief = """
+        D/SymbiosisKenji( 4628): чужое прошлое падение
+        D/SymbiosisKenji(24319): наше сообщение
+        	at Our.Frame()
+        E/AndroidRuntime(24319): наша ошибка
+        D/SymbiosisKenji( 4628): снова чужое
+    """.trimIndent()
+    val briefKept = KenjiCrash.filterByPid(brief, 24319)
+    check("brief: своя строка осталась", briefKept.contains("наше сообщение"), briefKept)
+    check("brief: чужая отброшена", !briefKept.contains("чужое"), briefKept)
+    check("brief: продолжение своей строки", briefKept.contains("at Our.Frame"), briefKept)
+
     val kept = KenjiCrash.filterByPid(log, 24319)
     check("чужая строка отброшена", !kept.contains("чужое"), kept)
     check("своя строка осталась", kept.contains("наше сообщение"), kept)

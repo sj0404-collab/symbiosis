@@ -73,6 +73,12 @@ struct Section {
 
 struct Layout {
     std::array<u8, kNcaHeaderSize> header{};
+    /// Размер NCA, записанный в самом заголовке (смещение 0x08).
+    ///
+    /// Он не зависит от нашей таблицы секций, поэтому служит единственной
+    /// независимой проверкой: если распакованные данные кончаются ровно на
+    /// этом байте, файл целый, что бы ни заявляла таблица.
+    u64 nca_size{0};
     std::vector<Section> sections;
     u64 stream_offset{0};  ///< file offset of the first compressed byte
     u64 stream_origin{0};  ///< output offset the first compressed byte belongs to
@@ -82,6 +88,10 @@ struct Layout {
     u32 block_exponent{0};
     u32 block_count{0};
     std::vector<u32> block_sizes;
+    /// Заполняется после распаковки: сколько блоков прочитано и сколько из
+    /// них оказалось короче своего места. Нужно сообщению об ошибке.
+    std::size_t blocks_read{0};
+    std::size_t short_blocks{0};
 };
 
 /// Everything up to the compressed payload, validated.
@@ -94,6 +104,11 @@ bool ParseLayout(std::ifstream& in, u64 start, u64 available, Layout& layout, st
         error = "Could not read the NCA header.";
         return false;
     }
+    layout.nca_size = ReadU64(layout.header.data() + 8);
+    if (layout.nca_size <= kNcaHeaderSize || layout.nca_size > kMaxOutBytes) {
+        layout.nca_size = 0;   // заголовок без размера — не на что опереться
+    }
+
     char magic[8]{};
     if (!ReadAt(in, start + kNcaHeaderSize, magic, sizeof(magic)) ||
         std::memcmp(magic, kSectnMagic, sizeof(kSectnMagic) - 1) != 0) {
@@ -183,11 +198,17 @@ bool ParseLayout(std::ifstream& in, u64 start, u64 available, Layout& layout, st
                 " bytes, which the format does not allow.";
         return false;
     }
-    if (declared != layout.stream_length) {
+    if (declared > layout.stream_length) {
+        // Больше, чем есть в таблице секций, — противоречие: столько байт
+        // в файле просто не помещается по описанию самого файла.
         error = "NCZBLOCK promises " + std::to_string(declared) + " bytes but the section table "
                 "adds up to " + std::to_string(layout.stream_length) + ".";
         return false;
     }
+    // Меньше — обычное дело у чужих компрессоров: они пишут в NCZBLOCK
+    // столько, сколько реально сжали, а таблица секций считает с запасом.
+    // Сколько данных на самом деле есть, покажет сам поток, а судить будет
+    // размер NCA из заголовка.
     layout.block_sizes.resize(layout.block_count);
     if (!ReadAt(in, layout.stream_offset + 24, layout.block_sizes.data(),
                 layout.block_sizes.size() * sizeof(u32))) {
@@ -206,6 +227,15 @@ public:
 
     /// Fill @p want bytes unless the stream ends first.
     virtual bool Next(u8* buf, std::size_t want, std::size_t& got, std::string& error) = 0;
+
+    /// Поток кончился, ничего не сломав: блоков больше нет.
+    ///
+    /// Отличать это от ошибки обязательно. «Кончилось» может оказаться
+    /// целым файлом — если ровно там же кончается NCA по своему заголовку, —
+    /// а «испорчено» не может никогда.
+    virtual bool exhausted() const {
+        return false;
+    }
 
     u64 remaining() const {
         return remaining_;
@@ -229,7 +259,12 @@ public:
         want = static_cast<std::size_t>(std::min<u64>(want, remaining_));
         while (got < want) {
             if (block_pos_ >= block_.size() && !LoadNextBlock(error)) {
-                return false;
+                // ВАЖНО: уже скопированное не терять. Если блоков больше нет,
+                // а в буфер успела попасть часть, это не ошибка — отдаём
+                // сколько есть, и на следующем вызове скажем «кончилось».
+                // Раньше здесь стоял голый return false, и последние 400 КиБ
+                // файла молча пропадали: данных нет, а ошибки тоже.
+                return got > 0;
             }
             const std::size_t take =
                 std::min(want - got, static_cast<std::size_t>(block_.size() - block_pos_));
@@ -241,10 +276,27 @@ public:
         return true;
     }
 
+    /// Сколько блоков оказалось короче своего места. Нужно сообщению об
+    /// ошибке: один короткий блок в конце — обычная картина, много — признак
+    /// того, что таблица размеров прочитана неверно.
+    bool exhausted() const override {
+        return exhausted_;
+    }
+
+    std::size_t shortBlocks() const {
+        return short_blocks_;
+    }
+    std::size_t blocksRead() const {
+        return index_;
+    }
+    std::size_t blockCount() const {
+        return sizes_.size();
+    }
+
 private:
     bool LoadNextBlock(std::string& error) {
         if (index_ >= sizes_.size()) {
-            error = "The last NCZBLOCK was reached before the NCA was complete.";
+            exhausted_ = true;
             return false;
         }
         const u32 stored = sizes_[index_];
@@ -274,10 +326,27 @@ private:
                         ZSTD_getErrorName(got);
                 return false;
             }
-            if (got != expected) {
+            if (got > expected) {
+                // Больше, чем место блока, — это уже не «короче», а сдвиг
+                // таблицы: данные принадлежат другому месту.
                 error = "Block " + std::to_string(index_) + " unpacked to " +
-                        std::to_string(got) + " bytes instead of " + std::to_string(expected) + ".";
+                        std::to_string(got) + " bytes, more than the " +
+                        std::to_string(expected) + " it should hold.";
                 return false;
+            }
+            if (got < expected) {
+                // КОРОЧЕ — НЕ ЗНАЧИТ «ПОВРЕЖДЁН».
+                //
+                // Раньше здесь стояла ошибка «unpacked to 409600 instead of
+                // 1048576», и на ней отвергался годный файл: zstd распаковал
+                // блок без единой жалобы, просто содержимое блока оказалось
+                // короче полного размера блока. Так выглядит последний блок,
+                // когда заявленный общий размер больше того, что реально
+                // сжато. Ошибку решает не догадка о размере блока, а итог:
+                // сколько байт получилось и совпало ли это с размером NCA из
+                // заголовка (см. Decompress).
+                block_.resize(got);
+                ++short_blocks_;
             }
 #else
             error = "This build has no zstd decoder, so compressed blocks cannot be read.";
@@ -291,6 +360,8 @@ private:
 
     std::ifstream& in_;
     std::vector<u32> sizes_;
+    std::size_t short_blocks_{0};
+    bool exhausted_{false};
     u64 block_size_;
     u64 cursor_{0};
     std::size_t index_{0};
@@ -401,8 +472,14 @@ struct Region {
 };
 
 /// Output written from the stream, with the section encryption restored.
-bool CopyRegions(Pump& pump, std::ofstream& out, const Layout& layout, std::string& error) {
+///
+/// @param produced  сколько байт тела реально записано
+/// @param ended     поток кончился раньше, чем обещала таблица секций
+bool CopyRegions(Pump& pump, std::ofstream& out, const Layout& layout, std::string& error,
+                 u64& produced, bool& ended) {
     std::vector<u8> buf(static_cast<std::size_t>(std::min<u64>(kIoChunk, 1ULL << 20)));
+    produced = 0;
+    ended = false;
 
     // Bytes the stream holds for the part already written as the header.
     u64 skip = kNcaHeaderSize - std::min<u64>(layout.stream_origin, kNcaHeaderSize);
@@ -410,11 +487,15 @@ bool CopyRegions(Pump& pump, std::ofstream& out, const Layout& layout, std::stri
         const std::size_t want = static_cast<std::size_t>(std::min<u64>(skip, buf.size()));
         std::size_t got = 0;
         if (!pump.Next(buf.data(), want, got, error)) {
+            if (pump.exhausted()) {
+                ended = true;
+                return true;
+            }
             return false;
         }
         if (got == 0) {
-            error = "The compressed stream ended before the NCA header did.";
-            return false;
+            ended = true;
+            return true;
         }
         skip -= got;
     }
@@ -452,12 +533,17 @@ bool CopyRegions(Pump& pump, std::ofstream& out, const Layout& layout, std::stri
                 std::min<u64>(region.size - done, buf.size()));
             std::size_t got = 0;
             if (!pump.Next(buf.data(), want, got, error)) {
+                if (pump.exhausted()) {
+                    ended = true;
+                    return true;
+                }
                 return false;
             }
             if (got == 0) {
-                error = "The compressed stream ended " + std::to_string(region.size - done) +
-                        " bytes before the section table said it would.";
-                return false;
+                // Не решаем здесь: поток мог кончиться ровно на конце NCA.
+                // Это проверяет Decompress по размеру из заголовка NCA.
+                ended = true;
+                return true;
             }
             if (ctr != nullptr) {
                 ctr->Xor(region.offset + done, buf.data(), got);
@@ -468,6 +554,7 @@ bool CopyRegions(Pump& pump, std::ofstream& out, const Layout& layout, std::stri
                 return false;
             }
             done += got;
+            produced += got;
         }
     }
 
@@ -520,11 +607,46 @@ bool Decompress(std::ifstream& in, u64 start, u64 available,
     } else {
         pump = std::make_unique<SolidPump>(in, layout, start + available);
     }
-    if (!CopyRegions(*pump, out, layout, error)) {
+    u64 produced = 0;
+    bool ended = false;
+    if (!CopyRegions(*pump, out, layout, error, produced, ended)) {
         out.close();
         std::error_code ec;
         std::filesystem::remove(dest, ec);
         return false;
+    }
+    if (layout.block_mode) {
+        if (const auto* bp = dynamic_cast<const BlockPump*>(pump.get())) {
+            layout.blocks_read = bp->blocksRead();
+            layout.short_blocks = bp->shortBlocks();
+        }
+    }
+    if (ended) {
+        // Поток кончился раньше таблицы секций. Единственный честный судья
+        // здесь — размер NCA из самого заголовка: он не зависит от того, как
+        // мы прочитали таблицу. Совпал — файл целый, и спорить не о чем.
+        const u64 end = layout.stream_origin + produced;
+        if (layout.nca_size != 0 && end == layout.nca_size) {
+            LogInfo(LogArea::General,
+                    "NCZ: поток кончился на " + std::to_string(end) +
+                        " байт — это ровно размер NCA из заголовка, файл целый");
+        } else {
+            out.close();
+            std::error_code ec;
+            std::filesystem::remove(dest, ec);
+            std::string blocks;
+            if (layout.block_mode) {
+                blocks = " Блоков прочитано " + std::to_string(layout.block_count) +
+                         ", из них короче своего места " + std::to_string(layout.short_blocks) + ".";
+            }
+            error = "The compressed stream ended at " + std::to_string(end) + " of the " +
+                    std::to_string(layout.out_end) + " bytes the section table promises" +
+                    (layout.nca_size != 0
+                         ? " (NCA header says " + std::to_string(layout.nca_size) + ")."
+                         : ".") +
+                    blocks;
+            return false;
+        }
     }
     out.flush();
     if (!out) {

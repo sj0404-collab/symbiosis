@@ -239,7 +239,35 @@ int main() {
         }
     }
 
-    // 4. Обрезанный файл: ноль байт, понятная ошибка, мусор не остаётся.
+    // 4. Последний блок короче своего места. С телефона пришло «Block 306
+    //    unpacked to 409600 bytes instead of 1048576» — и это был годный
+    //    файл: zstd распаковал блок без ошибки, короче было его содержимое.
+    //    Судья здесь не размер блока, а размер NCA из заголовка.
+    {
+        const fs::path dst = work / "short.nca";
+        std::string error;
+        const u64 written = RomTools::Decompress((data / "short.ncz").string(), dst.string(), error);
+        Check(written > 0, "короткий последний блок распакован (" + error + ")");
+        CheckSame(ReadFile(dst), ReadFile(data / "short.nca"), "short.ncz -> short.nca");
+        if (written > 0 && fs::exists(dst)) {
+            Check(fs::file_size(dst) == ReadFile(data / "short.nca").size(),
+                  "короткий блок: длина файла равна размеру из заголовка NCA");
+        }
+    }
+
+    // 4b. Тот же файл, но конец потока не совпадает с размером NCA: отказ.
+    {
+        const fs::path dst = work / "short_bad.nca";
+        std::string error;
+        const u64 written =
+            RomTools::Decompress((data / "short_bad.ncz").string(), dst.string(), error);
+        Check(written == 0, "несовпадение с заголовком NCA — отказ");
+        Check(!error.empty() && error.find("ended at") != std::string::npos,
+              "отказ называет, где кончился поток: " + error);
+        Check(!fs::exists(dst), "после отказа не остаётся недописанного NCA");
+    }
+
+    // 5. Обрезанный файл: ноль байт, понятная ошибка, мусор не остаётся.
     {
         const Bytes full = ReadFile(data / "block.nsz");
         const fs::path broken = work / "broken.nsz";
