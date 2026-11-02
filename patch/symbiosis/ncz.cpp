@@ -228,6 +228,22 @@ public:
     /// Fill @p want bytes unless the stream ends first.
     virtual bool Next(u8* buf, std::size_t want, std::size_t& got, std::string& error) = 0;
 
+    /// Счётчики блоков для сообщения об ошибке. У solid-потока их нет —
+    /// поэтому по умолчанию нули.
+    ///
+    /// Виртуальные функции, а не dynamic_cast: Eden собирается с -fno-rtti, и
+    /// dynamic_cast там просто не компилируется (это и остановило сборку
+    /// 41387047290).
+    virtual std::size_t blocksRead() const {
+        return 0;
+    }
+    virtual std::size_t shortBlocks() const {
+        return 0;
+    }
+    virtual std::size_t blockCount() const {
+        return 0;
+    }
+
     /// Поток кончился, ничего не сломав: блоков больше нет.
     ///
     /// Отличать это от ошибки обязательно. «Кончилось» может оказаться
@@ -283,13 +299,13 @@ public:
         return exhausted_;
     }
 
-    std::size_t shortBlocks() const {
+    std::size_t shortBlocks() const override {
         return short_blocks_;
     }
-    std::size_t blocksRead() const {
+    std::size_t blocksRead() const override {
         return index_;
     }
-    std::size_t blockCount() const {
+    std::size_t blockCount() const override {
         return sizes_.size();
     }
 
@@ -615,12 +631,8 @@ bool Decompress(std::ifstream& in, u64 start, u64 available,
         std::filesystem::remove(dest, ec);
         return false;
     }
-    if (layout.block_mode) {
-        if (const auto* bp = dynamic_cast<const BlockPump*>(pump.get())) {
-            layout.blocks_read = bp->blocksRead();
-            layout.short_blocks = bp->shortBlocks();
-        }
-    }
+    layout.blocks_read = pump->blocksRead();
+    layout.short_blocks = pump->shortBlocks();
     if (ended) {
         // Поток кончился раньше таблицы секций. Единственный честный судья
         // здесь — размер NCA из самого заголовка: он не зависит от того, как

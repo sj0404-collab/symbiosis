@@ -98,7 +98,11 @@ for f in "$HERE"/tests/t_*.cpp; do
   n=$(basename "$f" .cpp)
   # shellcheck disable=SC2046
   # shellcheck disable=SC2086
-  if g++ -std=c++20 -O1 $FMT_FLAGS $ZSTD_FLAGS -I"$E/src" -o "$BUILD/$n" "$f" $(deps_for "$n") \
+  # -fno-rtti — как в сборке Eden. Без него тест на хосте собирается, а CI
+  # падает на `use of dynamic_cast requires -frtti` через двадцать пять минут
+  # (сборка 41387047290). Флаг в тестах, а не в коде, потому что проверять
+  # надо именно ту конфигурацию, в которой код поедет на телефон.
+  if g++ -std=c++20 -fno-rtti -O1 $FMT_FLAGS $ZSTD_FLAGS -I"$E/src" -o "$BUILD/$n" "$f" $(deps_for "$n") \
        $LINK_FMT $ZSTD_LIBS > "$BUILD/$n.err" 2>&1; then
     # Тестам NSZ нужны файлы-образцы; путь передаётся явно, чтобы бинарник
     # работал и запущенный из любой папки.
