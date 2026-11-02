@@ -300,6 +300,84 @@ fun main() {
     check("кадры Java тоже", briefJava.contains("Handler.dispatchMessage"), briefJava)
     check("пустое — пусто", KenjiCrash.uiSummary("   \n \n").isEmpty())
 
+    // ── вывод ядра без знакомых слов ───────────────────────────────────
+    //
+    // С устройства пришёл случай, ради которого это и написано: файл вывода
+    // создан, строки в нём есть, но ни одна не похожа на «Unhandled
+    // exception». Отбор выбрасывал всё, и окно говорило «ядро ничего не
+    // написало» — причина падения терялась в фильтре, а не в отсутствии
+    // текста. Теперь последние строки показываются как есть.
+    // Ни одного слова из списка отбора — ни «exception», ни «fatal»: именно
+    // такой текст и терялся.
+    val foreign = """
+        Some native runtime said this before stopping
+        runtime trap at 0x2e5300005a55
+        extra trailer
+    """.trimIndent()
+    val fallback = KenjiCrash.consoleLines(foreign)
+    check("незнакомый текст не теряется", fallback.any { it.contains("runtime trap") },
+        fallback.toString())
+    check("хвост сохранён", fallback.last() == "extra trailer", fallback.toString())
+    check("лимит соблюдён и здесь",
+        KenjiCrash.consoleLines(foreign, limit = 1).size == 1,
+        KenjiCrash.consoleLines(foreign, limit = 1).toString())
+    check("пустой файл — пусто", KenjiCrash.consoleLines("").isEmpty())
+    check("пробелы не считаются строками", KenjiCrash.consoleLines("  \n\t\n").isEmpty())
+    check("знакомое по-прежнему отбирается по смыслу",
+        KenjiCrash.consoleLines(stderr).any { it.contains("DllNotFoundException") },
+        KenjiCrash.consoleLines(stderr).toString())
+    check("шум снова отброшен",
+        KenjiCrash.consoleLines(stderr).none { it.contains("core loaded") },
+        KenjiCrash.consoleLines(stderr).toString())
+
+    // ── снимок системы (tombstone) ─────────────────────────────────────
+    //
+    // Это единственное место, где есть «Abort message» — текст, с которым
+    // процесс остановил себя сам. Заголовок tombstone места не заслуживает.
+    val tombstone = """
+        *** *** *** *** *** *** *** *** *** *** *** *** *** *** *** ***
+        Build fingerprint: 'itel/S666LN/S666LN:13/TP1A.220624.014/eng.2025:user/release-keys'
+        Cmdline: org.yuzu.yuzu_emu:kenji
+        Abort message: 'Fatal error. Invalid Program: attempted to call a UnmanagedCallersOnly method from managed code.'
+        backtrace:
+            #00 pc 00000000000530f4  /apex/com.android.runtime/lib64/bionic/libc.so (abort+164)
+            #01 pc 000000000173c214  /data/app/~~x/lib/arm64/libkenji.so (javaInitialize+0x1c0)
+    """.trimIndent()
+    val shot = KenjiCrash.tombstoneLines(tombstone)
+    check("начинается с Abort message", shot.first().contains("Abort message"), shot.toString())
+    check("причина внутри", shot.any { it.contains("UnmanagedCallersOnly") }, shot.toString())
+    check("кадры с функциями", shot.any { it.contains("javaInitialize") }, shot.toString())
+    check("служебная шапка отброшена",
+        shot.none { it.contains("*** *** ***") || it.startsWith("Cmdline:") }, shot.toString())
+    check("лимит снимка", KenjiCrash.tombstoneLines(tombstone, limit = 2).size == 2,
+        KenjiCrash.tombstoneLines(tombstone, limit = 2).toString())
+    check("пустой снимок — пусто", KenjiCrash.tombstoneLines("").isEmpty())
+    // Снимок без Abort message (обычный выход процесса) не должен пропадать.
+    val quiet = KenjiCrash.tombstoneLines("reason: 1\nsome line")
+    check("снимок без abort сохранён", quiet.isNotEmpty(), quiet.toString())
+
+    // ── формулировки самого рантайма .NET ──────────────────────────────
+    //
+    // NativeAOT пишет «Process terminated. …» и «Fatal error. Invalid Program:
+    // …». Ни одного из этих слов не было в отборе, поэтому сообщение
+    // выбрасывалось ещё до показа. Теперь они — часть отбора, а не повод для
+    // запасного пути.
+    check("Process terminated узнаётся",
+        KenjiCrash.exceptionLines("Process terminated. Something went wrong")
+            .any { it.contains("Process terminated") },
+        KenjiCrash.exceptionLines("Process terminated. Something went wrong").toString())
+    check("Fatal error узнаётся",
+        KenjiCrash.exceptionLines("Fatal error. Invalid Program: attempted to call a method")
+            .any { it.contains("Invalid Program") },
+        KenjiCrash.exceptionLines("Fatal error. Invalid Program: attempted").toString())
+
+    // Хвост журнала без отбора: нужен, когда знакомых слов нет вовсе.
+    val journal = (1..20).joinToString("\n") { "05-02 14:09:58.10$it  23125  23125 I K: строка $it" }
+    val tail = KenjiCrash.tailLines(journal, limit = 3)
+    eq("хвост журнала — три строки", tail.size, 3)
+    check("в хвосте самые последние", tail.last().endsWith("строка 20"), tail.toString())
+    eq("пустой журнал — пустой хвост", KenjiCrash.tailLines(""), emptyList<String>())
+
     println()
     println("passed=$passed failed=${failures.size}")
     failures.forEach { println("FAIL  $it") }

@@ -893,6 +893,106 @@ u64 RomTools::Decompress(const std::string& source, const std::string& destinati
     return 0;
 }
 
+std::string RomTools::DescribeContainer(const std::string& path) {
+    std::ifstream in{path, std::ios::binary};
+    if (!in) {
+        return "файл не открывается";
+    }
+
+    u32 magic = 0;
+    u32 count = 0;
+    u32 str_size = 0;
+    if (!ReadAt(in, 0, &magic, 4) || magic != kPfs0Magic) {
+        return "это не NSP: метки PFS0 в начале нет";
+    }
+    if (!ReadAt(in, 4, &count, 4) || !ReadAt(in, 8, &str_size, 4)) {
+        return "оглавление NSP не читается";
+    }
+    if (count == 0 || count > kMaxPfsFiles || str_size > (1u << 20)) {
+        return "оглавление NSP неправдоподобно: записей " + std::to_string(count);
+    }
+
+    std::vector<char> names(str_size + 1, 0);
+    const u64 names_off = 16 + static_cast<u64>(count) * 24;
+    if (str_size > 0 && !ReadAt(in, names_off, names.data(), str_size)) {
+        return "таблица имён NSP обрезана";
+    }
+    const u64 data_off = names_off + str_size;
+
+    // EndsWithInsensitive knows only four-character extensions, and ".cnmt.nca"
+    // is nine: it silently returned false for every CNMT file, so a perfectly
+    // good container was described as having none. Hence a local comparison
+    // that takes the suffix as it is.
+    const auto ends_with = [](const std::string& name, const std::string& suffix) {
+        if (name.size() < suffix.size()) {
+            return false;
+        }
+        for (std::size_t i = 0; i < suffix.size(); ++i) {
+            const auto have =
+                static_cast<unsigned char>(name[name.size() - suffix.size() + i]);
+            if (std::tolower(have) != static_cast<unsigned char>(suffix[i])) {
+                return false;
+            }
+        }
+        return true;
+    };
+
+    std::vector<std::string> listed;
+    std::string first_bad;
+    bool has_cnmt = false;
+
+    for (u32 i = 0; i < count; ++i) {
+        const u64 entry = 16 + static_cast<u64>(i) * 24;
+        u64 offset = 0;
+        u64 size = 0;
+        u32 name_off = 0;
+        if (!ReadAt(in, entry, &offset, 8) || !ReadAt(in, entry + 8, &size, 8) ||
+            !ReadAt(in, entry + 16, &name_off, 4) || name_off >= str_size) {
+            return "запись оглавления NSP обрезана";
+        }
+        const std::string name{names.data() + name_off};
+        listed.push_back(name + " (" + std::to_string(size / kMiB) + " МиБ)");
+
+        if (ends_with(name, ".cnmt.nca")) {
+            has_cnmt = true;
+        }
+        // NCA header magic sits at 0x200, not at 0: the first 0x200 bytes are
+        // the key area. Checking it is how "the unpacker wrote something that
+        // is not an NCA" is told apart from "the keys are missing".
+        if (ends_with(name, ".nca") && first_bad.empty()) {
+            u32 nca_magic = 0;
+            if (!ReadAt(in, data_off + offset + 0x200, &nca_magic, 4) ||
+                (nca_magic != kNca3Magic && nca_magic != kNca2Magic)) {
+                first_bad = name;
+            }
+        }
+    }
+
+    std::string what;
+    for (std::size_t i = 0; i < listed.size() && i < 6; ++i) {
+        if (i > 0) what += ", ";
+        what += listed[i];
+    }
+    if (listed.size() > 6) {
+        what += " и ещё " + std::to_string(listed.size() - 6);
+    }
+
+    if (!first_bad.empty()) {
+        return "внутри " + what + "; файл " + first_bad +
+               " не похож на NCA (нет метки NCA3 по смещению 0x200). Это ошибка "
+               "распаковки, а не ключей: сжатые данные записаны как есть или "
+               "недописаны.";
+    }
+    if (!has_cnmt) {
+        return "внутри " + what + ", но файла *.cnmt.nca нет. Ядро узнаёт игру только "
+               "по нему: без CNMT контейнер не считается игрой, даже когда сами NCA "
+               "на месте.";
+    }
+    return "внутри " + what + "; CNMT и NCA на месте, оглавление целое. Значит причина "
+           "не в сборке контейнера, а в содержимом - чаще всего нет title key этой "
+           "игры в prod.keys.";
+}
+
 std::string RomTools::CompressionNote() {
     return "NSZ / XCZ / NCZ:\\n\\n"
            "The Converter tab decompresses these into NSP or NCA. The compressed "

@@ -91,6 +91,25 @@ public:
     [[nodiscard]] static DumpReport Inspect(const std::string& path);
 
     /**
+     * @brief Why the emulator would refuse this container, in words.
+     *
+     * Eden's launch check is not "does the file open" but "does it hold an
+     * application program": the NSP parser walks the CNMT inside the container
+     * and only after that has an Application/Program entry to point at. A file
+     * can therefore pass ReadProgramId and still be refused, with nothing said
+     * about the reason - which is exactly what the device showed ("ядро не
+     * принимает этот файл").
+     *
+     * This walks the container by hand, without keys, and names the first
+     * structural thing that is missing or wrong. Empty result means the layout
+     * is sound and the reason is in the data, not in the file list.
+     *
+     * The sentence is Russian because it goes straight into the UI through
+     * NativeSymbiosis.diagnoseRom; nothing else calls it.
+     */
+    [[nodiscard]] static std::string DescribeContainer(const std::string& path);
+
+    /**
      * @brief Removes trailing padding from an XCI in place.
      *
      * Only ever shortens the file, and only to the boundary the header itself

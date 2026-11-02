@@ -14,6 +14,7 @@ import android.os.Looper
 import android.os.Message
 import android.os.Messenger
 import android.os.Process
+import java.io.File
 
 /**
  * Loads and starts the Kenji core in a SEPARATE PROCESS.
@@ -156,16 +157,39 @@ class KenjiProbeService : Service() {
             val said = runCatching {
                 saidFile?.takeIf { it.isFile }?.readText()
             }.getOrNull().orEmpty()
-            val exception = KenjiCrash.exceptionLines(said)
+            // consoleLines, а не exceptionLines: отбор по знакомым словам
+            // выбросил сообщение, не похожее на «Unhandled exception», и окно
+            // сказало «ядро молчит» при непустом файле. Теперь если отбор пуст,
+            // показываются последние строки как есть.
+            val exception = KenjiCrash.consoleLines(said)
             if (exception.isNotEmpty()) {
                 body.append("\n\nЧто сказало ядро перед остановкой:\n")
-                exception.forEach { body.append("• ").append(it.take(200)).append('\n') }
+                exception.forEach { body.append("• ").append(it).append('\n') }
             } else if (saidFile != null && saidFile.isFile) {
                 // Файл есть, а строк нет: значит ядро в stderr ничего не
                 // написало. Это факт, а не сбой чтения, и его надо назвать —
                 // иначе выглядит так, будто мы не посмотрели.
                 body.append("\n\nЯдро ничего не написало в свой вывод: файл ")
                     .append(saidFile.name).append(" создан, но пуст.")
+            } else {
+                body.append("\n\nФайла вывода ядра нет: перенаправление не сработало.")
+            }
+
+            // Второй, независимый источник: снимок, который ведёт система.
+            // Именно там лежит «Abort message» — текст, с которым процесс сам
+            // себя остановил, и кадры, уже сопоставленные с функциями.
+            val exit = runCatching { SysExit.read(context) }.getOrNull()
+            val exitText = SysExit.describe(exit)
+            if (exitText.isNotEmpty()) {
+                body.append("\n\n").append(exitText)
+                // Файл рядом с отчётом: снимок системы живёт в памяти
+                // недолго, а разбирать его удобнее с компьютера.
+                if (exit != null && exit.tombstone.isNotBlank()) {
+                    runCatching {
+                        KenjiBridge.crashReportFile(context).parentFile
+                            ?.let { File(it, "kenji-exit.txt").writeText(exit.tombstone) }
+                    }
+                }
             }
 
             val own = captureLogcat(fallenPid)
@@ -174,9 +198,15 @@ class KenjiProbeService : Service() {
                 body.append("\n\nИз журнала системы (только процесс ядра, PID $fallenPid):\n")
                 lines.forEach { body.append("• ").append(it.take(160)).append('\n') }
             } else if (exception.isEmpty()) {
-                // Молчание хуже строки: человек думает, что отчёт неполный, и
-                // не знает, что журнала именно этого процесса нет.
-                if (fallenPid == null) {
+                // Отбор не нашёл знакомых слов, но журнал этого процесса есть.
+                // Показываем его хвост как есть: причина падения всегда
+                // последняя, и она может быть сформулирована незнакомо.
+                // Молчание в этом случае — потеря единственной улики.
+                val tail = KenjiCrash.tailLines(own, limit = 12)
+                if (tail.isNotEmpty()) {
+                    body.append("\n\nХвост журнала процесса $fallenPid (без отбора):\n")
+                    tail.forEach { body.append("• ").append(it).append('\n') }
+                } else if (fallenPid == null) {
                     body.append("\n\nPID упавшего процесса не записан: журнал не с чем сверить.")
                         .append(" Это ошибка нашей сборки, а не устройства.")
                 } else {

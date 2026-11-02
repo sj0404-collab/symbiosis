@@ -517,6 +517,29 @@ Java_org_yuzu_yuzu_1emu_utils_NativeSymbiosis_diagnoseRom(JNIEnv* env, jobject,
     u64 program_id = 0;
     const auto status = loader->ReadProgramId(program_id);
     if (status == Loader::ResultStatus::Success) {
+        // А вот здесь прошлая проверка расходилась с настоящей.
+        //
+        // getIsValid (game_metadata.cpp:239) требует больше, чем ReadProgramId:
+        // для NSP и XCI он дополнительно зовёт IsBootableGameContainer, а тот
+        // ищет внутри NCA с ролью Application/Program. Файл с целым
+        // оглавлением, но без такого NCA проходил первую проверку, падал на
+        // второй — и в шторке оставалось «ядро не принимает этот файл» без
+        // причины. Ровно это и случилось с распакованным NSP на устройстве.
+        const auto file_type = loader->GetFileType();
+        if (Loader::IsContainerType(file_type) &&
+            !Loader::IsBootableGameContainer(file, file_type)) {
+            std::string why;
+            if (Symbiosis::RomTools::DetectFormat(path) == Symbiosis::DumpFormat::Nsp) {
+                why = Symbiosis::RomTools::DescribeContainer(path);
+            } else {
+                why = "внутри нет NCA с программой игры: вероятно, это обновление "
+                      "или DLC, а не сама игра";
+            }
+            if (why.empty()) {
+                why = "оглавление целое, но программу игры ядро внутри не нашло";
+            }
+            return Common::Android::ToJString(env, "not_bootable|" + why);
+        }
         return Common::Android::ToJString(env, "ok|файл читается");
     }
 

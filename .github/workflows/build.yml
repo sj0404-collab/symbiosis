@@ -334,7 +334,9 @@ jobs:
           # «Что сказало ядро» без файла stderr не покажет ничего, поэтому
           # проверяются оба имени.
           for text in "kenji-stdout.txt" "ui-crash.txt" "kenji-pid.txt" \
+                      "kenji-exit.txt" \
                       "Что сказало ядро перед остановкой" \
+                      "Что записала система о конце процесса" \
                       "Прошлый запуск остановился"; do
             if grep -qa "$text" /tmp/x/classes*.dex; then
               echo "  ok   \"$text\" in dex"

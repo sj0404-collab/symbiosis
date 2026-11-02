@@ -299,6 +299,70 @@ object KenjiCrash {
     }
 
     /**
+     * Всё, что ядро успело сказать в свой вывод — без потерь.
+     *
+     * ПОЧЕМУ НЕ ОДИН [exceptionLines]. Отбор по знакомым словам спасает от
+     * шума, но молча теряет сообщение, если рантайм сформулировал его иначе.
+     * С устройства пришёл ровно такой случай: причины не нашлось ни в
+     * журнале, ни в отборе, и окно сказало «ядро ничего не написало», хотя
+     * файл вывода существовал. Причина падения осталась неизвестной из-за
+     * фильтра, а не из-за отсутствия текста.
+     *
+     * Поэтому: если отбор пуст, показываются последние строки файла как есть.
+     * Пустой список возможен только для пустого файла — это факт, а не сбой.
+     */
+    fun consoleLines(dump: String, limit: Int = 12): List<String> {
+        val picked = exceptionLines(dump, limit)
+        if (picked.isNotEmpty()) return picked
+        return tailLines(dump, limit)
+    }
+
+    /**
+     * Последние непустые строки текста, как есть.
+     *
+     * Нужны там, где отбор по словам неуместен: например, когда смотреть надо
+     * на самый конец журнала процесса — причина всегда последняя, а знакомых
+     * слов в ней может не быть вовсе.
+     */
+    fun tailLines(text: String, limit: Int = 12): List<String> = text.lineSequence()
+        .map { it.trim().trimEnd('\r') }
+        .filter { it.isNotEmpty() }
+        .map { it.take(300) }
+        .toList()
+        .takeLast(limit)
+
+    /**
+     * Строки снимка аварийного завершения, который ведёт сама система.
+     *
+     * ЧЕГО НЕТ В НАШИХ ФАЙЛАХ. Наш обработчик сигнала пишет номер, адрес и
+     * кадры, но не текст, с которым процесс сам себя остановил. Его пишет
+     * libc в «Abort message», и система складывает это в tombstone, который
+     * приложению отдаётся через ApplicationExitInfo. Там же кадры уже
+     * сопоставлены с функциями библиотек — по ним видно, ЧТО вызвало abort().
+     *
+     * Начинаем с «Abort message», если он есть: остальное — уже следствие.
+     */
+    fun tombstoneLines(tombstone: String, limit: Int = 14): List<String> {
+        val lines = tombstone.lineSequence()
+            .map { it.trimEnd().trimEnd('\r') }
+            .filter { it.isNotBlank() }
+            .toList()
+        if (lines.isEmpty()) return emptyList()
+
+        // Заголовок tombstone (*** *** *** и Cmdline) занимает место и ничего
+        // не объясняет — начинаем с первого содержательного места.
+        val start = lines.indexOfFirst { line ->
+            val low = line.lowercase()
+            low.contains("abort message") || low.contains("backtrace:")
+        }.takeIf { it >= 0 } ?: 0
+
+        return lines.drop(start)
+            .filterNot { it.contains("*** *** ***") || it.startsWith("Cmdline:") }
+            .map { it.take(220) }
+            .take(limit)
+    }
+
+    /**
      * Текст, который рантайм ядра сказал в stderr перед abort().
      *
      * Берём не весь файл — там бывает шум самого ядра. Оставляем строки про
@@ -308,7 +372,12 @@ object KenjiCrash {
     fun exceptionLines(stderrDump: String, limit: Int = 10): List<String> {
         val marks = listOf(
             "unhandled exception", "exception:", "system.", "failfast",
-            "--- end of", "abort"
+            "--- end of", "abort",
+            // Так формулирует остановку сам рантайм .NET (NativeAOT): «Process
+            // terminated. …», «Fatal error. Invalid Program: …». Без этих слов
+            // его сообщение не попадало в отбор, и причина падения оставалась
+            // неизвестной, хотя текст был написан.
+            "process terminated", "fatal error", "invalid program", "assertion"
         )
         val kept = stderrDump.lineSequence()
             .map { it.trim().trimEnd('\r') }
