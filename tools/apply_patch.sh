@@ -154,11 +154,18 @@ if ! grep -q "symbiosis_kenji" "$CM"; then
   cat >> "$CM" <<'CMAKE'
 
 # ── Kenji-NX bridge ────────────────────────────────────────────────
-add_library(symbiosis_kenji SHARED symbiosis_kenji_bridge.cpp)
+# got_patch.cpp компилируется в каждый мост отдельно: эти цели не линкуются с
+# common, и первая попытка взять функцию оттуда дала на сборке 41516674210
+#   ld.lld: error: undefined symbol: Symbiosis::PatchImport(void const*, char const*, void*)
+add_library(symbiosis_kenji SHARED symbiosis_kenji_bridge.cpp
+    ../../../../../common/symbiosis/got_patch.cpp)
+target_include_directories(symbiosis_kenji PRIVATE ../../../../..)
 target_link_libraries(symbiosis_kenji PRIVATE log dl android)
 
 # The name the core itself looks for.
-add_library(kenjinxjni SHARED symbiosis_kenji_bridge.cpp)
+add_library(kenjinxjni SHARED symbiosis_kenji_bridge.cpp
+    ../../../../../common/symbiosis/got_patch.cpp)
+target_include_directories(kenjinxjni PRIVATE ../../../../..)
 target_link_libraries(kenjinxjni PRIVATE log dl android)
 CMAKE
   echo "  added the Kenji bridge to jni/CMakeLists.txt"
