@@ -41,6 +41,16 @@ object KenjiCrash {
         val debugBreaks: List<Int>,
         /** Регистры аргументов в момент падения, как их записал обработчик. */
         val registers: String = "",
+        /**
+         * Кто позвал abort() — адрес возврата из перехватчика abort.
+         *
+         * Это единственный кадр, который называет ВИНОВНИКА, а не механизм:
+         * обработчик сигнала видит уже libc, а перехватчик получает
+         * управление раньше, на целом стеке.
+         */
+        val abortCaller: String = "",
+        /** Кадры, снятые от перехватчика abort, — выше виновника. */
+        val abortFrames: List<String> = emptyList(),
     ) {
         val isEmpty: Boolean get() = frames.isEmpty() && signal == 0 && debugBreaks.isEmpty()
     }
@@ -59,6 +69,8 @@ object KenjiCrash {
         var signalName = ""
         var address = ""
         var registers = ""
+        var abortCaller = ""
+        val abortFrames = mutableListOf<String>()
         val frames = mutableListOf<String>()
         val breaks = mutableListOf<Int>()
 
@@ -90,10 +102,20 @@ object KenjiCrash {
                 // Не кадры, поэтому отдельным полем: по ним видно, с чем
                 // именно ядро не справилось.
                 line.startsWith("regs ") -> registers = line.removePrefix("regs ").trim()
+
+                // abort-caller=libkenji.so+0x173c214 — кто потребовал
+                // остановку. Пишет перехватчик abort, до входа в libc, поэтому
+                // стек ещё цел и адрес возврата настоящий.
+                line.startsWith("abort-caller=") ->
+                    abortCaller = line.removePrefix("abort-caller=").trim()
+
+                line.startsWith("abort-pc=") ->
+                    abortFrames.add(line.removePrefix("abort-pc=").trim())
             }
         }
 
-        val report = Report(step, signal, signalName, address, frames, breaks, registers)
+        val report = Report(step, signal, signalName, address, frames, breaks, registers,
+            abortCaller, abortFrames)
         return if (report.isEmpty) null else report
     }
 
@@ -125,9 +147,23 @@ object KenjiCrash {
             builder.append("• адрес: ").append(report.address).append('\n')
         }
         if (report.frames.isNotEmpty()) {
-            builder.append("• верхние кадры: ")
-            builder.append(report.frames.take(3).joinToString(" → "))
+            // Больше трёх: виновник часто четвёртый-пятый, а первые три —
+            // libc и точка остановки. Показывали три, и вызывающего не было
+            // видно ни разу.
+            builder.append("• кадры: ")
+            builder.append(report.frames.take(8).joinToString(" → "))
+            if (report.frames.size > 8) {
+                builder.append(" → … ещё ").append(report.frames.size - 8)
+            }
             builder.append('\n')
+        }
+        if (report.abortCaller.isNotBlank()) {
+            builder.append("• abort() позвал кадр: ").append(report.abortCaller).append('\n')
+            if (report.abortFrames.isNotEmpty()) {
+                builder.append("• выше него: ")
+                builder.append(report.abortFrames.take(6).joinToString(" → "))
+                builder.append('\n')
+            }
         }
         if (report.registers.isNotBlank()) {
             builder.append("• регистры: ").append(report.registers).append('\n')
@@ -151,6 +187,29 @@ object KenjiCrash {
      * всего лишь был в стеке. Ответ даёт первый настоящий кадр.
      */
     fun verdict(report: Report): String {
+        // Если перехватчик abort сработал — виновник назван адресом возврата.
+        // Это точнее любого рассуждения по кадрам сигнала, поэтому идёт первым.
+        if (report.abortCaller.isNotBlank()) {
+            val where = if (report.abortCaller.contains("libkenji")) {
+                "внутри файла ядра"
+            } else {
+                "в кадре ${report.abortCaller}"
+            }
+            // Нулевой кадр цепочки повторяет сам адрес возврата, а следующий —
+            // место, откуда позвали функцию, вызвавшую abort(). Именно он и
+            // отвечает на вопрос «где в ядре»: первый адрес почти всегда внутри
+            // крошечной общей функции, через которую проходят все фатальные
+            // ошибки ядра, и сам по себе ничего не говорит.
+            val above = report.abortFrames.drop(1).firstOrNull { it.isNotBlank() }
+            return "Остановку потребовал код $where (адрес возврата " +
+                report.abortCaller + ")." +
+                (if (above != null) " Место вызова — $above." else "") +
+                " Это не сбой памяти и не нехватка памяти: ядро само решило " +
+                "прекратить работу.\n\n" +
+                "Что сделать: приложите этот отчёт — по адресу видно, какая " +
+                "проверка в ядре не прошла, и её можно обойти на нашей стороне."
+        }
+
         // libc и [vdso] — это не виновник, а механизм: abort() живёт в libc и
         // вызывает raise(), поэтому при SIGABRT два верхних кадра всегда
         // системные. Считать виновником первый попавшийся кадр значило бы

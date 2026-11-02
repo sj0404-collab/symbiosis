@@ -1719,7 +1719,7 @@ diff --git a/src/common/settings.h b/src/common/settings.h
 index e10f5105a1..cc213e099e 100644
 --- a/src/common/settings.h
 +++ b/src/common/settings.h
-@@ -459,6 +459,110 @@ struct Values {
+@@ -459,6 +459,118 @@ struct Values {
                                                              "accelerate_astc",
                                                              Category::RendererAdvanced};
  
@@ -1780,6 +1780,14 @@ index e10f5105a1..cc213e099e 100644
 +    // не даёт, но и не рвётся. 10 - ровно как было.
 +    SwitchableSetting<u32, true> symbiosis_audio_buffer_ms{
 +        linkage, 20, 10, 100, "symbiosis_audio_buffer_ms", Category::RendererAdvanced};
++
++    // --- Symbiosis: audio sample rate ------------------------------------
++    // Частота, с которой просим открыть поток. 0 - по умолчанию: «как решит
++    // драйвер», то есть поток открывается на родной частоте телефона и
++    // пересчитывать нечего. 48000 - родная частота Switch; 44100 - для
++    // телефонов, которые упрямо работают на ней.
++    SwitchableSetting<u32, true> symbiosis_audio_rate{
++        linkage, 0, 0, 96000, "symbiosis_audio_rate", Category::RendererAdvanced};
 +
 +    // --- Symbiosis: logging ----------------------------------------------
 +    // Verbose tracing of every layer decision. Off by default: it is genuinely
@@ -2590,7 +2598,7 @@ diff --git a/src/audio_core/sink/oboe_sink.cpp b/src/audio_core/sink/oboe_sink.c
 +u32 SymbiosisAudioBufferFrames() {
 +    const u32 millis = Settings::values.symbiosis_audio_buffer_ms.GetValue();
 +    const u32 clamped = millis < 10 ? 10 : (millis > 100 ? 100 : millis);
-+    return static_cast<u32>(TargetSampleRate) * clamped / 1000;
++    return SymbiosisEffectiveRate() * clamped / 1000;
 +}
 +
 +} // namespace

@@ -28,6 +28,7 @@ import org.yuzu.yuzu_emu.YuzuApplication
 import org.yuzu.yuzu_emu.databinding.FragmentKeysFirmwareBinding
 import org.yuzu.yuzu_emu.utils.DirectoryInitialization
 import org.yuzu.yuzu_emu.utils.FileUtil
+import org.yuzu.yuzu_emu.utils.NativeSymbiosis
 
 /**
  * Dedicated screen for encryption keys and firmware.
@@ -39,6 +40,9 @@ import org.yuzu.yuzu_emu.utils.FileUtil
 class KeysFirmwareFragment : Fragment() {
     private var _binding: FragmentKeysFirmwareBinding? = null
     private val binding get() = _binding!!
+
+    /** Отчёт о дополнительных файлах ключей; пересчитывается при входе. */
+    private var extraKeysReport: String = ""
 
     private val keysDir: File?
         get() = DirectoryInitialization.userDirectory?.let { File(it, "keys") }
@@ -96,6 +100,14 @@ class KeysFirmwareFragment : Fragment() {
     }
 
     private fun refreshStatus() {
+        // Подхватить всё, что лежит в папке ключей, а не только prod.keys и
+        // title.keys: ключ одной игры, положенный отдельным файлом, иначе не
+        // видит никто — и файл жалуется на MissingTitlekey при рабочих
+        // остальных играх.
+        extraKeysReport = runCatching {
+            keysDir?.let { NativeSymbiosis.loadExtraKeys(it.absolutePath) }.orEmpty()
+        }.getOrDefault("")
+
         val keysPresent = runCatching { NativeLibrary.areKeysPresent() }.getOrDefault(false)
         binding.textKeysStatus.text = if (keysPresent) {
             getString(R.string.keys_installed_ok)
@@ -211,6 +223,10 @@ class KeysFirmwareFragment : Fragment() {
                     sb.append('\n')
                 }
             }
+        }
+
+        if (extraKeysReport.isNotBlank()) {
+            sb.append("\n").append(extraKeysReport)
         }
 
         // Anything else the user dropped in, so stray/misnamed files are visible.

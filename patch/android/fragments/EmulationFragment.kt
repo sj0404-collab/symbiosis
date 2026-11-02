@@ -93,6 +93,7 @@ import org.yuzu.yuzu_emu.utils.DirectoryInitialization
 import org.yuzu.yuzu_emu.utils.FileUtil
 import org.yuzu.yuzu_emu.utils.GameCardMeta
 import org.yuzu.yuzu_emu.utils.GameHelper
+import org.yuzu.yuzu_emu.utils.LastGame
 import org.yuzu.yuzu_emu.utils.GameIconUtils
 import org.yuzu.yuzu_emu.utils.GpuDriverHelper
 import org.yuzu.yuzu_emu.utils.InputHandler
@@ -290,7 +291,15 @@ class EmulationFragment : Fragment(), SurfaceHolder.Callback {
      */
     private fun finishGameSetup() {
         try {
-            val gameToUse = args.game ?: intentGame
+            // Третий источник игры — файл с путём последней запущенной.
+            //
+            // Первые два (аргументы навигации и data интента) не всегда
+            // доезжают: при перезапуске экран переиспользуется, и объект игры
+            // может не восстановиться. Без третьего источника экран закрывал
+            // себя — снаружи это «перезапустил, а оно вышло из игры».
+            // Путь пишется до запуска, файл на месте, и объект собирается по
+            // нему заново тем же GameHelper.
+            val gameToUse = args.game ?: intentGame ?: lastGameFromDisk()
 
             if (gameToUse == null) {
                 Log.error("[EmulationFragment] No game found in arguments or intent")
@@ -301,6 +310,11 @@ class EmulationFragment : Fragment(), SurfaceHolder.Callback {
                 ).show()
                 requireActivity().finish()
                 return
+            }
+
+            // Запомнить игру, чтобы следующий перезапуск её не потерял.
+            runCatching {
+                LastGame.save(lastGameFile(requireContext()), gameToUse.path)
             }
 
             game = gameToUse
@@ -1384,6 +1398,75 @@ class EmulationFragment : Fragment(), SurfaceHolder.Callback {
             markQuickChange("output_engine")
         }
 
+        // Частота звука: три варианта, у каждого — следствие словами.
+        //
+        // Почему она перед буфером: при жалобе «шумы и хрип в музыке» первым
+        // подозреваемым оказался пересчёт частоты, а не размер буфера. Человек
+        // поднимает буфер, ничего не меняется — потому что дело было не в нём.
+        container.addView(header("Частота звука"))
+        val rateHint = hint(QuickPanel.rateHint(currentAudioRate()))
+        container.addView(rateHint)
+        val rateButtons = mutableListOf<Pair<Int, com.google.android.material.button.MaterialButton>>()
+        fun paintRateChip(button: com.google.android.material.button.MaterialButton, selected: Boolean) {
+            button.backgroundTintList = android.content.res.ColorStateList.valueOf(
+                if (selected) primaryColor else surfaceColor
+            )
+            button.setTextColor(if (selected) 0xFF0E1116.toInt() else dimColor)
+        }
+        val rateChips = LinearLayout(ctx).apply {
+            orientation = LinearLayout.HORIZONTAL
+            setPadding(0, spacing, 0, 0)
+        }
+        QuickPanel.rateChoices.forEach { rate ->
+            val button = com.google.android.material.button.MaterialButton(ctx).apply {
+                text = if (rate == 0) "авто" else "$rate Гц"
+                textSize = 13f
+                isAllCaps = false
+                cornerRadius = spacing
+                minWidth = 0
+                minimumWidth = 0
+                insetTop = 0
+                insetBottom = 0
+                paintRateChip(this, currentAudioRate() == rate)
+                setOnClickListener {
+                    applySetting("частота звука") { NativeConfig.setInt(QuickPanel.RATE_KEY, rate) }
+                    rateButtons.forEach { (chipRate, chip) -> paintRateChip(chip, chipRate == rate) }
+                    rateHint.text = QuickPanel.rateHint(rate)
+                    markQuickChange(QuickPanel.RATE_KEY)
+                }
+            }
+            rateButtons.add(rate to button)
+            rateChips.addView(
+                button,
+                LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.WRAP_CONTENT,
+                    LinearLayout.LayoutParams.WRAP_CONTENT
+                ).apply { rightMargin = spacing }
+            )
+        }
+        container.addView(
+            HorizontalScrollView(ctx).apply {
+                isHorizontalScrollBarEnabled = false
+                addView(rateChips)
+            }
+        )
+        container.addView(badge(entryOf("symbiosis_audio_rate")))
+
+        // Замеры звука: цифры из работающего потока.
+        //
+        // Это ответ на «применил настройку — не помогло». Здесь видно, дошла
+        // ли настройка до драйвера: какая частота пришла, сколько кадров в
+        // буфере, сколько раз буфер кончился. Если цифры те же, что были, —
+        // настройка не применилась; если изменились, а хрип остался — дело не
+        // в ней.
+        val audioMeasure = TextView(ctx).apply {
+            textSize = 12f
+            setTextColor(dimColor)
+            setPadding(0, spacing, 0, 0)
+        }
+        runCatching { audioMeasure.text = audioMeasurementText() }
+        container.addView(audioMeasure)
+
         // Буфер звука: чипы, а не поле ввода. Значений мало и они
         // осмысленные, а промахнуться пальцем по числу — легко.
         container.addView(header("Буфер звука"))
@@ -1531,6 +1614,32 @@ class EmulationFragment : Fragment(), SurfaceHolder.Callback {
         return 0xFFA6B2C4.toInt()
     }
 
+    /** Частота звука, выбранная сейчас. 0 — «как решит драйвер», это и есть умолчание. */
+    private fun currentAudioRate(): Int =
+        runCatching { NativeConfig.getInt(QuickPanel.RATE_KEY, false) }.getOrDefault(0)
+
+    /**
+     * Замеры звука одной строкой для панели.
+     *
+     * Источник — работающий поток, а не настройки: именно поэтому по строке
+     * видно, применилась ли настройка. Пусто, если поток ещё не открывался.
+     */
+    private fun audioMeasurementText(): String {
+        val raw = runCatching { NativeSymbiosis.getAudioReport() }.getOrNull().orEmpty()
+        if (raw.isBlank()) return ""
+        val parts = raw.split('|')
+        val summary = parts.lastOrNull().orEmpty()
+        if (summary.isBlank()) return ""
+        val requested = parts.getOrNull(0)?.toIntOrNull() ?: 0
+        val device = parts.getOrNull(1)?.toIntOrNull() ?: 0
+        val buffer = parts.getOrNull(3)?.toIntOrNull() ?: 0
+        val xruns = parts.getOrNull(6)?.toIntOrNull() ?: 0
+        val asked = if (requested == 0) "частоту выбирал драйвер" else "просили $requested Гц"
+        val measured = "Сейчас: $asked, телефон дал $device Гц, буфер $buffer кадров, " +
+            "опустошений $xruns."
+        return measured + "\n" + summary
+    }
+
     private fun currentAudioBufferMs(): Int =
         runCatching { NativeConfig.getInt(QuickPanel.BUFFER_KEY, false) }
             .getOrDefault(20).let { if (it <= 0) 20 else it }
@@ -1580,6 +1689,21 @@ class EmulationFragment : Fragment(), SurfaceHolder.Callback {
                 ).show()
             }
     }
+
+    /** Файл с путём последней запущенной игры. */
+    private fun lastGameFile(context: android.content.Context) =
+        java.io.File(java.io.File(context.getExternalFilesDir(null), "kenji"), "last-game.txt")
+
+    /**
+     * Собрать игру по записанному пути.
+     *
+     * Тихо возвращает null, если записи нет или файл уже удалён: подсказка не
+     * должна превращаться в ошибку, которую человек не может исправить.
+     */
+    private fun lastGameFromDisk(): Game? = runCatching {
+        val path = LastGame.load(lastGameFile(requireContext())) ?: return@runCatching null
+        GameHelper.getGame(Uri.parse(path), false)
+    }.getOrNull()
 
     private fun isFsrScalingFilterSelected(): Boolean {
         val fsrFilterValue = resolveFsrScalingFilterValue() ?: return false

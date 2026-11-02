@@ -84,6 +84,7 @@ deps_for() {
     t_nsz)          echo "$S/rom_tools.cpp $S/ncz.cpp $S/aes128.cpp $CORE" ;;
     t_save)         echo "$S/save_guard.cpp $S/thermal_monitor.cpp $CORE" ;;
     t_guard)        echo "$CORE" ;;
+    t_audio)        echo "$S/audio_metrics.cpp $CORE" ;;
     t_modes)        echo "$S/auto_modes.cpp $S/device_profiles.cpp $SETTINGS $CORE" ;;
     t_uaf)          echo "$S/memory_governor.cpp $CORE" ;;
     t_v12)          echo "$S/device_profiles.cpp $S/auto_modes.cpp $SETTINGS $CORE" ;;

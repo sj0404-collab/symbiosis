@@ -62,6 +62,24 @@ object NativeSymbiosis {
      */
     external fun diagnoseRom(path: String): String
 
+    /**
+     * Живые замеры звука: «просили|получили|каналы|буфер|ёмкость|порция|
+     * опустошения|вызовы|драйвер|ошибка|объяснение».
+     *
+     * Нужны, чтобы отличить «настройка применилась и не помогла» от
+     * «настройка не применилась вовсе». На слух эти два случая неразличимы.
+     */
+    external fun getAudioReport(): String
+
+    /**
+     * Подхватить дополнительные файлы ключей из папки keys.
+     *
+     * Ядро читает ровно prod.keys и title.keys. Ключ одной игры, положенный
+     * отдельным файлом, раньше не видел никто — отсюда «ключ есть, а игра его
+     * не видит». Возвращает отчёт словами; пусто — дополнительных файлов нет.
+     */
+    external fun loadExtraKeys(keysDir: String): String
+
     /** The sentence half of [diagnoseRom], or null when the file is fine. */
     fun romProblem(path: String): String? = runCatching {
         val raw = diagnoseRom(path)

@@ -658,6 +658,142 @@ JNIEXPORT void setCurrentTransform(long native_window, int transform) {
 
 namespace {
 
+
+// ── перехват abort() ────────────────────────────────────────────────
+//
+// ЗАЧЕМ. Ядро останавливается через abort(), и остановка эта тихая: функция,
+// которая её требует, ничего не печатает. Обработчик сигнала видит уже libc —
+// в отчёте с устройства регистры были x1=0x60bc (номер потока), x2=6 (сигнал),
+// то есть аргументы tgkill, а не аргументы вызывающего. Вызывающий кадр так не
+// получить.
+//
+//   Свой abort() получает управление ДО libc, на нормальном стеке. В этот
+// момент адрес возврата в регистре x30 — и есть тот, кто потребовал
+// остановку. Его и записываем, вместе с цепочкой кадров, которую здесь можно
+// пройти надёжно: стек ещё цел, мы не в обработчике сигнала.
+//
+// КАК ПОПАСТЬ В ЧУЖУЮ ТАБЛИЦУ СИМВОЛОВ. libkenji.so ищет abort при загрузке.
+// Чтобы он нашёл наш, наша библиотека должна быть в глобальной области
+// видимости символов к этому моменту. Своя загрузка (System.loadLibrary) этого
+// не даёт, поэтому библиотека переоткрывается с RTLD_GLOBAL|RTLD_NOLOAD —
+// эта пара не загружает её заново, а только поднимает уже загруженную в
+// глобальную область. Если система отказала, всё остаётся как было: ядро
+// получит обычный abort и тихий отчёт, но ничего не сломается.
+//
+// ПОЧЕМУ ЭТО НЕ ОПАСНО. Наш abort ничего не решает и не пытается «спасти»
+// процесс: он пишет строку и вызывает настоящий abort через dlsym(RTLD_NEXT).
+// Поведение остаётся ровно тем же, добавляется только запись.
+namespace {
+
+using AbortFn = void (*)();
+AbortFn g_realAbort = nullptr;
+int g_abortHits = 0;
+
+/** Настоящий abort из libc: первый после нас в порядке поиска. */
+AbortFn RealAbort() {
+    if (g_realAbort == nullptr) {
+        dlerror();
+        g_realAbort = reinterpret_cast<AbortFn>(dlsym(RTLD_NEXT, "abort"));
+        if (g_realAbort == nullptr) {
+            g_realAbort = reinterpret_cast<AbortFn>(dlsym(RTLD_DEFAULT, "abort"));
+        }
+    }
+    return g_realAbort;
+}
+
+/** Записать вызывающего и цепочку кадров в файл отчёта. */
+void NoteAbortCaller(void* return_address, void** frame_pointer) {
+    const int fd = OpenCrashFile();
+    if (fd < 0) return;
+
+    // Вызывающий — с именем библиотеки и смещением, а не голым адресом:
+    // абсолютный адрес после ASLR сам по себе ничего не значит, а
+    // `libkenji.so+0x…` можно сверить с файлом на компьютере.
+    char line[200];
+    Dl_info info{};
+    if (::dladdr(return_address, &info) != 0 && info.dli_fname != nullptr) {
+        const char* slash = ::strrchr(info.dli_fname, '/');
+        const int n = ::snprintf(
+            line, sizeof(line), "abort-caller=%s+0x%lx\n", slash ? slash + 1 : info.dli_fname,
+            static_cast<unsigned long>(reinterpret_cast<uintptr_t>(return_address) -
+                                       reinterpret_cast<uintptr_t>(info.dli_fbase)));
+        if (n > 0) ::write(fd, line, static_cast<size_t>(n));
+    } else {
+        const int n = ::snprintf(line, sizeof(line), "abort-caller=0x%lx\n",
+                                 static_cast<unsigned long>(
+                                     reinterpret_cast<uintptr_t>(return_address)));
+        if (n > 0) ::write(fd, line, static_cast<size_t>(n));
+    }
+
+    // Цепочка x29 от нашего кадра: стек цел, каждый кадр настоящий.
+    auto frame = reinterpret_cast<uintptr_t*>(frame_pointer);
+    for (int i = 0; i < 12 && frame != nullptr; ++i) {
+        const uintptr_t next = frame[0];
+        const uintptr_t ret = frame[1];
+        if (ret != 0) {
+            const int wn = ::snprintf(line, sizeof(line), "abort-pc=%p\n",
+                                      reinterpret_cast<void*>(ret));
+            if (wn > 0) ::write(fd, line, static_cast<size_t>(wn));
+        }
+        if (next <= reinterpret_cast<uintptr_t>(frame)) break;
+        frame = reinterpret_cast<uintptr_t*>(next);
+    }
+    ::close(fd);
+}
+
+} // namespace
+
+// Экспортируется: имя обязано быть ровно `abort`, иначе поиск символа не
+// найдёт его. Видимость по умолчанию (не скрыта) — это важно.
+extern "C" __attribute__((visibility("default"), noinline, noreturn)) void abort() noexcept {
+    // Считаем вызовы, чтобы отличить «наш abort никто не позвал» от «позвали
+    // один раз и это оно».
+    if (g_abortHits < 100) {
+        ++g_abortHits;
+    }
+    NoteAbortCaller(__builtin_return_address(0),
+                    reinterpret_cast<void**>(__builtin_frame_address(0)));
+
+    if (AbortFn real = RealAbort()) {
+        real();
+    }
+    // Настоящего abort нет — значит мы в очень раннем окружении. Не
+    // возвращаемся: возврат из abort оставил бы процесс в неизвестном
+    // состоянии и упал бы где-то ещё.
+    ::_exit(134);   // 128 + SIGABRT
+}
+
+/** Адрес обёртки abort — для проверки, что она видна глобально. */
+AbortFn SymbiosisAbortWrapper();
+
+AbortFn SymbiosisAbortWrapper() {
+    return reinterpret_cast<AbortFn>(reinterpret_cast<void*>(&::abort));
+}
+
+/**
+ * Поднять нашу библиотеку в глобальную область символов.
+ *
+ * Вызывается один раз, до загрузки ядра. Если не удалось — возвращает false,
+ * и это нормальный исход: перехват просто не состоится.
+ */
+bool PromoteToGlobalScope() {
+    // Имя берём из самого загрузчика: dladdr по адресу своей же функции.
+    Dl_info self{};
+    if (::dladdr(reinterpret_cast<void*>(&PromoteToGlobalScope), &self) == 0 ||
+        self.dli_fname == nullptr) {
+        return false;
+    }
+    void* handle = ::dlopen(self.dli_fname, RTLD_NOW | RTLD_GLOBAL | RTLD_NOLOAD);
+    if (handle == nullptr) {
+        return false;
+    }
+    // Проверяем результат, а не факт вызова: символ виден только если
+    // библиотека действительно попала в глобальную область. Сравниваем с
+    // адресом обёртки, объявленной ниже, а не с именем: у abort есть ещё и
+    // std-объявление, и сравнение по имени компилятор понимает по-разному.
+    return ::dlsym(RTLD_DEFAULT, "abort") == reinterpret_cast<void*>(SymbiosisAbortWrapper());
+}
+
 // ── loading, carefully ──────────────────────────────────────────────
 
 // Every exported name the core is known to have, as read from its dynamic
@@ -752,6 +888,18 @@ Java_org_yuzu_yuzu_1emu_utils_KenjiBridge_nativeLoad(JNIEnv* env, jobject, jstri
     const char* path = env->GetStringUTFChars(jpath, nullptr);
     if (path == nullptr) {
         return env->NewStringUTF("путь к ядру пуст");
+    }
+
+    // Перехват abort() должен быть виден ДО загрузки ядра: символы чужой
+    // библиотеки ищутся в глобальной области в момент её открытия, и позже
+    // этого уже не исправить.
+    const bool promoted = PromoteToGlobalScope();
+    LOGI("abort interposer: %s", promoted ? "active" : "not active");
+    if (g_crashPath[0] != '\0') {
+        char line[96];
+        const int n = ::snprintf(line, sizeof(line), "abort interposer: %s\n",
+                                 promoted ? "активен" : "не активен");
+        if (n > 0) AppendCrashLine(line);
     }
 
     // RTLD_NOW, not RTLD_LAZY. Lazy binding defers the failure to the first

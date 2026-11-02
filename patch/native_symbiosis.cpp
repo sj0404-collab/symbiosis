@@ -11,6 +11,10 @@
 #include <csignal>
 #include <cstdio>
 #include <cstring>
+#include <algorithm>
+#include <cctype>
+#include <filesystem>
+#include <fstream>
 #include <string>
 #include <vector>
 
@@ -38,6 +42,7 @@
 #include "common/symbiosis/auto_modes.h"
 #include "common/symbiosis/firmware_vault.h"
 #include "common/symbiosis/game_catalogue.h"
+#include "common/symbiosis/audio_metrics.h"
 #include "common/symbiosis/rom_tools.h"
 #include "common/symbiosis/settings_audit.h"
 #include "common/symbiosis/frame_metrics.h"
@@ -571,6 +576,27 @@ Java_org_yuzu_yuzu_1emu_utils_NativeSymbiosis_diagnoseRom(JNIEnv* env, jobject,
                         why += std::to_string(static_cast<int>(nca->GetType()));
                         why += ", ";
                         why += Loader::GetResultStatusString(status);
+
+                        // Rights id и наличие title key — то, чего не хватает
+                        // для расшифровки. Без этой пары «MissingTitlekey»
+                        // ничего не говорит: непонятно, какого ключа нет и
+                        // есть ли он вообще в загруженных файлах.
+                        const auto rights = nca->GetRightsId();
+                        if (rights != FileSys::RightsId{}) {
+                            std::string rid;
+                            for (const u8 byte : rights) {
+                                static const char* digits = "0123456789abcdef";
+                                rid.push_back(digits[byte >> 4]);
+                                rid.push_back(digits[byte & 0xF]);
+                            }
+                            u128 rid_u128{};
+                            std::memcpy(rid_u128.data(), rights.data(), rights.size());
+                            const bool has_title_key = Core::Crypto::KeyManager::Instance().HasKey(
+                                Core::Crypto::S128KeyType::Titlekey, rid_u128[1], rid_u128[0]);
+                            why += ", rights ";
+                            why += rid;
+                            why += has_title_key ? ", title key ЕСТЬ" : ", title key НЕТ";
+                        }
                         why += "] ";
                     }
                 }
@@ -580,6 +606,9 @@ Java_org_yuzu_yuzu_1emu_utils_NativeSymbiosis_diagnoseRom(JNIEnv* env, jobject,
             if (!any) {
                 why += "ядро не смогло прочитать из контейнера ни одного NCA.";
             }
+            why += "  Дополнительные файлы ключей (любые *.keys и *.txt в папке keys и в";
+            why += " keys/extra) подхватываются автоматически - так можно доложить";
+            why += " title key для одной игры, не трогая prod.keys.";
             why += "  Если у NCA стоит MissingTitlekey - нужен title key этой игры:";
             why += " в контейнере его нет, а ключом подписи (header key) содержимое";
             why += " не открывается, потому что оно дополнительно зашифровано";
@@ -642,6 +671,151 @@ Java_org_yuzu_yuzu_1emu_utils_NativeSymbiosis_diagnoseRom(JNIEnv* env, jobject,
     } catch (...) {
         return Common::Android::ToJString(env, "corrupt|файл не читается");
     }
+}
+
+/**
+ * Подхватить ВСЕ файлы ключей, а не только prod.keys и title.keys.
+ *
+ * ЗАЧЕМ. Ядро загружает ровно четыре имени (`prod.keys`, `title.keys`,
+ * `console.keys`, `dev.keys`). Если title key нужной игры лежит отдельным
+ * файлом — а так и бывает, когда ключ достают из тикета одной игры, — он не
+ * читается, и файл жалуется на MissingTitlekey при том, что остальные игры
+ * идут. Человек видит «ключ есть, а игра его не видит» и не понимает почему.
+ *
+ * Здесь просматриваются папка keys и keys/extra: каждый *.keys и *.txt
+ * загружается. Вид файла (ключи консоли или title keys) определяется по
+ * содержимому, а не по имени: у title keys слева стоит 32 шестнадцатеричных
+ * знака прав, у остальных — имя вроде `header_key`.
+ *
+ * Ничего не перезаписывает поверх уже загруженного: LoadFromFile кладёт в ту
+ * же карту, а совпадающие имена получают последнее значение — то есть
+ * дополнительный файл может уточнить ключ, но не может испортить остальные.
+ *
+ * Возвращает отчёт для человека: сколько файлов прочитано, сколько строк
+ * дало ключи и сколько не распознано. Пустой отчёт — значит дополнительных
+ * файлов нет.
+ */
+JNIEXPORT jstring JNICALL
+Java_org_yuzu_yuzu_1emu_utils_NativeSymbiosis_loadExtraKeys(JNIEnv* env, jobject,
+                                                           jstring j_dir) {
+    const std::string base = Common::Android::GetJString(env, j_dir);
+    std::string report;
+    int files = 0;
+    int title_keys = 0;
+    int other_keys = 0;
+    try {
+        std::error_code ec;
+        std::vector<std::filesystem::path> dirs{std::filesystem::path(base)};
+        dirs.emplace_back(std::filesystem::path(base) / "extra");
+
+        const auto looks_like_title_keys = [](const std::filesystem::path& file) {
+            std::ifstream in{file};
+            if (!in) return false;
+            std::string line;
+            int hex_lines = 0;
+            int named_lines = 0;
+            while (std::getline(in, line) && hex_lines + named_lines < 8) {
+                const auto eq = line.find('=');
+                if (eq == std::string::npos) continue;
+                std::string left = line.substr(0, eq);
+                left.erase(std::remove_if(left.begin(), left.end(),
+                                          [](unsigned char c) { return std::isspace(c); }),
+                           left.end());
+                if (left.empty() || left[0] == '#') continue;
+                const bool hex32 =
+                    left.size() == 32 &&
+                    std::all_of(left.begin(), left.end(),
+                                [](unsigned char c) { return std::isxdigit(c) != 0; });
+                if (hex32) {
+                    ++hex_lines;
+                } else {
+                    ++named_lines;
+                }
+            }
+            return hex_lines > 0 && hex_lines >= named_lines;
+        };
+
+        for (const auto& dir : dirs) {
+            if (!std::filesystem::is_directory(dir, ec)) {
+                continue;
+            }
+            for (const auto& entry : std::filesystem::directory_iterator(dir, ec)) {
+                if (!entry.is_regular_file(ec)) continue;
+                const auto ext = entry.path().extension().string();
+                if (ext != ".keys" && ext != ".txt") continue;
+                const auto name = entry.path().filename().string();
+                // Уже загружаемые ядром имена пропускаем: их читает оно само,
+                // и второй проход только сбил бы счёт.
+                if (name == "prod.keys" || name == "title.keys" || name == "console.keys" ||
+                    name == "dev.keys" || name == "prod.keys_autogenerated" ||
+                    name == "title.keys_autogenerated" ||
+                    name == "console.keys_autogenerated" ||
+                    name == "dev.keys_autogenerated") {
+                    continue;
+                }
+                const bool as_title = looks_like_title_keys(entry.path());
+                Core::Crypto::KeyManager::Instance().LoadFromFile(entry.path(), as_title);
+                ++files;
+                if (as_title) {
+                    ++title_keys;
+                } else {
+                    ++other_keys;
+                }
+                report += "• " + name + (as_title ? " — title keys" : " — ключи консоли") + "\n";
+            }
+        }
+    } catch (const std::exception& e) {
+        report += std::string("ошибка чтения папки ключей: ") + e.what() + "\n";
+    } catch (...) {
+        report += "ошибка чтения папки ключей\n";
+    }
+
+    if (files == 0) {
+        return Common::Android::ToJString(env, "");
+    }
+    report = "Дополнительные файлы ключей: " + std::to_string(files) +
+             " (title keys: " + std::to_string(title_keys) +
+             ", ключей консоли: " + std::to_string(other_keys) + ")\n" + report;
+    return Common::Android::ToJString(env, report);
+}
+
+/**
+ * Живые замеры звука: цифры и их объяснение.
+ *
+ * ЗАЧЕМ ОТДЕЛЬНЫЙ ВЫЗОВ. «Любую настройку применю — не помогает» нельзя ни
+ * подтвердить, ни опровергнуть на слух. Здесь возвращаются числа: какая
+ * частота запрошена, какая пришла от драйвера, сколько кадров в буфере
+ * реально, сколько раз буфер успел кончиться. По ним видно, применилась ли
+ * настройка вообще.
+ *
+ * Формат: value|value|...|summary|advice — как у остальных снимков слоя.
+ */
+JNIEXPORT jstring JNICALL
+Java_org_yuzu_yuzu_1emu_utils_NativeSymbiosis_getAudioReport(JNIEnv* env, jobject) {
+    const auto report = Symbiosis::GetAudioReport();
+    std::string out;
+    out += std::to_string(report.requested_rate);
+    out += '|';
+    out += std::to_string(report.device_rate);
+    out += '|';
+    out += std::to_string(report.channels);
+    out += '|';
+    out += std::to_string(report.buffer_frames);
+    out += '|';
+    out += std::to_string(report.capacity_frames);
+    out += '|';
+    out += std::to_string(report.frames_per_burst);
+    out += '|';
+    out += std::to_string(report.xruns);
+    out += '|';
+    out += std::to_string(report.callbacks);
+    out += '|';
+    out += report.backend;
+    out += '|';
+    out += report.last_error;
+    out += '|';
+    out += Symbiosis::DescribeAudio(report);
+    return Common::Android::ToJString(env, out);
 }
 
 /// Live thermal state as "state|tempC|gpuClockPercent|summary|advice".

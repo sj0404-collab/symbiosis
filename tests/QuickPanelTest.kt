@@ -76,6 +76,21 @@ fun main() {
         QuickPanel.restartKeys().sorted(),
         QuickPanel.entries.filter { !it.live }.map { it.key }.sorted())
 
+    // ── частота звука ──────────────────────────────────────────────────
+    // В settings.h по умолчанию 0 — «как решит драйвер». Если первый чип
+    // окажется другим, панель будет показывать выбранным вариант, который
+    // нигде не выбран, и человек снова поменяет настройку «в пустоту».
+    check("частота: умолчание — драйвер", QuickPanel.rateChoices.first() == 0,
+        QuickPanel.rateChoices.toString())
+    check("частота: есть и 48, и 44,1",
+        QuickPanel.rateChoices.contains(48000) && QuickPanel.rateChoices.contains(44100),
+        QuickPanel.rateChoices.toString())
+    check("частота: у каждого варианта объяснение",
+        QuickPanel.rateChoices.all { QuickPanel.rateHint(it).isNotBlank() })
+    check("частота: у всех вариантов уникальные значения",
+        QuickPanel.rateChoices.distinct().size == QuickPanel.rateChoices.size,
+        QuickPanel.rateChoices.toString())
+
     println()
     println("passed=$passed failed=${failures.size}")
     failures.forEach { println("FAIL  $it") }

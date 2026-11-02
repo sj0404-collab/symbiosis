@@ -160,6 +160,41 @@ fun main() {
         realVerdict)
     check("назван шаг словами", realVerdict.contains("передача ядру пути к данным"), realVerdict)
 
+    // ── перехват abort: виновник назван адресом возврата ───────────────
+    //
+    // Ядро вызывает abort() из своей общей функции фатальных ошибок, поэтому
+    // первый адрес возврата один и тот же у всех восемнадцати мест. Полезен
+    // следующий кадр — он и есть место отказа.
+    val interposed = KenjiCrash.parse(
+        """
+        step=javaInitialize
+        crash signal=6 name=SIGABRT addr=0x2e53000005a6 code=-1 step=javaInitialize
+        abort-caller=libkenji.so+0x173c210
+        abort-pc=0x7a1b2c3d40
+        abort-pc=0x7a1b2c3e10
+        pc=libc.so+0x530f4
+        """.trimIndent()
+    )
+    check("перехватчик разобран", interposed?.abortCaller == "libkenji.so+0x173c210",
+        interposed?.abortCaller ?: "null")
+    check("цепочка от перехватчика собрана", interposed?.abortFrames?.size == 2,
+        interposed?.abortFrames?.toString() ?: "null")
+    val interposedVerdict = KenjiCrash.verdict(interposed!!)
+    check("виновник назван первым", interposedVerdict.startsWith("Остановку потребовал"),
+        interposedVerdict)
+    check("в вердикте адрес возврата", interposedVerdict.contains("libkenji.so+0x173c210"),
+        interposedVerdict)
+    check("в вердикте место вызова", interposedVerdict.contains("0x7a1b2c3e10"), interposedVerdict)
+    check("libc не назван виновником", !interposedVerdict.startsWith("Остановку потребовал код в кадре libc"),
+        interposedVerdict)
+    check("сказано, что это не сбой памяти", interposedVerdict.contains("не сбой памяти"),
+        interposedVerdict)
+    // Отчёт целиком: строка перехватчика обязана дойти до человека.
+    val interposedText = KenjiCrash.format(interposed)
+    check("в тексте отчёта строка перехватчика", interposedText.contains("abort() позвал кадр"),
+        interposedText)
+    check("в тексте отчёта цепочка выше", interposedText.contains("выше него"), interposedText)
+
     // Сигнал не 6 — про abort не говорим.
     val segv = realReport.copy(signal = 11, signalName = "SIGSEGV")
     check("без SIGABRT про abort молчим", !KenjiCrash.verdict(segv).contains("abort()"))

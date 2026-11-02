@@ -64,9 +64,12 @@ import org.yuzu.yuzu_emu.utils.KenjiCrash
 import org.yuzu.yuzu_emu.utils.UiGuard
 import org.yuzu.yuzu_emu.utils.MemoryUtil
 import org.yuzu.yuzu_emu.utils.NativeConfig
+import org.yuzu.yuzu_emu.utils.NativeSymbiosis
+import org.yuzu.yuzu_emu.utils.DirectoryInitialization
 import org.yuzu.yuzu_emu.utils.NfcReader
 import org.yuzu.yuzu_emu.utils.ParamPackage
 import org.yuzu.yuzu_emu.utils.ThemeHelper
+import java.io.File
 import java.text.NumberFormat
 import kotlin.math.roundToInt
 import org.yuzu.yuzu_emu.utils.ForegroundService
@@ -441,7 +444,26 @@ class EmulationActivity : AppCompatActivity(), SensorEventListener, InputManager
         applyGameLaunchIntent(swapIntent)
     }
 
+    private fun applyEmulationKeys() {
+        // Ключи, положенные отдельными файлами (свой prod.keys, title.keys,
+        // файл ключа одной игры), применяются ПЕРЕД каждым запуском, а не
+        // только когда человек открыл экран «Ключи»: ядро читает ключи один
+        // раз при старте, и без этого NSP с MissingTitlekey оставался
+        // неоткрываемым при рабочих остальных играх.
+        runCatching {
+            val dir = DirectoryInitialization.userDirectory?.let { File(it, "keys") } ?: return
+            if (!dir.exists()) return
+            val report = NativeSymbiosis.loadExtraKeys(dir.absolutePath)
+            if (report.isNotBlank()) {
+                Log.info("[Symbiosis] ключи: $report")
+            }
+        }.onFailure {
+            Log.warning("[Symbiosis] дополнительные ключи не применены: ${it.message}")
+        }
+    }
+
     private fun applyGameLaunchIntent(intent: Intent) {
+        applyEmulationKeys()
         hasEmulationSession = true
         processHasEmulationSession = true
         emulationViewModel.setIsEmulationStopping(false)
@@ -450,7 +472,17 @@ class EmulationActivity : AppCompatActivity(), SensorEventListener, InputManager
         val navHostFragment =
             supportFragmentManager.findFragmentById(R.id.fragment_container) as NavHostFragment
         val navController = navHostFragment.navController
-        val startArgs = intent.extras?.let { Bundle(it) } ?: Bundle()
+        // classLoader ОБЯЗАТЕЛЕН, И ЭТО И БЫЛА ПРИЧИНА «игру найти не могу».
+        //
+        // Игра едет в extras как Parcelable. При копировании extras в новый
+        // Bundle загрузчик классов не переносится, и разборщик навигации не
+        // может восстановить объект: аргумент `game` приходит null. Экран
+        // видит «игры нет», показывает «Загрузочной игры нету!» и закрывает
+        // себя — то есть приложение выходит из игры, которую только что
+        // собиралось перезапустить.
+        val startArgs = (intent.extras?.let { Bundle(it) } ?: Bundle()).apply {
+            classLoader = Game::class.java.classLoader
+        }
         val navOptions = NavOptions.Builder()
             .setPopUpTo(R.id.emulationFragment, true)
             .build()
