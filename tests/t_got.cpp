@@ -69,6 +69,30 @@ static std::string BuildVictim() {
 }
 
 int main() {
+    // ── адреса из .dynamic: глава, на которой всё и упало ────────────────
+    //
+    // glibc дописывает базу прямо в .dynamic, bionic — нет. Код, проверенный
+    // только на хосте, читал смещение 0x47328 как адрес и падал на телефоне
+    // (сборка 92888aa, SIGSEGV в PatchImport). Здесь проверяются оба вида.
+    const unsigned long long base = 0x7a00000000ULL;
+    const Symbiosis::LoadSpan spans[2] = {
+        {base, base + 0x1000},              // заголовки и .dynamic
+        {base + 0x10000, base + 0x90000},   // код и данные
+    };
+    check("абсолютный адрес принят как есть",
+          Symbiosis::ImageAddress(base, base + 0x10020, spans, 2) == base + 0x10020);
+    check("смещение превращено в адрес (bionic)",
+          Symbiosis::ImageAddress(base, 0x10020, spans, 2) == base + 0x10020);
+    // 0x47328 — настоящее значение с устройства, но оно попадает ВНУТРЬ
+    // образа, поэтому и принято как смещение; вне образа — другое число.
+    check("смещение внутри образа принято (как на устройстве)",
+          Symbiosis::ImageAddress(base, 0x47328, spans, 2) == base + 0x47328);
+    check("чужой адрес отвергнут",
+          Symbiosis::ImageAddress(base, 0x1000000ULL, spans, 2) == 0);
+    check("нулевая база не ломает разбор",
+          Symbiosis::ImageAddress(0, 0x10020, spans, 2) == 0);
+    check("без областей — ноль", Symbiosis::ImageAddress(base, base, nullptr, 0) == 0);
+
     const std::string so = BuildVictim();
     if (so.empty()) {
         std::printf("SKIP  библиотека-жертва не собралась (нет g++)\n");

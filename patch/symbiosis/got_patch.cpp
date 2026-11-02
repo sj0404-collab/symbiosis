@@ -30,7 +30,21 @@ struct ObjectInfo {
     uintptr_t base = 0;
     const ElfW(Phdr)* phdr = nullptr;
     ElfW(Half) phnum = 0;
+    LoadSpan spans[16] = {};
+    int span_count = 0;
 };
+
+/** Заполнить области PT_LOAD — по ним проверяются адреса из .dynamic. */
+void CollectSpans(ObjectInfo& object) {
+    object.span_count = 0;
+    for (ElfW(Half) i = 0; i < object.phnum && object.span_count < 16; ++i) {
+        if (object.phdr[i].p_type != PT_LOAD) {
+            continue;
+        }
+        const auto begin = static_cast<unsigned long long>(object.base + object.phdr[i].p_vaddr);
+        object.spans[object.span_count++] = LoadSpan{begin, begin + object.phdr[i].p_memsz};
+    }
+}
 
 /** Что ищем: имя файла (может быть пустым) и база из dladdr. */
 struct Query {
@@ -111,6 +125,30 @@ bool WriteSlot(uintptr_t slot, void* value) {
 
 } // namespace
 
+unsigned long long ImageAddress(unsigned long long base, unsigned long long value,
+                               const LoadSpan* spans, int count) {
+    if (spans == nullptr || count <= 0) {
+        return 0;
+    }
+    const auto inside = [spans, count](unsigned long long address) {
+        for (int i = 0; i < count; ++i) {
+            if (address >= spans[i].begin && address < spans[i].end) {
+                return true;
+            }
+        }
+        return false;
+    };
+    // Сначала как есть: у glibc значение уже абсолютное.
+    if (inside(value)) {
+        return value;
+    }
+    // Затем как смещение: так его оставляет bionic.
+    if (inside(base + value)) {
+        return base + value;
+    }
+    return 0;
+}
+
 GotPatch PatchImport(const void* anySymbol, const char* name, void* replacement) {
     GotPatch result;
     if (kJumpSlotReloc == 0) {
@@ -156,11 +194,23 @@ GotPatch PatchImport(const void* anySymbol, const char* name, void* replacement)
         return result;
     }
 
+    // Значения из .dynamic приводятся к абсолютным адресам здесь и проверяются
+    // на принадлежность образу. Без этого bionic отдаёт смещение, и первое же
+    // чтение по нему — SIGSEGV (сборка 92888aa: адрес 0x47330).
+    CollectSpans(object);
+    const auto jmprel_abs = ImageAddress(object.base, jmprel, object.spans, object.span_count);
+    const auto symtab_abs = ImageAddress(object.base, symtab, object.spans, object.span_count);
+    const auto strtab_abs = ImageAddress(object.base, strtab, object.spans, object.span_count);
+    if (jmprel_abs == 0 || symtab_abs == 0 || strtab_abs == 0) {
+        result.detail = "таблицы .dynamic вне образа библиотеки";
+        return result;
+    }
+
     const bool is_rela = !has_pltrel || pltrel == DT_RELA;
-    const auto* rela = reinterpret_cast<const ElfW(Rela)*>(jmprel);
-    const auto* rel = reinterpret_cast<const ElfW(Rel)*>(jmprel);
-    const auto* syms = reinterpret_cast<const ElfW(Sym)*>(symtab);
-    const auto* names = reinterpret_cast<const char*>(strtab);
+    const auto* rela = reinterpret_cast<const ElfW(Rela)*>(jmprel_abs);
+    const auto* rel = reinterpret_cast<const ElfW(Rel)*>(jmprel_abs);
+    const auto* syms = reinterpret_cast<const ElfW(Sym)*>(symtab_abs);
+    const auto* names = reinterpret_cast<const char*>(strtab_abs);
 
     // Обходим ровно столько записей, сколько объявлено: за концом таблицы
     // начинаются чужие данные, и чтение «пока не найдём» тут же уходит в них.
@@ -172,11 +222,28 @@ GotPatch PatchImport(const void* anySymbol, const char* name, void* replacement)
             continue;
         }
         const auto sym_index = is_rela ? ELF64_R_SYM(rela[i].r_info) : ELF64_R_SYM(rel[i].r_info);
+        // Индекс символа и смещение имени проверяются так же, как таблицы:
+        // испорченное значение здесь — это чтение по мусорному адресу, то есть
+        // снова падение вместо отчёта.
+        const auto sym_addr = static_cast<unsigned long long>(symtab_abs) +
+                              static_cast<unsigned long long>(sym_index) * sizeof(ElfW(Sym));
+        if (ImageAddress(object.base, sym_addr, object.spans, object.span_count) == 0) {
+            continue;
+        }
+        const auto name_addr = static_cast<unsigned long long>(strtab_abs) +
+                               static_cast<unsigned long long>(syms[sym_index].st_name);
+        if (ImageAddress(object.base, name_addr, object.spans, object.span_count) == 0) {
+            continue;
+        }
         const char* sym_name = names + syms[sym_index].st_name;
         if (std::strcmp(sym_name, name) != 0) {
             continue;
         }
         const uintptr_t slot = object.base + (is_rela ? rela[i].r_offset : rel[i].r_offset);
+        if (ImageAddress(object.base, slot, object.spans, object.span_count) == 0) {
+            result.detail = "слот перехода вне образа библиотеки";
+            return result;
+        }
         if (!WriteSlot(slot, replacement)) {
             result.detail = "страница со слотом защищена от записи";
             return result;
