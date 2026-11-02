@@ -535,9 +535,56 @@ Java_org_yuzu_yuzu_1emu_utils_NativeSymbiosis_diagnoseRom(JNIEnv* env, jobject,
                 why = "внутри нет NCA с программой игры: вероятно, это обновление "
                       "или DLC, а не сама игра";
             }
-            if (why.empty()) {
-                why = "оглавление целое, но программу игры ядро внутри не нашло";
+            // ГЛАВНОЕ ПРО ТЕКУЩИЙ ОТКАЗ. Контейнер, у которого ReadProgramId
+            // успешен, а NCA с программой не находится, почти всегда означает
+            // не «файл собран не так», а «NCA не разобрался». А не разбирается
+            // он по одной причине: содержимое зашифровано тикетом игры, и без
+            // title key этого тикета (или самого .tik) внутри ничего не
+            // читается. Оглавление при этом целое - потому что оно в открытом
+            // виде.
+            //
+            // Поэтому перечисляем, что известно о каждом NCA: путь, тип
+            // содержимого по открытому оглавлению (в NCA это 0x21) и статус
+            // разбора. Статус - это и есть ответ: MissingTitlekey, а не
+            // «неизвестно почему».
+            why += "  Каждый NCA по отдельности: ";
+            bool any = false;
+            try {
+                // NSP строим сами: OpenContainerAsNsp есть только внутри
+                // loader.cpp, в анонимном namespace. Для XCI снаружи
+                // понадобился бы разбор раздела secure, поэтому там список
+                // остаётся прежним, а подробности даёт сам контейнер.
+                std::shared_ptr<FileSys::NSP> nsp;
+                if (file_type == Loader::FileType::NSP) {
+                    nsp = std::make_shared<FileSys::NSP>(file, 0, 0);
+                }
+                if (nsp != nullptr && nsp->GetStatus() == Loader::ResultStatus::Success) {
+                    const auto ncas = nsp->GetNCAsCollapsed();
+                    for (const auto& nca : ncas) {
+                        if (nca == nullptr) {
+                            continue;
+                        }
+                        any = true;
+                        const auto status = nca->GetStatus();
+                        why += nca->GetName();
+                        why += " [тип ";
+                        why += std::to_string(static_cast<int>(nca->GetType()));
+                        why += ", ";
+                        why += Loader::GetResultStatusString(status);
+                        why += "] ";
+                    }
+                }
+            } catch (...) {
+                why += "разобрать список NCA не удалось. ";
             }
+            if (!any) {
+                why += "ядро не смогло прочитать из контейнера ни одного NCA.";
+            }
+            why += "  Если у NCA стоит MissingTitlekey - нужен title key этой игры:";
+            why += " в контейнере его нет, а ключом подписи (header key) содержимое";
+            why += " не открывается, потому что оно дополнительно зашифровано";
+            why += " тикетом. Положите в папку keys полный prod.keys (с title keys)";
+            why += " или title.keys с ключом для 01004F302847E000.";
             return Common::Android::ToJString(env, "not_bootable|" + why);
         }
         return Common::Android::ToJString(env, "ok|файл читается");

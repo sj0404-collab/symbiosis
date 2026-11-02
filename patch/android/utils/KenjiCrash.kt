@@ -39,6 +39,8 @@ object KenjiCrash {
         val frames: List<String>,
         /** Коды debug_break, если ядро их звало перед падением. */
         val debugBreaks: List<Int>,
+        /** Регистры аргументов в момент падения, как их записал обработчик. */
+        val registers: String = "",
     ) {
         val isEmpty: Boolean get() = frames.isEmpty() && signal == 0 && debugBreaks.isEmpty()
     }
@@ -56,6 +58,7 @@ object KenjiCrash {
         var signal = 0
         var signalName = ""
         var address = ""
+        var registers = ""
         val frames = mutableListOf<String>()
         val breaks = mutableListOf<Int>()
 
@@ -82,10 +85,15 @@ object KenjiCrash {
                 }
 
                 line.startsWith("pc=") -> frames.add(line.removePrefix("pc=").trim())
+
+                // regs x0=… x1=… — регистры аргументов в момент падения.
+                // Не кадры, поэтому отдельным полем: по ним видно, с чем
+                // именно ядро не справилось.
+                line.startsWith("regs ") -> registers = line.removePrefix("regs ").trim()
             }
         }
 
-        val report = Report(step, signal, signalName, address, frames, breaks)
+        val report = Report(step, signal, signalName, address, frames, breaks, registers)
         return if (report.isEmpty) null else report
     }
 
@@ -120,6 +128,9 @@ object KenjiCrash {
             builder.append("• верхние кадры: ")
             builder.append(report.frames.take(3).joinToString(" → "))
             builder.append('\n')
+        }
+        if (report.registers.isNotBlank()) {
+            builder.append("• регистры: ").append(report.registers).append('\n')
         }
         if (report.debugBreaks.isNotEmpty()) {
             builder.append("• ядро звало debug_break с кодами: ")

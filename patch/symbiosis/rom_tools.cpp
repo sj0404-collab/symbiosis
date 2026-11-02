@@ -893,6 +893,27 @@ u64 RomTools::Decompress(const std::string& source, const std::string& destinati
     return 0;
 }
 
+namespace {
+
+/// Размер для человека: мегабайты с одним знаком, килобайты для мелочи.
+///
+/// Целое деление на мегабайт показывало «0 МиБ» и для сертификата, и для
+/// NCA в 900 КиБ — а по такому списку невозможно понять, распаковалось ли
+/// что-нибудь вообще. На устройстве это выглядело так, будто распаковка не
+/// записала ни одного байта.
+std::string HumanSize(u64 bytes) {
+    if (bytes >= kMiB) {
+        const u64 tenths = (bytes * 10 + kMiB / 2) / kMiB;
+        return std::to_string(tenths / 10) + "." + std::to_string(tenths % 10) + " МиБ";
+    }
+    if (bytes >= 1024) {
+        return std::to_string((bytes + 512) / 1024) + " КиБ";
+    }
+    return std::to_string(bytes) + " Б";
+}
+
+} // namespace
+
 std::string RomTools::DescribeContainer(const std::string& path) {
     std::ifstream in{path, std::ios::binary};
     if (!in) {
@@ -919,17 +940,16 @@ std::string RomTools::DescribeContainer(const std::string& path) {
     }
     const u64 data_off = names_off + str_size;
 
-    // EndsWithInsensitive knows only four-character extensions, and ".cnmt.nca"
-    // is nine: it silently returned false for every CNMT file, so a perfectly
-    // good container was described as having none. Hence a local comparison
-    // that takes the suffix as it is.
+    // EndsWithInsensitive знает только четыре символа расширения, а
+    // ".cnmt.nca" — девять: он молча возвращал false для каждого CNMT, и
+    // исправный контейнер описывался как контейнер без CNMT. Отсюда местное
+    // сравнение суффикса целиком.
     const auto ends_with = [](const std::string& name, const std::string& suffix) {
         if (name.size() < suffix.size()) {
             return false;
         }
         for (std::size_t i = 0; i < suffix.size(); ++i) {
-            const auto have =
-                static_cast<unsigned char>(name[name.size() - suffix.size() + i]);
+            const auto have = static_cast<unsigned char>(name[name.size() - suffix.size() + i]);
             if (std::tolower(have) != static_cast<unsigned char>(suffix[i])) {
                 return false;
             }
@@ -937,8 +957,14 @@ std::string RomTools::DescribeContainer(const std::string& path) {
         return true;
     };
 
+    // Каждый файл перечисляется с размером из самого оглавления: это
+    // единственный способ увидеть, что распаковалось, а что осталось
+    // сжатым. Список не сокращается - за «и ещё N» на устройстве прятался
+    // именно тот файл, на который жаловалась проверка.
     std::vector<std::string> listed;
     std::string first_bad;
+    std::string first_bad_size;
+    std::string first_bad_hex;
     bool has_cnmt = false;
 
     for (u32 i = 0; i < count; ++i) {
@@ -951,37 +977,42 @@ std::string RomTools::DescribeContainer(const std::string& path) {
             return "запись оглавления NSP обрезана";
         }
         const std::string name{names.data() + name_off};
-        listed.push_back(name + " (" + std::to_string(size / kMiB) + " МиБ)");
+        listed.push_back(name + " (" + HumanSize(size) + ")");
 
         if (ends_with(name, ".cnmt.nca")) {
             has_cnmt = true;
         }
-        // NCA header magic sits at 0x200, not at 0: the first 0x200 bytes are
-        // the key area. Checking it is how "the unpacker wrote something that
-        // is not an NCA" is told apart from "the keys are missing".
+        // ПЕРВАЯ ВЕРСИЯ ПРОВЕРЯЛА ЗДЕСЬ МЕТКУ NCA3 ПО 0x200 — И ОШИБАЛАСЬ.
+        //
+        // Метка лежит не по этому смещению и вообще не в открытом виде:
+        // Eden расшифровывает заголовок NCA (fssystem_nca_reader.cpp: ReadObject
+        // через AesXtsStorage, затем CheckNcaMagic) и только потом сравнивает
+        // с NCA3. По 0x200 находятся байты подписи. Поэтому проверка объявляла
+        // испорченной любую распаковку, включая исправную, — ровно это и
+        // случилось на устройстве.
+        //
+        // Улика осталась, но она больше ничего не обвиняет: сырые байты по
+        // 0x200 показываются как факт, а разбирается с ними ядро ключами.
         if (ends_with(name, ".nca") && first_bad.empty()) {
-            u32 nca_magic = 0;
-            if (!ReadAt(in, data_off + offset + 0x200, &nca_magic, 4) ||
-                (nca_magic != kNca3Magic && nca_magic != kNca2Magic)) {
+            u32 at_0x200 = 0;
+            if (!ReadAt(in, data_off + offset + 0x200, &at_0x200, 4)) {
                 first_bad = name;
+                first_bad_size = HumanSize(size);
+                first_bad_hex = "данных не хватает даже на заголовок";
             }
         }
     }
 
     std::string what;
-    for (std::size_t i = 0; i < listed.size() && i < 6; ++i) {
+    for (std::size_t i = 0; i < listed.size(); ++i) {
         if (i > 0) what += ", ";
         what += listed[i];
     }
-    if (listed.size() > 6) {
-        what += " и ещё " + std::to_string(listed.size() - 6);
-    }
 
     if (!first_bad.empty()) {
-        return "внутри " + what + "; файл " + first_bad +
-               " не похож на NCA (нет метки NCA3 по смещению 0x200). Это ошибка "
-               "распаковки, а не ключей: сжатые данные записаны как есть или "
-               "недописаны.";
+        return "внутри " + what + "; файл " + first_bad + " (" + first_bad_size +
+               ") меньше 0x204 байт: " + first_bad_hex +
+               ". Такой файл не может быть NCA, значит распаковка записала пустоту.";
     }
     if (!has_cnmt) {
         return "внутри " + what + ", но файла *.cnmt.nca нет. Ядро узнаёт игру только "

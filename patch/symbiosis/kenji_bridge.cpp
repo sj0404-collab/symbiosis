@@ -151,6 +151,69 @@ void WriteFrame(int fd, uintptr_t pc) {
  *   вверх по стеку без libunwind, и первый же кадр будет настоящим адресом
  *   падения.
  */
+/**
+ * Похоже ли значение на адрес возврата в загруженный код.
+ *
+ * Проверяется через dladdr: он отвечает только для адресов внутри
+ * отображённых объектов, поэтому случайные числа и указатели на данные
+ * отсеиваются без ручных границ сегментов.
+ */
+bool LooksLikeCode(uintptr_t value, const Dl_info& self) {
+    if (value < 0x1000 || (value & 0x3) != 0) return false;
+    Dl_info info{};
+    if (::dladdr(reinterpret_cast<void*>(value), &info) == 0 || info.dli_fbase == nullptr) {
+        return false;
+    }
+    // Только свои библиотеки и libc: адреса из чужих объектов на этом стеке -
+    // почти всегда мусор от прежних вызовов.
+    if (self.dli_fname != nullptr && info.dli_fname != nullptr) {
+        const char* a = ::strrchr(self.dli_fname, '/');
+        const char* b = ::strrchr(info.dli_fname, '/');
+        a = a ? a + 1 : self.dli_fname;
+        b = b ? b + 1 : info.dli_fname;
+        if (::strcmp(a, b) == 0) return true;
+        if (::strcmp(b, "libc.so") == 0) return true;
+        if (::strcmp(b, "libkenji.so") == 0) return true;
+    }
+    return false;
+}
+
+/**
+ * Второй проход: слова стека, похожие на адреса возврата.
+ *
+ * Помечаются как `pc=`, чтобы их читал тот же разбор в Kotlin: это такие же
+ * кадры, просто полученные иначе. Повторы выбрасываются — иначе один и тот же
+ * вызов займёт весь отчёт.
+ */
+void WriteStackScan(int fd, ucontext_t* uc) {
+    const uintptr_t sp = uc->uc_mcontext.sp;
+    if (sp == 0) return;
+
+    Dl_info self{};
+    ::dladdr(reinterpret_cast<void*>(uc->uc_mcontext.pc), &self);
+
+    constexpr std::size_t kWindow = 2048;   // байт вверх по стеку
+    constexpr int kMax = 12;
+    uintptr_t last = 0;
+    int written = 0;
+    char header[32];
+    const int hn = ::snprintf(header, sizeof(header), "stack scan:\n");
+    if (hn > 0) ::write(fd, header, static_cast<size_t>(hn));
+
+    // Чтение чужой памяти после падения может само дать SIGSEGV. Окно берём
+    // небольшое, а каждый шаг проверяем на выравнивание: так вероятность
+    // попасть в неотображённую страницу мала, а пользы от прохода больше,
+    // чем от аккуратности, которая ничего не находит.
+    for (std::size_t off = 0; off < kWindow && written < kMax; off += 8) {
+        const auto value = *reinterpret_cast<const uintptr_t*>(sp + off);
+        if (value == last) continue;
+        if (!LooksLikeCode(value, self)) continue;
+        last = value;
+        WriteFrame(fd, value);
+        ++written;
+    }
+}
+
 void WriteCrashFrames(int fd, void* uctx) {
     auto* uc = static_cast<ucontext_t*>(uctx);
     if (uc == nullptr) return;
@@ -158,6 +221,19 @@ void WriteCrashFrames(int fd, void* uctx) {
     const uintptr_t pc = uc->uc_mcontext.pc;
     uintptr_t frame = uc->uc_mcontext.regs[29];      // x29: frame pointer
     const uintptr_t link = uc->uc_mcontext.regs[30]; // x30: адрес возврата
+
+    // Регистры аргументов. По ним видно, с чем именно ядро не справилось:
+    // указатель на строку, дескриптор, номер ошибки. Пишутся отдельным
+    // префиксом, чтобы разбор кадров в Kotlin их не принимал за кадры.
+    char regs[160];
+    const int rn = ::snprintf(
+        regs, sizeof(regs), "regs x0=%lx x1=%lx x2=%lx x3=%lx x29=%lx\n",
+        static_cast<unsigned long>(uc->uc_mcontext.regs[0]),
+        static_cast<unsigned long>(uc->uc_mcontext.regs[1]),
+        static_cast<unsigned long>(uc->uc_mcontext.regs[2]),
+        static_cast<unsigned long>(uc->uc_mcontext.regs[3]),
+        static_cast<unsigned long>(uc->uc_mcontext.regs[29]));
+    if (rn > 0) ::write(fd, regs, static_cast<size_t>(rn));
 
     WriteFrame(fd, pc);
     WriteFrame(fd, link);
@@ -173,6 +249,20 @@ void WriteCrashFrames(int fd, void* uctx) {
         if (next <= frame) break;   // цепочка должна расти вверх по стеку
         frame = next;
     }
+
+    // ── и вдобавок проход по стеку ───────────────────────────────────
+    //
+    // ПОЧЕМУ ОДНОЙ ЦЕПОЧКИ НЕ ХВАТИЛО. Отчёт с устройства (17:10) дал три
+    // кадра: libc +0x530f4, libc +0x530c8 и ядро +0x173c214. Первые два -
+    // abort() и raise() в libc, то есть механизм; третий - возврат после
+    // вызова abort из крошечной функции в глубине ядра, и она молчит: ничего
+    // не печатает и не передаёт. Виновника она не называет, а цепочка x29 на
+    // ней и обрывается — libc свои кадры frame pointer не ведёт.
+    //
+    // Поэтому ниже независимый проход: слова на стеке, похожие на адреса
+    // возврата в загруженный код. Он шумный, но именно он показывает, ОТКУДА
+    // пришли, а не только КУДА пришли.
+    WriteStackScan(fd, uc);
 }
 #else
 /**

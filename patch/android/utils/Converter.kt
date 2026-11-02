@@ -396,6 +396,31 @@ object Converter {
         val reason = if (launch) "" else runCatching {
             NativeSymbiosis.romProblem(path)
         }.getOrNull().orEmpty().ifBlank { "ядро не принимает этот файл" }
+        // Полный разбор рядом с файлом.
+        //
+        // В шторке помещается две строки, и на устройстве текст обрывался ровно
+        // там, где начиналась суть («...и ещё 1; файл»). Отчёт о контейнере
+        // нужен целиком, и его можно переслать: список файлов с размерами и
+        // тем, что стоит на месте метки NCA. Это несколько килобайт текста,
+        // а не сам образ.
+        if (!launch) {
+            runCatching {
+                File(dir(), "почему-не-открывается.txt").writeText(
+                    buildString {
+                        append("Symbiosis · проверка контейнера\n")
+                        append("файл: ").append(path).append('\n')
+                        append("размер: ").append(f.length()).append(" Б\n")
+                        append("\n")
+                        append(reason).append('\n')
+                        append("\n")
+                        append("Что это значит: ядро открывает NSP только тогда, когда внутри\n")
+                        append("есть NCA с программой игры, а находит его по файлу *.cnmt.nca.\n")
+                        append("Метка NCA3 по смещению 0x200 в файле .nca — признак того, что\n")
+                        append("внутри лежит распакованный NCA, а не сжатые данные.\n")
+                    }
+                )
+            }
+        }
         return JSONObject().apply {
             put("ok", launch)
             put("canLaunch", launch)

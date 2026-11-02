@@ -117,13 +117,27 @@ int main(){
         assert(why.find("cnmt") != std::string::npos);
         assert(why.find("01004F302847E000.nca") != std::string::npos);
 
-        // Распаковка записала не NCA: метки NCA3 по 0x200 нет.
+        // Файл внутри короче заголовка NCA — только это и есть повод говорить
+        // о неудачной распаковке.
         mkpfs0("/tmp/romtest/fake_nca.nsp",
                {{"01004F302847E000.cnmt.nca", nca("NCA3")}, {"01004F302847E001.nca", "not an nca"}});
         const auto bad = RomTools::DescribeContainer("/tmp/romtest/fake_nca.nsp");
         printf("fake_nca -> %s\n", bad.c_str());
-        assert(bad.find("не похож на NCA") != std::string::npos);
-        assert(bad.find("распаковки") != std::string::npos);
+        assert(bad.find("0x204") != std::string::npos);
+
+        // А вот исправный NCA НЕ должен обвиняться: метка NCA3 в нём не лежит
+        // по 0x200 в открытом виде — Eden расшифровывает заголовок ключом и
+        // сверяет метку уже после этого (fssystem_nca_reader.cpp). Первая
+        // версия проверки этого не знала и объявляла испорченной любую
+        // распаковку.
+        mkpfs0("/tmp/romtest/raw_nca_ok.nsp",
+               {{"01004F302847E000.cnmt.nca", nca("NCA3")},
+                {"5311f357509b683157115c566050d615.nca", std::string(0x5200, '\0')}});
+        const auto raw = RomTools::DescribeContainer("/tmp/romtest/raw_nca_ok.nsp");
+        printf("raw_nca_ok -> %s\n", raw.c_str());
+        assert(raw.find("ошибка распаковки") == std::string::npos);
+        assert(raw.find("0x200") == std::string::npos);
+        assert(raw.find("title key") != std::string::npos);
 
         // Структура целая: причина не в оглавлении, и это тоже надо сказать.
         mkpfs0("/tmp/romtest/fine.nsp",

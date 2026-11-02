@@ -356,6 +356,25 @@ fun main() {
     val quiet = KenjiCrash.tombstoneLines("reason: 1\nsome line")
     check("снимок без abort сохранён", quiet.isNotEmpty(), quiet.toString())
 
+    // ── регистры из отчёта ─────────────────────────────────────────────
+    //
+    // Обработчик пишет их отдельной строкой regs: по ним видно, с чем именно
+    // ядро не справилось. Они не кадры и не должны попадать в список кадров,
+    // но обязаны быть в тексте для человека.
+    val withRegs = """
+        step=javaInitialize
+        regs x0=7f1234 x1=0 x2=0 x3=0 x29=7ff000
+        crash signal=6 name=SIGABRT addr=0x2e53000011c6 code=-6 step=javaInitialize
+        pc=libc.so+0x530f4
+        pc=libkenji.so+0x173c214
+    """.trimIndent()
+    val regsReport = KenjiCrash.parse(withRegs)
+    check("регистры разобраны", regsReport?.registers?.contains("x0=7f1234") == true,
+        regsReport?.registers.toString())
+    eq("регистры не стали кадром", regsReport?.frames?.size, 2)
+    val regsText = KenjiCrash.format(regsReport)
+    check("регистры в тексте", regsText.contains("регистры: x0=7f1234"), regsText)
+
     // ── формулировки самого рантайма .NET ──────────────────────────────
     //
     // NativeAOT пишет «Process terminated. …» и «Fatal error. Invalid Program:
