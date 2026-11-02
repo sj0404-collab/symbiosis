@@ -457,6 +457,47 @@ fun main() {
     check("в хвосте самые последние", tail.last().endsWith("строка 20"), tail.toString())
     eq("пустой журнал — пустой хвост", KenjiCrash.tailLines(""), emptyList<String>())
 
+    // ── взведён ли перехват: два отчёта не должны быть неразличимы ──────
+    //
+    // Отчёт с устройства пришёл без строки `abort-caller=`, а по виду был
+    // неотличим от отчёта сборки, где перехватчика не было вовсе. Теперь мост
+    // пишет состояние, и окно его показывает.
+    val armed = KenjiCrash.parse(
+        """
+        step=javaInitialize
+        crash signal=6 name=SIGABRT addr=0x2e53000060bc code=-1 step=javaInitialize
+        abort interposer: активен
+        got patch: abort — подменено слотов: 1
+        abort-caller=libkenji.so+0x173c210
+        abort-pc=0x7a1b2c3d40
+        abort-pc=0x7a1b2c3e10
+        pc=libc.so+0x530f4
+        """.trimIndent()
+    )
+    check("состояние перехвата разобрано", armed?.trapState?.size == 2, armed?.trapState?.toString() ?: "null")
+    val armedText = KenjiCrash.format(armed!!)
+    check("состояние перехвата в тексте", armedText.contains("перехват abort: "), armedText)
+    check("правка таблицы в тексте", armedText.contains("подменено слотов"), armedText)
+    check("виновник всё равно назван", KenjiCrash.verdict(armed).contains("Остановку потребовал"),
+        KenjiCrash.verdict(armed))
+
+    val notArmed = KenjiCrash.parse(
+        """
+        step=javaInitialize
+        crash signal=6 name=SIGABRT addr=0x2e53000060bc code=-1 step=javaInitialize
+        abort interposer: не активен
+        got patch: abort — нет таблицы переходов
+        pc=libc.so+0x530f4
+        pc=libc.so+0x530c8
+        pc=libkenji.so+0x173c214
+        """.trimIndent()
+    )
+    val notArmedVerdict = KenjiCrash.verdict(notArmed!!)
+    check("перехват не взведён — сказано прямо", notArmedVerdict.contains("не взведён"),
+        notArmedVerdict)
+    check("и причина правки таблицы названа", notArmedVerdict.contains("нет таблицы переходов"),
+        notArmedVerdict)
+
     println()
     println("passed=$passed failed=${failures.size}")
     failures.forEach { println("FAIL  $it") }

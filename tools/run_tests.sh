@@ -85,6 +85,9 @@ deps_for() {
     t_save)         echo "$S/save_guard.cpp $S/thermal_monitor.cpp $CORE" ;;
     t_guard)        echo "$CORE" ;;
     t_audio)        echo "$S/audio_metrics.cpp $CORE" ;;
+    # Подмена слота в таблице переходов: проверяется на настоящей .so, собранной
+    # самим тестом. Нужен libdl — он в LINK-флагах по умолчанию для этого теста.
+    t_got)          echo "$S/got_patch.cpp $CORE" ;;
     t_modes)        echo "$S/auto_modes.cpp $S/device_profiles.cpp $SETTINGS $CORE" ;;
     t_uaf)          echo "$S/memory_governor.cpp $CORE" ;;
     t_v12)          echo "$S/device_profiles.cpp $S/auto_modes.cpp $SETTINGS $CORE" ;;

@@ -53,6 +53,8 @@
 #include <unwind.h>
 #include <link.h>
 #include <ucontext.h>
+
+#include "common/symbiosis/got_patch.h"
 #include <string>
 #include <mutex>
 #include <atomic>
@@ -801,6 +803,43 @@ bool PromoteToGlobalScope() {
     return ::dlsym(RTLD_DEFAULT, "abort") == reinterpret_cast<void*>(SymbiosisAbortWrapper());
 }
 
+/**
+ * Подменить `abort` уже в загруженном ядре — правкой его таблицы переходов.
+ *
+ * ПОЧЕМУ ПОДНЯТИЯ В ГЛОБАЛЬНУЮ ОБЛАСТЬ ОКАЗАЛОСЬ МАЛО
+ *   Отчёт с устройства (21:04) пришёл без единой строки `abort-caller=`,
+ *   хотя сборка с перехватчиком уже стояла. Значит ядро привязалось к
+ *   настоящему `abort` в libc: разрешение символов произошло раньше, чем наша
+ *   библиотека стала видна глобально, либо разрешение шло в своей области.
+ *   Порядок загрузки тут подводит, а слот в таблице переходов — нет: это адрес
+ *   в памяти уже загруженной библиотеки, и его можно переписать после факта.
+ *
+ * Что пишется в отчёт: `got patch: abort — подменено слотов: N` либо причина,
+ * по которой не вышло. Без этой строки следующий отчёт снова нельзя будет
+ * отличить от предыдущего.
+ */
+void ArmAbortTrap(void* coreHandle) {
+    if (coreHandle == nullptr) return;
+
+    // Любой символ ядра годится как точка отсчёта: по нему находится база
+    // библиотеки. javaInitialize есть всегда — её наличие уже проверено выше.
+    void* anchor = ::dlsym(coreHandle, "javaInitialize");
+    // javaInitialize тут есть всегда: её наличие проверено до загрузки
+    // (kRequiredSymbols). Если всё же нет — PatchImport вернёт причину, и она
+    // попадёт в отчёт, а не превратится в пустую строку.
+
+    const auto result =
+        Symbiosis::PatchImport(anchor, "abort", reinterpret_cast<void*>(&::abort));
+
+    LOGI("got patch abort: %s (%s)", result.ok ? "ok" : "failed", result.detail.c_str());
+    if (g_crashPath[0] != '\0') {
+        char line[256];
+        const int n = ::snprintf(line, sizeof(line), "got patch: abort — %s\n",
+                                 result.detail.c_str());
+        if (n > 0) AppendCrashLine(line);
+    }
+}
+
 // ── loading, carefully ──────────────────────────────────────────────
 
 // Every exported name the core is known to have, as read from its dynamic
@@ -945,6 +984,7 @@ Java_org_yuzu_yuzu_1emu_utils_KenjiBridge_nativeLoad(JNIEnv* env, jobject, jstri
     }
 
     g_core = handle;
+    ArmAbortTrap(handle);
     LOGI("core loaded and verified");
     return env->NewStringUTF("");
 }

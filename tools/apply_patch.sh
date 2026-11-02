@@ -595,7 +595,7 @@ fi
 # символы Ncz::* и Aes::* остаются неразрешёнными, и падает не компиляция, а
 # линковка libyuzu-android — через двадцать минут и без указания на причину.
 CMCOMMON="$E/src/common/CMakeLists.txt"
-for extra in symbiosis/ncz.cpp symbiosis/ncz.h symbiosis/aes128.cpp symbiosis/aes128.h symbiosis/zstd_include.h symbiosis/audio_metrics.cpp symbiosis/audio_metrics.h; do
+for extra in symbiosis/ncz.cpp symbiosis/ncz.h symbiosis/aes128.cpp symbiosis/aes128.h symbiosis/zstd_include.h symbiosis/audio_metrics.cpp symbiosis/audio_metrics.h symbiosis/got_patch.cpp symbiosis/got_patch.h; do
   # Путь был $E/src/$extra, а файлы лежат в src/common/ - предупреждение
   # печаталось всегда, даже когда всё на месте. Постоянный ложный warn
   # приучает не читать лог, и настоящая пропажа проходит незамеченной.
@@ -608,7 +608,7 @@ import sys
 path = sys.argv[1]
 text = open(path, encoding='utf-8').read()
 anchor = '    symbiosis/rom_tools.cpp'
-extra = '    symbiosis/aes128.cpp\n    symbiosis/aes128.h\n    symbiosis/audio_metrics.cpp\n    symbiosis/audio_metrics.h\n    symbiosis/ncz.cpp\n    symbiosis/ncz.h\n    symbiosis/zstd_include.h\n'
+extra = '    symbiosis/aes128.cpp\n    symbiosis/aes128.h\n    symbiosis/audio_metrics.cpp\n    symbiosis/audio_metrics.h\n    symbiosis/got_patch.cpp\n    symbiosis/got_patch.h\n    symbiosis/ncz.cpp\n    symbiosis/ncz.h\n    symbiosis/zstd_include.h\n'
 if anchor in text:
     text = text.replace(anchor, extra + anchor, 1)
 else:

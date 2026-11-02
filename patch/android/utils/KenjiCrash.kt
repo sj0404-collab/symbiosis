@@ -51,6 +51,16 @@ object KenjiCrash {
         val abortCaller: String = "",
         /** Кадры, снятые от перехватчика abort, — выше виновника. */
         val abortFrames: List<String> = emptyList(),
+        /**
+         * Взведён ли перехват к моменту падения. Пишет сам мост:
+         * `abort interposer: активен/не активен` и
+         * `got patch: abort — подменено слотов: N`.
+         *
+         * Без этих строк отчёт «виновника нет» нельзя отличить от отчёта
+         * старой сборки, где перехватчика не было вовсе, — ровно на этом и
+         * потерялся один круг.
+         */
+        val trapState: List<String> = emptyList(),
     ) {
         val isEmpty: Boolean get() = frames.isEmpty() && signal == 0 && debugBreaks.isEmpty()
     }
@@ -71,6 +81,7 @@ object KenjiCrash {
         var registers = ""
         var abortCaller = ""
         val abortFrames = mutableListOf<String>()
+        val trapState = mutableListOf<String>()
         val frames = mutableListOf<String>()
         val breaks = mutableListOf<Int>()
 
@@ -109,13 +120,16 @@ object KenjiCrash {
                 line.startsWith("abort-caller=") ->
                     abortCaller = line.removePrefix("abort-caller=").trim()
 
+                line.startsWith("abort interposer:") || line.startsWith("got patch:") ->
+                    trapState.add(line.trim())
+
                 line.startsWith("abort-pc=") ->
                     abortFrames.add(line.removePrefix("abort-pc=").trim())
             }
         }
 
         val report = Report(step, signal, signalName, address, frames, breaks, registers,
-            abortCaller, abortFrames)
+            abortCaller, abortFrames, trapState)
         return if (report.isEmpty) null else report
     }
 
@@ -156,6 +170,9 @@ object KenjiCrash {
                 builder.append(" → … ещё ").append(report.frames.size - 8)
             }
             builder.append('\n')
+        }
+        if (report.trapState.isNotEmpty()) {
+            builder.append("• перехват abort: ").append(report.trapState.joinToString("; ")).append('\n')
         }
         if (report.abortCaller.isNotBlank()) {
             builder.append("• abort() позвал кадр: ").append(report.abortCaller).append('\n')
@@ -208,6 +225,21 @@ object KenjiCrash {
                 "прекратить работу.\n\n" +
                 "Что сделать: приложите этот отчёт — по адресу видно, какая " +
                 "проверка в ядре не прошла, и её можно обойти на нашей стороне."
+        }
+
+        // Перехват не взведён, и это отдельный ответ: такой отчёт ничего не
+        // говорит о причине, его нельзя сравнивать с отчётом, где перехват был.
+        // «не активен» содержит «активен» как подстроку — на этом проверка
+        // «взведён ли перехват» однажды уже соврала в обратную сторону.
+        val armedByGot = report.trapState.any { it.contains("подменено") }
+        val interposerActive = report.trapState.any { it.contains("interposer: активен") }
+        val interposerOff = report.trapState.any { it.contains("interposer: не активен") }
+        if (report.trapState.isNotEmpty() && !armedByGot && (interposerOff || !interposerActive)) {
+            return "Перехват abort в этой сборке не взведён (" +
+                report.trapState.joinToString("; ") + "), поэтому виновник не назван. " +
+                "Это отчёт о сработавшей защите, а не о причине: приложите его — " +
+                "по этим строкам видно, на каком шаге перехват не встал.\n\n" +
+                "Что сделать: сообщите эти строки, не меняя сборку."
         }
 
         // libc и [vdso] — это не виновник, а механизм: abort() живёт в libc и
