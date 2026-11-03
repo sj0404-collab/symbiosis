@@ -111,7 +111,7 @@ object KenjiBridge {
         File(context.getExternalFilesDir(null), "kenji")
 
     /**
-     * Собственный журнал ядра: `<данные>/Logs/*.log`.
+     * Собственный журнал ядра: каталог «Logs» с файлами вида `Ryujinx_*.log`.
      *
      * ЗАЧЕМ. Инициализация ядра возвращает отказ, а своего текста об ошибке не
      * печатает ни в stdout, ни в stderr — .NET-ядро ловит исключение и уходит в
@@ -123,7 +123,8 @@ object KenjiBridge {
 
     /** Самый свежий файл журнала ядра, если он есть. */
     fun coreLogFile(context: Context): File? = runCatching {
-        coreLogDir(context).listFiles { file -> file.isFile && file.name.endsWith(".log") }
+        coreLogDir(context).listFiles()
+            ?.filter { it.isFile && it.name.endsWith(".log") }
             ?.maxByOrNull { it.lastModified() }
     }.getOrNull()
 

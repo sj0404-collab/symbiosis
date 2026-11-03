@@ -184,6 +184,14 @@ jobs:
           # tree has compiled. That cost one full run for KenjiProbeService.
           python3 fork/tools/check_kotlin_refs.py --patch fork/patch
 
+      - name: Check Kotlin braces and comments balance
+        run: |
+          # An unterminated block comment swallows the rest of the file, and the
+          # compiler then reports "Unresolved reference" in an unrelated place.
+          # That cost a full run: a doc comment spelling Logs/*.log opens a
+          # nested comment in Kotlin. This check is instant.
+          python3 fork/tools/check_kotlin_syntax.py fork/patch
+
       - name: Check string references resolve
         # aapt2 reports a missing @string only at resource-link time, roughly
         # twenty minutes into the build. This is the same check in a second.
