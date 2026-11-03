@@ -106,6 +106,65 @@ object KenjiBridge {
     private external fun nativePlayStop()
     private external fun nativeWindowOf(surface: android.view.Surface): Long
 
+    /** Каталог данных второго ядра — тот, что передаётся ядру при инициализации. */
+    fun dataDir(context: Context): File =
+        File(context.getExternalFilesDir(null), "kenji")
+
+    /**
+     * Собственный журнал ядра: `<данные>/Logs/*.log`.
+     *
+     * ЗАЧЕМ. Инициализация ядра возвращает отказ, а своего текста об ошибке не
+     * печатает ни в stdout, ни в stderr — .NET-ядро ловит исключение и уходит в
+     * собственный журнал. Там его же слова: какой путь принят, что создано, на
+     * чём остановилось. Это единственный источник причины, который не надо
+     * угадывать по адресам в памяти.
+     */
+    fun coreLogDir(context: Context): File = File(dataDir(context), "Logs")
+
+    /** Самый свежий файл журнала ядра, если он есть. */
+    fun coreLogFile(context: Context): File? = runCatching {
+        coreLogDir(context).listFiles { file -> file.isFile && file.name.endsWith(".log") }
+            ?.maxByOrNull { it.lastModified() }
+    }.getOrNull()
+
+    /**
+     * Каталоги, которые ядро заводит себе само при инициализации.
+     *
+     * ЗАЧЕМ ГОТОВИТЬ ИХ ЗАРАНЕЕ. Ядро создаёт `Logs`, `Games`, `Profiles`,
+     * `Keys` первым делом. Если создание журнала не удалось, оно возвращает
+     * пустой поток, а тот, кто его принимает, падает на null — и инициализация
+     * молча отвечает отказом, не записав ни строки. Именно так выглядит наш
+     * случай: отказ есть, причины нет. Поэтому каталоги создаём сами, до
+     * запуска ядра: тогда отказ будет означать что-то другое, а не отсутствие
+     * каталога.
+     *
+     * @return пары «имя каталога — получилось ли»
+     */
+    fun ensureCoreDirs(context: Context): List<Pair<String, Boolean>> =
+        listOf("Logs", "Games", "Profiles", "Keys").map { name ->
+            val dir = File(dataDir(context), name)
+            val ok = runCatching { if (dir.isDirectory) true else dir.mkdirs() && dir.isDirectory }
+                .getOrDefault(false)
+            name to ok
+        }
+
+    /**
+     * Проверка, что в каталог журнала действительно можно писать.
+     *
+     * Права «на бумаге» и права на деле на внешнем томе расходятся: каталог
+     * создан, а файл в нём не заводится. Ядро об этом молчит, поэтому
+     * проверяем сами — пробным файлом.
+     */
+    fun canWriteCoreLog(context: Context): Boolean = runCatching {
+        val dir = coreLogDir(context)
+        if (!dir.isDirectory) false
+        else {
+            val probe = File(dir, ".write-check")
+            probe.writeText("ok")
+            probe.delete()
+        }
+    }.getOrDefault(false)
+
     /**
      * Файл отчёта о падении — рядом с данными второго ядра.
      *
@@ -221,11 +280,14 @@ object KenjiBridge {
         // Kenji keeps its system files under its own directory, kept separate
         // from Eden's so neither can corrupt the other's state. Games, keys
         // and firmware are shared; internal caches are not.
-        val dataDir = File(context.getExternalFilesDir(null), "kenji").apply { mkdirs() }
+        val coreDir = dataDir(context).apply { mkdirs() }
+        // Ядро заводит эти каталоги само, но при неудаче молча отвечает
+        // отказом. Готовим заранее — см. ensureCoreDirs.
+        ensureCoreDirs(context)
 
         if (bridgeLoaded) runCatching { nativeSetStep("javaInitialize") }
         val err = try {
-            nativeInitialize(dataDir.absolutePath)
+            nativeInitialize(coreDir.absolutePath)
         } catch (e: Throwable) {
             return Status(false, "мост упал при инициализации: ${e.message ?: e.javaClass.simpleName}")
         }

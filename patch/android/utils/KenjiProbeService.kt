@@ -165,6 +165,51 @@ class KenjiProbeService : Service() {
             }.getOrDefault("")
             val body = StringBuilder(KenjiCrash.format(report, buildStamp = stamp))
 
+            // Собственный журнал ядра. Отказ инициализации .NET-ядро не печатает
+            // ни в stdout, ни в stderr — оно ловит исключение и пишет в свой
+            // журнал. Значит причина, если она вообще названа, лежит там.
+            // Если журнала нет, это тоже ответ: каталог не создан (ядро
+            // остановилось раньше) или файл не заводится (нет прав на запись).
+            val logDir = runCatching { KenjiBridge.coreLogDir(context) }.getOrNull()
+            val coreLog = runCatching { KenjiBridge.coreLogFile(context) }.getOrNull()
+            val coreTail = runCatching {
+                coreLog?.takeIf { it.isFile }?.let { file ->
+                    file.readLines()
+                        .map { it.trim() }
+                        .filter { it.isNotEmpty() }
+                        .takeLast(12)
+                }
+            }.getOrNull().orEmpty()
+
+            if (coreTail.isNotEmpty()) {
+                body.append("\n\nЧто ядро записало в свой журнал (")
+                    .append(coreLog?.name ?: "?").append("):\n")
+                coreTail.forEach { body.append("• ").append(it.take(300)).append('\n') }
+            } else if (logDir == null || !logDir.isDirectory) {
+                body.append("\n\nСобственного журнала ядра нет: каталог ")
+                    .append(logDir?.name ?: "Logs")
+                    .append(" не создан — ядро остановилось раньше, чем начало вести журнал.")
+            } else {
+                val writable = runCatching { KenjiBridge.canWriteCoreLog(context) }
+                    .getOrDefault(false)
+                body.append("\n\nСобственного журнала ядра нет: каталог ")
+                    .append(logDir.name).append(" есть")
+                body.append(if (writable) ", запись в него работает" else ", но записать в него файл не удалось")
+                body.append(". Значит ядро остановилось до того, как открыло журнал.")
+            }
+
+            // Каталоги, которые ядро обязано было создать само. Проверяются они
+            // не из любопытства: неудача создания журнала инициализация
+            // возвращает как отказ, не записав ни строки.
+            val dirs = runCatching { KenjiBridge.ensureCoreDirs(context) }.getOrNull().orEmpty()
+            if (dirs.isNotEmpty()) {
+                val missing = dirs.filter { !it.second }.map { it.first }
+                if (missing.isNotEmpty()) {
+                    body.append("\n\nКаталоги ядра не создаются: ")
+                        .append(missing.joinToString(", ")).append('.')
+                }
+            }
+
             // В отчёте о сигнале есть адреса, но нет текста. Текст исключения
             // .NET печатается в stderr ядра и перенаправлен в файл — это
             // буквально сообщение рантайма, поэтому оно идёт первым.
