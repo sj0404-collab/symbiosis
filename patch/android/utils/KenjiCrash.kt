@@ -61,6 +61,8 @@ object KenjiCrash {
          * потерялся один круг.
          */
         val trapState: List<String> = emptyList(),
+        /** Ответ настоящей инициализации ядра: 0 — прошла, иначе — код отказа. */
+        val initResult: String = "",
     ) {
         val isEmpty: Boolean get() = frames.isEmpty() && signal == 0 && debugBreaks.isEmpty()
     }
@@ -80,6 +82,7 @@ object KenjiCrash {
         var address = ""
         var registers = ""
         var abortCaller = ""
+        var initResult = ""
         val abortFrames = mutableListOf<String>()
         val trapState = mutableListOf<String>()
         val frames = mutableListOf<String>()
@@ -103,7 +106,9 @@ object KenjiCrash {
             from = 0
         }
         while (from > 0 && (all[from - 1].startsWith("abort interposer:") ||
-                    all[from - 1].startsWith("got patch:"))
+                    all[from - 1].startsWith("got patch:") ||
+                    all[from - 1].startsWith("init guard:") ||
+                    all[from - 1].startsWith("init-callback="))
         ) {
             --from
         }
@@ -142,7 +147,11 @@ object KenjiCrash {
                 line.startsWith("abort-caller=") ->
                     abortCaller = line.removePrefix("abort-caller=").trim()
 
-                line.startsWith("abort interposer:") || line.startsWith("got patch:") ->
+                line.startsWith("init-callback=") ->
+                    initResult = line.removePrefix("init-callback=").trim()
+
+                line.startsWith("abort interposer:") || line.startsWith("got patch:") ||
+                    line.startsWith("init guard:") ->
                     trapState.add(line.trim())
 
                 line.startsWith("abort-pc=") ->
@@ -151,7 +160,7 @@ object KenjiCrash {
         }
 
         val report = Report(step, signal, signalName, address, frames, breaks, registers,
-            abortCaller, abortFrames, trapState)
+            abortCaller, abortFrames, trapState, initResult)
         return if (report.isEmpty) null else report
     }
 
@@ -195,6 +204,13 @@ object KenjiCrash {
             builder.append(report.frames.take(8).joinToString(" → "))
             if (report.frames.size > 8) {
                 builder.append(" → … ещё ").append(report.frames.size - 8)
+            }
+            builder.append('\n')
+        }
+        if (report.initResult.isNotBlank()) {
+            builder.append("• инициализация ядра ответила: ").append(report.initResult)
+            if (report.initResult.trim() != "0") {
+                builder.append(" (ненулевой ответ означает отказ; ядро обёрнуто и продолжает работу)")
             }
             builder.append('\n')
         }

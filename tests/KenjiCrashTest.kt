@@ -531,6 +531,27 @@ fun main() {
     check("без штампа строка не появляется",
         !KenjiCrash.format(latest).contains("• сборка:"), KenjiCrash.format(latest))
 
+    // ── ответ инициализации ядра ────────────────────────────────────────
+    //
+    // Ядро само зовёт свою инициализацию и на ненулевом ответе останавливается.
+    // Мы её оборачиваем: ответ записывается и печатается, работа продолжается.
+    val initReport = KenjiCrash.parse(
+        """
+        init guard: обёрнута инициализация ядра
+        init-callback=-1 calls=1
+        step=javaInitialize
+        crash signal=6 name=SIGABRT addr=0x2e5300002300 code=-1 step=javaInitialize
+        pc=libc.so+0x530f4
+        """.trimIndent()
+    )
+    check("ответ инициализации разобран", initReport?.initResult == "-1 calls=1",
+        initReport?.initResult ?: "null")
+    val initText = KenjiCrash.format(initReport!!)
+    check("ответ инициализации в отчёте", initText.contains("инициализация ядра ответила"), initText)
+    check("ненулевой ответ объяснён", initText.contains("ненулевой ответ означает отказ"), initText)
+    check("обёртка названа в состоянии", initReport.trapState.any { it.contains("init guard") },
+        initReport.trapState.toString())
+
     println()
     println("passed=$passed failed=${failures.size}")
     failures.forEach { println("FAIL  $it") }
