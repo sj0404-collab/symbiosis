@@ -1463,3 +1463,76 @@ SIGSEGV по адресу `0x47330`, верхний кадр `libsymbiosis_kenji
 - в APK этой сборки есть обе новые строки отказа (проверено по скачанному
   артефакту), в предыдущей их нет;
 - весь набор хоста — **59/0, skipped=3** (`t_got` 15/0, `t_audio` 23/0).
+
+## 30. Причина отказа ядра: собственный журнал ядра вместо догадок
+
+Сборка `adb5da5` → запуск `41630704196` **SUCCESS**,
+APK: https://gofile.io/d/Mk8HFph8, MD5 `a9d95cfa4698dcc0af2894c705643bf2`.
+
+### 30.1. Что показал прошлый отчёт
+
+`init-args: path=…/files/kenji exists=1 dir=1`,
+`loader tap: dlopen ok, dlsym ok`, `init-callback: original=-1 calls=1` —
+и **ни одной строки `dlreq`**. Ядро при инициализации загрузчик не зовёт,
+значит ненайденной внешней функции нет, и причина отказа лежит внутри.
+
+### 30.2. Что говорит исходник ядра
+
+`src/LibKenjinx/Android/JniExportedMethods.cs`:
+
+```csharp
+public unsafe static bool JniInitialize(nint jpathId, nint jniEnv)
+{
+    string? path = Marshal.PtrToStringAnsi(jpathId);
+    bool init = Initialize(path);          // ← отказ рождается здесь
+    Interop.Initialize(new JEnvRef(jniEnv));
+    Interop.Test();
+    return init;
+}
+```
+
+`Initialize` ловит **любое** исключение и печатает его `Console.WriteLine(ex)`,
+то есть в stdout процесса, а не в отчёт. Единственное, что он делает до
+первого падения, — заводит каталоги данных и **открывает свой журнал**:
+
+```csharp
+AppDataManager.Initialize(basePath);      // Directory.CreateDirectory(Logs, Games, Profiles, Keys)
+ConfigurationState.Initialize();
+LoggerModule.Initialize();
+FileStream logFile = FileLogTarget.PrepareLogFile(logDir);   // может вернуть null
+Logger.AddTarget(new AsyncLogTargetWrapper(new FileLogTarget("file", logFile), …));
+```
+
+`PrepareLogFile` при любой неудаче (нет каталога, нельзя создать файл)
+возвращает **null**, и `new FileLogTarget("file", null)` валится на
+`StreamWriter(null)`. Отсюда отказ без единой строки: журнала ещё нет, а
+причина именно в нём.
+
+### 30.3. Что изменено
+
+- `KenjiBridge.ensureCoreDirs()` — каталоги `Logs`, `Games`, `Profiles`, `Keys`
+  создаются **до** запуска ядра, результат каждого проверяется;
+- `KenjiBridge.coreLogFile()` / `canWriteCoreLog()` — самый свежий
+  `Ryujinx_*.log` и пробная запись в каталог;
+- отчёт (экран «Ядро не запустилось») печатает **дословно** последние 12 строк
+  журнала ядра, а если журнала нет — говорит, создан ли каталог и работает ли
+  в нём запись, и какие каталоги создать не удалось;
+- `tools/check_kotlin_syntax.py` — разбор скобок и вложенных комментариев
+  (эта же ошибка — `Logs/*.log` внутри комментария — уже стоила одного прогона:
+  компилятор назвал чужой файл и чужую строку). Проверка включена в сборку.
+
+### 30.4. Проверка фактами
+
+- сборка `41630704196` — **SUCCESS**;
+- в dex скачанного APK найдены все новые строки: «Что ядро записало в свой
+  журнал», «Собственного журнала ядра нет», «Каталоги ядра не создаются»,
+  «запись в него работает»;
+- локальные проверки: `check_kotlin_refs` 107/0, `check_jni_names` 79/0,
+  `check_kotlin_syntax` 107/0, `check_patch_hunks` — все заголовки верны.
+
+### 30.5. Что нужно с устройства
+
+Открыть игру на Kenji и прислать экран «Ядро не запустилось». Ожидаемое:
+в отчёте появятся строки журнала самого ядра — там будет его собственный
+текст ошибки. Если журнала нет — отчёт скажет, каталог не создан или файл
+не заводится.
