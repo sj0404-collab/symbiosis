@@ -54,6 +54,8 @@
 #include <link.h>
 #include <ucontext.h>
 
+#include <sys/mman.h>
+
 #include "common/symbiosis/got_patch.h"
 #include <string>
 #include <mutex>
