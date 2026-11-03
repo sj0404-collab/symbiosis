@@ -63,6 +63,10 @@ object KenjiCrash {
         val trapState: List<String> = emptyList(),
         /** Ответ настоящей инициализации ядра: 0 — прошла, иначе — код отказа. */
         val initResult: String = "",
+        /** Какие функции ядро просило у загрузчика и не нашло. */
+        val loaderMisses: List<String> = emptyList(),
+        /** Смещение в файле ядра у функции инициализации, которая отказала. */
+        val initCallbackAt: String = "",
     ) {
         val isEmpty: Boolean get() = frames.isEmpty() && signal == 0 && debugBreaks.isEmpty()
     }
@@ -83,8 +87,10 @@ object KenjiCrash {
         var registers = ""
         var abortCaller = ""
         var initResult = ""
+        var initCallbackAt = ""
         val abortFrames = mutableListOf<String>()
         val trapState = mutableListOf<String>()
+        val loaderMisses = mutableListOf<String>()
         val frames = mutableListOf<String>()
         val breaks = mutableListOf<Int>()
 
@@ -108,7 +114,10 @@ object KenjiCrash {
         while (from > 0 && (all[from - 1].startsWith("abort interposer:") ||
                     all[from - 1].startsWith("got patch:") ||
                     all[from - 1].startsWith("init guard:") ||
-                    all[from - 1].startsWith("init-callback="))
+                    all[from - 1].startsWith("init-callback=") ||
+                    all[from - 1].startsWith("init-callback-fn=") ||
+                    all[from - 1].startsWith("loader tap:") ||
+                    all[from - 1].startsWith("dlreq "))
         ) {
             --from
         }
@@ -147,6 +156,18 @@ object KenjiCrash {
                 line.startsWith("abort-caller=") ->
                     abortCaller = line.removePrefix("abort-caller=").trim()
 
+                // dlsym <имя> NULL — ядро просило функцию и не нашло её. Именно
+                // такие строки объясняют отказ инициализации без текста.
+                line.startsWith("dlreq ") && line.endsWith(" NULL") -> {
+                    val parts = line.split(' ')
+                    if (parts.size >= 3) {
+                        loaderMisses.add(parts[1] + " " + parts[2])
+                    }
+                }
+
+                line.startsWith("init-callback-fn=") ->
+                    initCallbackAt = line.removePrefix("init-callback-fn=").trim()
+
                 line.startsWith("init-callback=") ->
                     initResult = line.removePrefix("init-callback=").trim()
 
@@ -160,7 +181,7 @@ object KenjiCrash {
         }
 
         val report = Report(step, signal, signalName, address, frames, breaks, registers,
-            abortCaller, abortFrames, trapState, initResult)
+            abortCaller, abortFrames, trapState, initResult, loaderMisses, initCallbackAt)
         return if (report.isEmpty) null else report
     }
 
@@ -207,8 +228,19 @@ object KenjiCrash {
             }
             builder.append('\n')
         }
+        if (report.loaderMisses.isNotEmpty()) {
+            builder.append("• ядро не нашло функций: ")
+            builder.append(report.loaderMisses.distinct().take(10).joinToString(", "))
+            if (report.loaderMisses.distinct().size > 10) {
+                builder.append(" и ещё ").append(report.loaderMisses.distinct().size - 10)
+            }
+            builder.append('\n')
+        }
         if (report.initResult.isNotBlank()) {
             builder.append("• инициализация ядра ответила: ").append(report.initResult)
+            if (report.initCallbackAt.isNotBlank()) {
+                builder.append(" [").append(report.initCallbackAt).append(']')
+            }
             if (report.initResult.trim() != "0") {
                 builder.append(" (ненулевой ответ означает отказ; ядро обёрнуто и продолжает работу)")
             }

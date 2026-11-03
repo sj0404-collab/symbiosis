@@ -552,6 +552,34 @@ fun main() {
     check("обёртка названа в состоянии", initReport.trapState.any { it.contains("init guard") },
         initReport.trapState.toString())
 
+    // ── что ядро просило у загрузчика ───────────────────────────────────
+    //
+    // Инициализация вернула -1 без текста. Единственный точный ответ на «чего
+    // не хватило» — список функций, которые ядро искало и не нашло.
+    val loaderReport = KenjiCrash.parse(
+        """
+        init guard: обёрнута инициализация ядра
+        init-callback-fn=libkenji.so+0x26ff4d4
+        dlreq dlsym Java_org_kenji_Native_getEnv NULL
+        dlreq dlsym opus_decoder_create ok
+        dlreq dlsym nativeAttach NULL
+        init-callback=-1 calls=1
+        step=javaInitialize
+        crash signal=11 name=SIGSEGV addr=0x0 code=1 step=javaInitialize
+        pc=libkenji.so+0x174a09c
+        """.trimIndent()
+    )!!
+    check("отказы загрузчика собраны", loaderReport.loaderMisses.size == 2,
+        loaderReport.loaderMisses.toString())
+    check("имя первой ненайденной функции", loaderReport.loaderMisses[0] == "dlsym Java_org_kenji_Native_getEnv",
+        loaderReport.loaderMisses.toString())
+    check("смещение отказавшей инициализации разобрано",
+        loaderReport.initCallbackAt == "libkenji.so+0x26ff4d4", loaderReport.initCallbackAt)
+    val loaderText = KenjiCrash.format(loaderReport)
+    check("в отчёте список ненайденных", loaderText.contains("ядро не нашло функций"), loaderText)
+    check("в отчёте имена названы", loaderText.contains("nativeAttach"), loaderText)
+    check("в отчёте смещение инициализации", loaderText.contains("0x26ff4d4"), loaderText)
+
     println()
     println("passed=$passed failed=${failures.size}")
     failures.forEach { println("FAIL  $it") }

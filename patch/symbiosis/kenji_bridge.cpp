@@ -835,6 +835,21 @@ int g_initCallbackCalls = 0;
 
 int GuardedInitCallback(void* a, void* b, void* c) {
     ++g_initCallbackCalls;
+    // Смещение обработчика в файле ядра: по нему видно, какая именно функция
+    // отказала, — адрес в памяти после ASLR ничего не значит.
+    if (g_crashPath[0] != '\0' && g_realInitCallback != nullptr) {
+        Dl_info info{};
+        if (::dladdr(reinterpret_cast<void*>(g_realInitCallback), &info) != 0 &&
+            info.dli_fbase != nullptr && info.dli_fname != nullptr) {
+            const char* slash = ::strrchr(info.dli_fname, '/');
+            char line[220];
+            const int n = ::snprintf(
+                line, sizeof(line), "init-callback-fn=%s+0x%lx\n", slash ? slash + 1 : info.dli_fname,
+                static_cast<unsigned long>(reinterpret_cast<uintptr_t>(g_realInitCallback) -
+                                           reinterpret_cast<uintptr_t>(info.dli_fbase)));
+            if (n > 0) AppendCrashLine(line);
+        }
+    }
     const int result = g_realInitCallback != nullptr ? g_realInitCallback(a, b, c) : -1;
     g_initCallbackResult = result;
     LOGI("init-callback: original=%d calls=%d", result, g_initCallbackCalls);
@@ -848,6 +863,82 @@ int GuardedInitCallback(void* a, void* b, void* c) {
     // результата ради красивой картинки: ответ записан в отчёт, и если
     // инициализация действительно не удалась, следующий отчёт назовёт место.
     return 0;
+}
+
+// ── что ядро просит у загрузчика ────────────────────────────────────
+//
+// ПОЧЕМУ ЭТО НУЖНО. Инициализация ядра вернула -1, и текста об ошибке нет:
+// .NET-рантайм внутри NativeAOT молчит. Но все внешние функции он берёт через
+// dlopen+dlsym (это видно по импортам самого файла), а значит на вопрос «чего
+// не хватило» можно ответить точно: записать, что он просил и что получил.
+// Ненайденный символ — это и есть причина отказа, названная по имени.
+
+using DlopenFn = void* (*)(const char*, int);
+using DlsymFn = void* (*)(void*, const char*);
+
+std::atomic<int> g_dlCalls{0};
+std::atomic<int> g_dlFailures{0};
+
+void NoteDlRequest(const char* kind, const char* name, bool ok) {
+    const int n = ++g_dlCalls;
+    if (!ok) {
+        ++g_dlFailures;
+    }
+    // Пишем только то, что важно: отказы всегда, успехи — первые полторы сотни,
+    // иначе файл отчёта превращается в список всех символов ядра.
+    if (!ok || n <= 150) {
+        if (g_crashPath[0] != '\0') {
+            char line[256];
+            const int written = ::snprintf(line, sizeof(line), "dlreq %s %s %s\n", kind,
+                                           name != nullptr ? name : "?", ok ? "ok" : "NULL");
+            if (written > 0) AppendCrashLine(line);
+        }
+    }
+}
+
+void* RealDlopen(const char* name, int flags) {
+    using Fn = DlopenFn;
+    static Fn real = reinterpret_cast<Fn>(::dlsym(RTLD_DEFAULT, "dlopen"));
+    return real != nullptr ? real(name, flags) : nullptr;
+}
+
+void* RealDlsym(void* handle, const char* name) {
+    static DlsymFn real = reinterpret_cast<DlsymFn>(::dlsym(RTLD_DEFAULT, "dlsym"));
+    return real != nullptr ? real(handle, name) : nullptr;
+}
+
+void* SymbiosisDlopen(const char* name, int flags) {
+    void* handle = RealDlopen(name, flags);
+    NoteDlRequest("dlopen", name, handle != nullptr);
+    return handle;
+}
+
+void* SymbiosisDlsym(void* handle, const char* name) {
+    void* symbol = RealDlsym(handle, name);
+    NoteDlRequest("dlsym", name, symbol != nullptr);
+    return symbol;
+}
+
+/** Подменить dlopen/dlsym в ядре — чтобы увидеть, чего ему не хватило. */
+void ArmLoaderTap(void* coreHandle) {
+    if (coreHandle == nullptr) return;
+    void* anchor = ::dlsym(coreHandle, "javaInitialize");
+    if (anchor == nullptr) return;
+
+    const auto open_result =
+        Symbiosis::PatchImport(anchor, "dlopen", reinterpret_cast<void*>(&SymbiosisDlopen));
+    const auto sym_result =
+        Symbiosis::PatchImport(anchor, "dlsym", reinterpret_cast<void*>(&SymbiosisDlsym));
+
+    LOGI("loader tap: dlopen %s, dlsym %s", open_result.ok ? "ok" : open_result.detail.c_str(),
+         sym_result.ok ? "ok" : sym_result.detail.c_str());
+    if (g_crashPath[0] != '\0') {
+        char line[256];
+        const int n = ::snprintf(line, sizeof(line), "loader tap: dlopen %s, dlsym %s\n",
+                                 open_result.ok ? "ok" : open_result.detail.c_str(),
+                                 sym_result.ok ? "ok" : sym_result.detail.c_str());
+        if (n > 0) AppendCrashLine(line);
+    }
 }
 
 /**
@@ -1070,6 +1161,7 @@ Java_org_yuzu_yuzu_1emu_utils_KenjiBridge_nativeLoad(JNIEnv* env, jobject, jstri
 
     g_core = handle;
     ArmAbortTrap(handle);
+    ArmLoaderTap(handle);
     ArmInitGuard(handle);
     LOGI("core loaded and verified");
     return env->NewStringUTF("");
