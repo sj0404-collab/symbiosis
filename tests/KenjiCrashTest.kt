@@ -580,6 +580,32 @@ fun main() {
     check("в отчёте имена названы", loaderText.contains("nativeAttach"), loaderText)
     check("в отчёте смещение инициализации", loaderText.contains("0x26ff4d4"), loaderText)
 
+    // ── что передали ядру и сколько оно спросило у загрузчика ───────────
+    val argsReport = KenjiCrash.parse(
+        """
+        init-args: path=/data/user/0/x/files/kenji exists=1 dir=1 env=0x7bcb9ef7b0
+        loader tap: dlopen ok, dlsym ok
+        dlreq dlsym opus_decoder_create ok
+        dlreq dlsym Java_org_kenji_Native_getEnv NULL
+        dlreq dlopen libkenjinxjni ok
+        init-callback=-1 calls=1
+        step=javaInitialize
+        crash signal=11 name=SIGSEGV addr=0x0 code=1 step=javaInitialize
+        pc=libkenji.so+0x174a09c
+        """.trimIndent()
+    )!!
+    check("аргументы инициализации разобраны", argsReport.initArgs.contains("dir=1"), argsReport.initArgs)
+    check("все запросы к загрузчику посчитаны", argsReport.loaderCalls == 3,
+        argsReport.loaderCalls.toString())
+    check("ненайденное отделено от найденного", argsReport.loaderMisses.size == 1,
+        argsReport.loaderMisses.toString())
+    check("состояние метчика в отчёте", argsReport.trapState.any { it.startsWith("loader tap:") },
+        argsReport.trapState.toString())
+    val argsText = KenjiCrash.format(argsReport)
+    check("в отчёте путь", argsText.contains("передано ядру"), argsText)
+    check("в отчёте счётчик загрузчика", argsText.contains("запросов к загрузчику: 3"), argsText)
+    check("в отчёте ненайденное", argsText.contains("не найдено: 1"), argsText)
+
     println()
     println("passed=$passed failed=${failures.size}")
     failures.forEach { println("FAIL  $it") }

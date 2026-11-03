@@ -55,6 +55,7 @@
 #include <ucontext.h>
 
 #include <sys/mman.h>
+#include <sys/stat.h>
 
 #include "common/symbiosis/got_patch.h"
 #include <string>
@@ -1224,6 +1225,21 @@ Java_org_yuzu_yuzu_1emu_utils_KenjiBridge_nativeInitialize(JNIEnv* env, jobject,
     // Перехват ставится ровно здесь: до этого вызова ядро JNIEnv не получало,
     // после — получает только от нас.
     JNIEnv* passedEnv = InstallJniTap(env);
+
+    // Что именно мы передали ядру. Если оно отказывается стартовать, первое,
+    // что нужно исключить, — путь: отсутствующий каталог для ядра выглядит как
+    // «нет данных», и оно молча возвращает отказ.
+    if (g_crashPath[0] != '\0') {
+        struct stat st {};
+        const bool exists = ::stat(dataPath, &st) == 0;
+        const bool is_dir = exists && S_ISDIR(st.st_mode);
+        char line[420];
+        const int n = ::snprintf(line, sizeof(line), "init-args: path=%s exists=%d dir=%d env=%p\n",
+                                 dataPath, exists ? 1 : 0, is_dir ? 1 : 0,
+                                 reinterpret_cast<void*>(passedEnv));
+        if (n > 0) AppendCrashLine(line);
+    }
+
     g_inCore = 1;
     bool ok = fn(const_cast<char*>(dataPath), passedEnv);
     g_inCore = 0;
