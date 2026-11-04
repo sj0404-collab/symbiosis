@@ -47,37 +47,35 @@ jobs:
       - name: Check out upstream Eden
         run: |
           # depth 50 rather than 1: git apply --3way needs history to resolve
-          # a context mismatch instead of failing outright.
+          # a context mismatch instead of failing outright. The depth flag was
+          # described here in a comment and missing from the command itself,
+          # so every run cloned the FULL history - and on 04.11.2026 that took
+          # longer than any timeout we set and the whole run was lost.
           #
-          # Retried, and with a mirror behind it. git.eden-emu.dev answered 502
-          # mid-build once and took the whole run down with it - every later
-          # step skipped, thirty minutes lost, and nothing wrong with the code.
-          # sj0404-collab/eden-upstream-reference is our own untouched copy of
-          # the same v0.2.1 tree, kept for exactly this.
-          # Каждый клон ограничен по времени. Без ограничения сервер вендора
-          # может не ответить и не разорвать соединение, а git в этом случае
-          # ждёт: заход 04.11.2026 висел на этом шаге 25 минут, и запасного
-          # пути (зеркало ниже) он не достиг, потому что до него просто не
-          # дошло. Таймаут не «портят сборку», а переводят на зеркало.
+          # Retried, and bounded every time. git.eden-emu.dev answered 502
+          # mid-build once and took the run down with it; it has also hung
+          # without closing the connection, which is worse - the job sits
+          # there until the 90-minute limit.
+          #
+          # There is no mirror to fall back to: sj0404-collab/eden-upstream-reference
+          # answers 404 and has for a while, so the old fallback was a path
+          # that could never work. A failed clone now says so instead of
+          # pretending a backup exists.
           ok=0
-          for attempt in 1 2 3; do
-            if timeout 240 git clone --branch v0.2.1 \
+          for attempt in 1 2 3 4; do
+            rm -rf eden
+            if timeout 600 git clone --depth 50 --single-branch --branch v0.2.1 \
                  https://git.eden-emu.dev/eden-emu/eden.git eden 2>/tmp/clone.log; then
               ok=1; break
             fi
             echo "attempt $attempt failed:"; tail -3 /tmp/clone.log
-            rm -rf eden
             sleep $((attempt * 10))
           done
 
           if [ "$ok" != 1 ]; then
-            # AT THE TAG. Cloning the mirror's default branch pulls a
-            # different commit, and the build then dies in CMake with an error
-            # that looks like ours. That cost two runs on build2.yml.
-            echo "::warning::upstream is unreachable; falling back to our mirror at v0.2.1"
-            timeout 300 git clone --branch v0.2.1 \
-              https://github.com/sj0404-collab/eden-upstream-reference.git eden \
-              || { echo "::error::neither upstream nor the mirror could be cloned"; exit 1; }
+            echo "::error::upstream Eden is unreachable after 4 attempts (v0.2.1)"
+            tail -20 /tmp/clone.log
+            exit 1
           fi
 
           cd eden
