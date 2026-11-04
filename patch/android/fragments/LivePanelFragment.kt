@@ -30,6 +30,7 @@ import org.yuzu.yuzu_emu.utils.UserPresets
 import org.yuzu.yuzu_emu.utils.CrashReport
 import org.yuzu.yuzu_emu.utils.GameAddons
 import org.yuzu.yuzu_emu.utils.LauncherSettings
+import org.yuzu.yuzu_emu.utils.KenjiReport
 import org.yuzu.yuzu_emu.utils.LivePanel
 import org.yuzu.yuzu_emu.utils.PluginPack
 import org.yuzu.yuzu_emu.utils.SaveSource
@@ -198,6 +199,10 @@ class LivePanelFragment : Fragment() {
         web?.onResume()
         // Не перерисовываем страницу: список уже на экране.
         // Перезагрузка после выхода из игры как раз обнуляла кэш в UI.
+        // А вот причину прошлого запуска второго ядра показать нужно: его
+        // процесс умирает отдельно от библиотеки, и иначе о падении не
+        // остаётся ни слова.
+        runCatching { KenjiReport.showPendingIfAny(requireContext()) }
     }
 
     override fun onDestroyView() {

@@ -1657,6 +1657,38 @@ Java_org_yuzu_yuzu_1emu_utils_KenjiBridge_nativeUnload(JNIEnv*, jobject) {
 }
 
 
+/**
+ * Версия установленной прошивки — словами самого ядра.
+ *
+ * ЗАЧЕМ. «Игра не открылась» и «прошивки нет» до сих пор выглядели
+ * одинаково: ядро в обоих случаях молчит, а решения у них разные. Прошивка
+ * лежит в собственном каталоге второго ядра (`system`), а не в каталоге
+ * Eden, поэтому её отсутствие — обычное состояние, а не поломка.
+ *
+ * Пустая строка — прошивки нет. Строку выделяет ядро своим аллокатором,
+ * освобождать её отсюда не будем: вызов один за запуск, а чужой free()
+ * на .NET-куче дороже утечки в несколько байт.
+ */
+JNIEXPORT jstring JNICALL
+Java_org_yuzu_yuzu_1emu_utils_KenjiBridge_nativeFirmwareVersion(JNIEnv* env, jobject) {
+    std::lock_guard<std::mutex> guard(g_lock);
+    if (g_core == nullptr) return env->NewStringUTF("");
+    using Fn = const char* (*)();
+    auto fn = reinterpret_cast<Fn>(dlsym(g_core, "deviceGetInstalledFirmwareVersion"));
+    if (fn == nullptr) return env->NewStringUTF("");
+    g_inCore = 1;
+    const char* version = fn();
+    g_inCore = 0;
+    const std::string text = (version != nullptr) ? version : "";
+    if (g_crashPath[0] != '\0') {
+        char line[240];
+        const int n = ::snprintf(line, sizeof(line), "fw: %s\n",
+                                 text.empty() ? "прошивка не установлена" : text.c_str());
+        if (n > 0) AppendCrashLine(line);
+    }
+    return env->NewStringUTF(text.c_str());
+}
+
 JNIEXPORT jstring JNICALL
 Java_org_yuzu_yuzu_1emu_utils_KenjiBridge_nativeDeviceInit(
         JNIEnv* env, jobject, jint memoryManagerMode, jboolean useNce,

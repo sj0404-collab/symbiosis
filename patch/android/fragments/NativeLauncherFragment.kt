@@ -36,6 +36,7 @@ import org.yuzu.yuzu_emu.utils.EngineStore
 import org.yuzu.yuzu_emu.utils.ExitTrace
 import org.yuzu.yuzu_emu.utils.GameHelper
 import org.yuzu.yuzu_emu.utils.GameIconUtils
+import org.yuzu.yuzu_emu.utils.KenjiReport
 import org.yuzu.yuzu_emu.utils.KernelLog
 import org.yuzu.yuzu_emu.utils.NativeLibraryPresenter
 import org.yuzu.yuzu_emu.utils.PluginEngine
@@ -693,6 +694,18 @@ class NativeLauncherFragment : Fragment() {
 
     private val Int.px: Int
         get() = (this * resources.displayMetrics.density).toInt()
+
+    /**
+     * Возврат из игры.
+     *
+     * Второе ядро играет в отдельном процессе, и его падение закрывает только
+     * себя: библиотека остаётся на экране, о причине — ни слова. Показываем её
+     * здесь, при возврате, самим отчётом, который оставил умерший процесс.
+     */
+    override fun onResume() {
+        super.onResume()
+        runCatching { KenjiReport.showPendingIfAny(requireContext()) }
+    }
 
     override fun onDestroyView() {
         super.onDestroyView()

@@ -156,6 +156,36 @@ jobs:
           ccache --zero-stats
           ccache --show-config | grep -E "max_size|cache_dir|base_dir"
 
+      - name: Build libopenal.so for the second core
+        # ЗАЧЕМ ЭТОТ ШАГ. `deviceInitialize` первым делом создаёт
+        # OpenALHardwareDeviceDriver, то есть зовёт alcOpenDevice через
+        # P/Invoke в libopenal.so. В Android такой библиотеки нет, а в Eden
+        # её и не было: вызов падал с DllNotFoundException внутри
+        # [UnmanagedCallersOnly], .NET убивал процесс, и игра закрывалась
+        # чёрным экраном без единого слова. Оригинальный Kenji собирает
+        # openal-soft из подмодуля и кладёт libopenal.so рядом с ядром —
+        # делаем так же, из их же форка (в нём есть выравнивание страниц
+        # 16 КБ, которое требует наше ядро).
+        run: |
+          NDK="$(ls -d "$ANDROID_HOME/ndk/"* | head -1)"
+          echo "NDK: $NDK"
+          git clone --depth 1 https://git.ryujinx.app/kenji-nx/openal-soft.git /tmp/openal-soft
+          cmake -S /tmp/openal-soft -B /tmp/openal-build \
+            -DCMAKE_TOOLCHAIN_FILE="$NDK/build/cmake/android.toolchain.cmake" \
+            -DANDROID_ABI=arm64-v8a \
+            -DANDROID_PLATFORM=android-26 \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DLIBTYPE=SHARED \
+            -DALSOFT_EXAMPLES=OFF \
+            -DALSOFT_UTILS=OFF \
+            -DALSOFT_TESTS=OFF \
+            -DALSOFT_INSTALL=OFF
+          cmake --build /tmp/openal-build -j"$(nproc)" --target OpenAL
+          SO="$(find /tmp/openal-build -name 'libopenal.so*' -type f | head -1)"
+          [ -n "$SO" ] || { echo "::error::libopenal.so не собрался"; exit 1; }
+          cp "$SO" fork/patch/libs/arm64-v8a/libopenal.so
+          ls -l fork/patch/libs/arm64-v8a/
+
       - name: Apply the Symbiosis patch
         run: |
           cd eden
@@ -406,6 +436,23 @@ jobs:
               echo "  ok   $sym exported for the core"
             else echo "  MISSING $sym in libkenjinxjni.so"; fail=1; fi
           done
+
+          # OpenAL: deviceInitialize первым делом создаёт OpenAL-драйвер, и без
+          # этой библиотеки процесс умирает внутри ядра — без текста и отчёта.
+          if [ -f lib/arm64-v8a/libopenal.so ]; then
+            echo "  ok   libopenal.so present ($(stat -c%s lib/arm64-v8a/libopenal.so) байт)"
+            if "$NM" -D lib/arm64-v8a/libopenal.so | grep -q " alcOpenDevice$"; then
+              echo "  ok   alcOpenDevice exported by libopenal.so"
+            else echo "  MISSING alcOpenDevice in libopenal.so"; fail=1; fi
+          else
+            echo "  MISSING libopenal.so — deviceInitialize упадёт на OpenAL"; fail=1
+          fi
+
+          # Порядок вызовов, на котором ядро не работает: deviceInitialize
+          # раньше рендерера. Проверяем по dex, что новый порядок доехал.
+          if unzip -p "$APK" 'classes*.dex' | grep -a -q "плеер второго ядра готов"; then
+            echo "  ok   подготовка плеера второго ядра в dex"
+          else echo "  MISSING подготовка плеера в dex"; fail=1; fi
 
           # What the 25 MB budget is actually about.
           python3 - "$GITHUB_WORKSPACE/$APK" <<'SIZEPY' | tee -a "$GITHUB_STEP_SUMMARY"

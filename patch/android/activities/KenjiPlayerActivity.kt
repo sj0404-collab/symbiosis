@@ -21,6 +21,7 @@ import android.widget.Toast
 import java.io.File
 import org.yuzu.yuzu_emu.utils.EngineLoader
 import org.yuzu.yuzu_emu.utils.KenjiBridge
+import org.yuzu.yuzu_emu.utils.KenjiReport
 
 /**
  * Second player. Lives in the :kenji process so a fault in Kenji cannot
@@ -57,6 +58,8 @@ class KenjiPlayerActivity : Activity(), SurfaceHolder.Callback {
     private var pfd: ParcelFileDescriptor? = null
     private var loopThread: Thread? = null
     private var started = false
+    /** Запуск оборвался с названной причиной — она должна остаться в отчёте. */
+    private var failed = false
     private lateinit var status: TextView
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -121,37 +124,88 @@ class KenjiPlayerActivity : Activity(), SurfaceHolder.Callback {
         if (started) return
         val fd = pfd?.fd ?: return fail("нет дескриптора")
         val path = intent.getStringExtra(EXTRA_PATH).orEmpty()
+        val config = intent.getStringExtra(EXTRA_CONFIG).orEmpty()
         val w = holder.surfaceFrame.width().coerceAtLeast(128)
         val h = holder.surfaceFrame.height().coerceAtLeast(128)
+        val appContext = applicationContext
         started = true
         loopThread = Thread({
+            // Отчёт о падении включается ДО первого касания ядра: файл и
+            // обработчики сигналов переживут смерть процесса, и в отчёте
+            // останется шаг, на котором всё оборвалось. Раньше это делала
+            // только «проверка ядра», поэтому падение игры не оставляло
+            // ничего, кроме чёрного экрана.
+            runCatching {
+                KenjiBridge.pidFile(appContext).writeText("${android.os.Process.myPid()}")
+            }
+            KenjiBridge.armCrashReport(appContext)
+            KenjiReport.markStart(appContext)
+
             val nw = KenjiBridge.nativeWindow(holder.surface)
             org.kenjinx.android.KenjinxNative.nativeSurface = nw
             org.kenjinx.android.KenjinxNative.nativeWindow = nw
-            val prep = KenjiBridge.preparePlay(
-                this,
-                intent.getStringExtra(EXTRA_CONFIG).orEmpty()
-            )
+
+            KenjiBridge.noteStep("1/6 · загрузка ядра")
+            val prep = KenjiBridge.preparePlay(appContext, config)
             if (!prep.ok) {
                 runOnUiThread { fail(prep.message) }
                 return@Thread
             }
+
+            // Порядок как в официальном Kenji: конфигурация графики →
+            // рендерер → устройство → игра. Устройство без рендерера ядро
+            // создать отказывается (его InitializeContext проверяет
+            // Renderer != null), а рендерер без поверхности создавать нечего.
+            KenjiBridge.noteStep("2/6 · рендерер")
             val surf = KenjiBridge.attachSurface(holder.surface, w, h)
             if (!surf.ok) {
                 runOnUiThread { fail(surf.message) }
                 return@Thread
             }
+
+            KenjiBridge.noteStep("3/6 · устройство")
+            val dev = deviceInitOnMain()
+            if (!dev.ok) {
+                runOnUiThread { fail(dev.message) }
+                return@Thread
+            }
+
+            KenjiBridge.noteStep("4/6 · игра")
             val load = KenjiBridge.loadGame(fd, KenjiBridge.fileTypeOf(path))
             if (!load.ok) {
                 runOnUiThread { fail(load.message) }
                 return@Thread
             }
+
             // Строка настроек рядом со статусом: «ядро запустилось» без них
             // ничего не говорит о том, с чем именно оно запустилось.
-            runOnUiThread { status.text = "второе ядро · играет\n" + prep.message }
+            runOnUiThread {
+                status.text = "второе ядро · играет\n" + prep.message
+            }
+
+            KenjiBridge.noteStep("5/6 · цикл отрисовки")
             KenjiBridge.runLoop()
+            KenjiBridge.noteStep("6/6 · цикл завершён")
             runOnUiThread { leave() }
         }, "kenji-loop").also { it.start() }
+    }
+
+    /**
+     * `deviceInitialize` — только из главного потока.
+     *
+     * Это требование ядра, а не наша привычка: в официальном Kenji тот же
+     * вызов завёрнут в переброс на UI-поток с ожиданием результата.
+     */
+    private fun deviceInitOnMain(): KenjiBridge.Status {
+        var result = KenjiBridge.Status(false, "устройство не создалось")
+        val latch = java.util.concurrent.CountDownLatch(1)
+        runOnUiThread {
+            result = runCatching { KenjiBridge.deviceInit() }
+                .getOrElse { KenjiBridge.Status(false, it.message ?: "устройство") }
+            latch.countDown()
+        }
+        latch.await(120, java.util.concurrent.TimeUnit.SECONDS)
+        return result
     }
 
     override fun surfaceChanged(holder: SurfaceHolder, format: Int, width: Int, height: Int) = Unit
@@ -166,6 +220,11 @@ class KenjiPlayerActivity : Activity(), SurfaceHolder.Callback {
     }
 
     override fun onDestroy() {
+        // Метка «вышли штатно» — до unload: если процесс умрёт ниже, отчёт
+        // о падении должен остаться, а не превратиться в чистый выход.
+        // А после названного отказа метку не меняем: причина должна дойти до
+        // списка игр, иначе она живёт шесть секунд на чёрном экране.
+        if (!failed) KenjiReport.markClean(applicationContext)
         KenjiBridge.stopPlay()
         loopThread?.join(1500)
         KenjiBridge.unload()
@@ -180,11 +239,17 @@ class KenjiPlayerActivity : Activity(), SurfaceHolder.Callback {
     }
 
     private fun fail(msg: String) {
+        failed = true
         status.text = msg
         Toast.makeText(this, msg, Toast.LENGTH_LONG).show()
-        // Do not finish() instantly on a probe-style failure: the user must
-        // see why. Auto-leave after a beat so the process does not linger.
-        status.postDelayed({ finish() }, 2200)
+        // Причина падения должна остаться и после того, как экран закроется:
+        // отчёт о падении читает лаунчер и показывает его при возврате.
+        runCatching {
+            KenjiBridge.crashReportFile(applicationContext)
+                .appendText("\nплеер: $msg\n")
+        }
+        // Даём прочитать: человек сам решит, когда выйти.
+        status.postDelayed({ finish() }, 6000)
     }
 
     private fun openRom(path: String): ParcelFileDescriptor? = runCatching {

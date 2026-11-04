@@ -135,7 +135,24 @@ cp "$P"/shaders/present_retro.frag "$E/src/video_core/host_shaders/"
 mkdir -p "$A/jniLibs/arm64-v8a"
 cp "$P"/libs/arm64-v8a/libssl.so "$A/jniLibs/arm64-v8a/"
 cp "$P"/libs/arm64-v8a/libcrypto.so "$A/jniLibs/arm64-v8a/"
-echo "OpenSSL для ядра: $(ls "$A/jniLibs/arm64-v8a" | tr '\n' ' ')"
+
+# OpenAL для .NET-ядра.
+#
+# `deviceInitialize` в ядре начинается с `new OpenALHardwareDeviceDriver()`,
+# а его конструктор зовёт `alcOpenDevice` — P/Invoke в libopenal.so. В
+# Android этой библиотеки нет. Вызов происходит внутри
+# [UnmanagedCallersOnly]-метода, исключение оттуда не перехватывается, и .NET
+# завершает процесс: игра закрывается чёрным экраном, без текста и без
+# отчёта. Оригинальный Kenji собирает openal-soft из подмодуля и кладёт
+# libopenal.so рядом с ядром. Собираем его в CI (шаг «Build libopenal.so»)
+# и копируем сюда.
+if [ -f "$P/libs/arm64-v8a/libopenal.so" ]; then
+  cp "$P/libs/arm64-v8a/libopenal.so" "$A/jniLibs/arm64-v8a/"
+  echo "OpenAL для ядра: $(ls -l "$P/libs/arm64-v8a/libopenal.so" | awk '{print $5" байт"}')"
+else
+  echo "ВНИМАНИЕ: libopenal.so не собран — deviceInitialize упадёт на OpenAL" >&2
+fi
+echo "Библиотеки ядра: $(ls "$A/jniLibs/arm64-v8a" | tr '\n' ' ')"
 
 # JNI bridge
 cp "$P"/native_symbiosis.cpp "$A/jni/"

@@ -67,6 +67,11 @@ object KenjiBridge {
 
     /** Отметить шаг, чтобы падение можно было к нему привязать. */
     private external fun nativeSetStep(step: String)
+
+    /** Отметить шаг в отчёте о падении — то же, что видит разбор. */
+    fun noteStep(step: String) {
+        if (bridgeLoaded) runCatching { nativeSetStep(step) }
+    }
     private external fun nativeInitialize(dataPath: String): String
     private external fun nativeSymbolCount(): Int
     private external fun nativeIsLoaded(): Boolean
@@ -100,6 +105,8 @@ object KenjiBridge {
         enableTextureRecompression: Boolean,
         backendThreading: Int
     ): String
+    /** Версия прошивки по словам ядра (пусто — не установлена). */
+    private external fun nativeFirmwareVersion(): String
     private external fun nativeAttachSurface(surface: android.view.Surface, width: Int, height: Int): String
     private external fun nativeLoadGame(fd: Int, type: Int): String
     private external fun nativeRunLoop(): String
@@ -351,24 +358,7 @@ object KenjiBridge {
         } else {
             EngineStore.configWith(context, EngineHybrid.decode(effective))
         }
-
-        nativeDeviceInit(
-            memoryManagerMode = cfg.memoryManagerMode,
-            useNce = cfg.useNce,
-            memoryConfiguration = cfg.memoryConfiguration,
-            systemLanguage = cfg.systemLanguage,
-            regionCode = cfg.regionCode,
-            vSyncMode = cfg.vSyncMode,
-            enableDockedMode = cfg.enableDockedMode,
-            enablePtc = cfg.enablePtc,
-            enableLowPowerPtc = cfg.enableLowPowerPtc,
-            enableJitCacheEviction = cfg.enableJitCacheEviction,
-            enableInternetAccess = cfg.enableInternetAccess,
-            enableFsIntegrityChecks = cfg.enableFsIntegrityChecks,
-            fsGlobalAccessLogMode = cfg.fsGlobalAccessLogMode,
-            timeZone = cfg.timeZone,
-            ignoreMissingServices = cfg.ignoreMissingServices
-        ).takeIf { it.isNotEmpty() }?.let { return Status(false, it, started.symbols) }
+        pendingCfg = cfg
 
         nativeGraphicsInit(
             resScale = cfg.resScale,
@@ -383,7 +373,63 @@ object KenjiBridge {
         ).takeIf { it.isNotEmpty() }?.let { return Status(false, it, started.symbols) }
 
         lastConfig = EngineHybrid.summary(cfg)
-        return Status(true, "плеер второго ядра готов · " + lastConfig, started.symbols)
+        lastFirmware = firmwareVersion()
+        val fwText = if (lastFirmware.isBlank()) {
+            "прошивка: не установлена"
+        } else {
+            "прошивка: $lastFirmware"
+        }
+        return Status(true, "плеер второго ядра готов · " + lastConfig + " · " + fwText, started.symbols)
+    }
+
+    /**
+     * Создать устройство — ПОСЛЕ рендерера и только из главного потока.
+     *
+     * ПЕРВЫЙ БАГ, КОТОРЫЙ ЗДЕСЬ ИСПРАВЛЕН. Раньше порядок был обратный:
+     * `deviceInitialize`, потом рендерер. Ядро так не умеет: его
+     * `InitializeContext` первой строкой проверяет `Renderer == null` и
+     * возвращает `false` — то есть без рендерера устройства не будет вовсе, а
+     * дальше `deviceLoadDescriptor` видит `EmulationContext == null` и отдаёт
+     * отказ, из-за которого игра не открывалась.
+     *
+     * ВТОРОЙ. `deviceInitialize` обязан идти из главного потока — это прямо
+     * написано в официальном Kenji («We are only able to initialize the
+     * emulation context on the main thread»), и вызов из рабочего потока там
+     * же завёрнут в переброс на UI-поток с ожиданием.
+     */
+    fun deviceInit(): Status {
+        val cfg = pendingCfg ?: return Status(false, "настройки не подготовлены")
+        val err = runCatching {
+            nativeDeviceInit(
+                memoryManagerMode = cfg.memoryManagerMode,
+                useNce = cfg.useNce,
+                memoryConfiguration = cfg.memoryConfiguration,
+                systemLanguage = cfg.systemLanguage,
+                regionCode = cfg.regionCode,
+                vSyncMode = cfg.vSyncMode,
+                enableDockedMode = cfg.enableDockedMode,
+                enablePtc = cfg.enablePtc,
+                enableLowPowerPtc = cfg.enableLowPowerPtc,
+                enableJitCacheEviction = cfg.enableJitCacheEviction,
+                enableInternetAccess = cfg.enableInternetAccess,
+                enableFsIntegrityChecks = cfg.enableFsIntegrityChecks,
+                fsGlobalAccessLogMode = cfg.fsGlobalAccessLogMode,
+                timeZone = cfg.timeZone,
+                ignoreMissingServices = cfg.ignoreMissingServices
+            )
+        }.getOrElse { return Status(false, "мост упал на устройстве: ${it.message ?: it.javaClass.simpleName}") }
+        return if (err.isEmpty()) Status(true, "устройство создано") else Status(false, err)
+    }
+
+    /**
+     * Версия установленной прошивки по словам самого ядра.
+     *
+     * Пустая строка — прошивки нет. Нужна не для красоты: без неё «игра не
+     * открылась» не отличить от «прошивки нет», и оба случая выглядели одинаково.
+     */
+    fun firmwareVersion(): String {
+        ensureBridge()?.let { return "" }
+        return runCatching { nativeFirmwareVersion() }.getOrDefault("").trim()
     }
 
     /**
@@ -396,6 +442,15 @@ object KenjiBridge {
     @Volatile
     var lastConfig: String = ""
         private set
+
+    /** Версия прошивки второго ядра, как её называет само ядро. */
+    @Volatile
+    var lastFirmware: String = ""
+        private set
+
+    /** Настройки, посчитанные в [preparePlay]; их ждёт [deviceInit]. */
+    @Volatile
+    private var pendingCfg: EngineHybrid.KenjiConfig? = null
 
     fun attachSurface(surface: android.view.Surface, width: Int, height: Int): Status {
         ensureBridge()?.let { return Status(false, it) }
