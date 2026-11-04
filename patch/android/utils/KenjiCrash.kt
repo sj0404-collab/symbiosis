@@ -138,6 +138,7 @@ object KenjiCrash {
                     all[from - 1].startsWith("pal:") ||
                     all[from - 1].startsWith("call:") ||
                     all[from - 1].startsWith("gc:") ||
+                    all[from - 1].startsWith("ssl:") ||
                     all[from - 1].startsWith("dlreq "))
         ) {
             --from
@@ -209,6 +210,11 @@ object KenjiCrash {
                 // на весь процесс.
                 line.startsWith("gc:") ->
                     palLines.add(line.removePrefix("gc:").trim())
+
+                // ssl: libssl.so=ok (…) — нашлась ли криптография, которую
+                // требует .NET. Без неё ядро останавливается через abort().
+                line.startsWith("ssl:") ->
+                    palLines.add(line.removePrefix("ssl:").trim())
 
                 // got patch: журнал вызовов — узлов N из 4 — сколько перехватов
                 // окружения удалось поставить. Без этого числа пустой раздел

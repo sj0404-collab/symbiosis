@@ -1104,6 +1104,63 @@ int SymbiosisMlock(const void* addr, size_t len) {
 //   ВАЖНО: NativeAOT читает эту переменную как голое шестнадцатеричное
 //   число. Форма `0x400000000` молча игнорируется — резерв остаётся 256 ГиБ.
 
+/*
+ * Подгрузить OpenSSL для криптографии .NET.
+ *
+ * ЧТО БЫЛО. Инициализация ядра прошла (init-callback=0), но через сорок
+ * миллисекунд рабочий поток .NET напечатал «No usable version of libssl was
+ * found» и процесс остановился через abort(). Криптография .NET ищет libssl
+ * по списку имён (3, 1.1, 1.0.2, 1.0.0, 10 и просто libssl.so) и, не найдя
+ * ни одного, убивает процесс — это её штатное поведение, а не сбой ядра.
+ *
+ * ЧТО ДЕЛАЕМ. Библиотеки теперь лежат в APK рядом с мостом (их кладёт
+ * сборочный скрипт). Загружаем их сами и открыто: если загрузка не удастся,
+ * в отчёте будет строка с причиной, а не «ядро молча упало». Сначала по
+ * абсолютному пути рядом с собой — он не зависит от того, что система
+ * считает путём поиска; потом по имени, на случай если библиотека пришла
+ * из другого места.
+ */
+void PreloadOpenSsl() {
+    std::string dir;
+    Dl_info info{};
+    if (::dladdr(reinterpret_cast<void*>(&PreloadOpenSsl), &info) != 0 && info.dli_fname != nullptr) {
+        const std::string path(info.dli_fname);
+        const auto slash = path.find_last_of('/');
+        if (slash != std::string::npos) dir = path.substr(0, slash + 1);
+    }
+
+    // libcrypto первой: libssl зависит от неё по имени.
+    const char* names[] = {"libcrypto.so", "libssl.so"};
+    for (const char* name : names) {
+        void* handle = nullptr;
+        std::string used;
+        if (!dir.empty()) {
+            const std::string absolute = dir + name;
+            handle = ::dlopen(absolute.c_str(), RTLD_NOW | RTLD_GLOBAL);
+            if (handle != nullptr) used = absolute;
+        }
+        if (handle == nullptr) {
+            handle = ::dlopen(name, RTLD_NOW | RTLD_GLOBAL);
+            if (handle != nullptr) used = name;
+        }
+
+        LOGI("ssl: %s %s", name, handle != nullptr ? "ok" : "не найдена");
+        if (g_crashPath[0] != '\0') {
+            char line[420];
+            int n;
+            if (handle != nullptr) {
+                n = ::snprintf(line, sizeof(line), "ssl: %s=ok (%s)\n", name, used.c_str());
+            } else {
+                const char* why = ::dlerror();
+                n = ::snprintf(line, sizeof(line),
+                               "ssl: %s=HET (%s) — криптография .NET остановит ядро\n", name,
+                               why != nullptr ? why : "dlopen не дал причины");
+            }
+            if (n > 0) AppendCrashLine(line);
+        }
+    }
+}
+
 void ConfigureCoreRuntimeEnv() {
     // Куча .NET резервирует виртуальное пространство заранее; на 39-битной
     // разметке 256 ГиБ не помещаются. 0x400000000 = 16 ГиБ.
@@ -1128,6 +1185,9 @@ void ConfigureCoreRuntimeEnv() {
 
     ::setenv(knob, value.c_str(), 1);
     LOGI("gc: %s=%s (%s)", knob, value.c_str(), source.c_str());
+
+    // Криптография .NET ищет libssl сама и убивает процесс, если не нашла.
+    PreloadOpenSsl();
 
     if (g_crashPath[0] != '\0') {
         char line[320];

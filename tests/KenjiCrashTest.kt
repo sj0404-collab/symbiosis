@@ -695,6 +695,33 @@ fun main() {
             parsed.palLines.toString())
     }
 
+    // Криптография .NET: нашлась библиотека или нет — от этого зависит,
+    // доживёт ли процесс до конца инициализации.
+    val sslReport = KenjiCrash.parse(
+        """
+        step=javaInitialize
+        gc: DOTNET_GCRegionRange=400000000 (наш выбор 16 ГиБ)
+        ssl: libcrypto.so=ok (/data/app/x/lib/arm64-v8a/libcrypto.so)
+        ssl: libssl.so=ok (/data/app/x/lib/arm64-v8a/libssl.so)
+        init-callback=0 calls=1
+        crash signal=6 name=SIGABRT addr=0x0 code=1 step=javaInitialize
+        """.trimIndent()
+    )!!
+    check("криптография в отчёте", sslReport.palLines.count { it.startsWith("libssl.so=") ||
+        it.startsWith("libcrypto.so=") } == 2, sslReport.palLines.toString())
+    val sslText = KenjiCrash.format(sslReport)
+    check("в отчёте путь к libssl", sslText.contains("libssl.so=ok"), sslText)
+
+    val sslMissing = KenjiCrash.parse(
+        """
+        step=javaInitialize
+        ssl: libssl.so=HET (library "libssl.so" not found) — криптография .NET остановит ядро
+        crash signal=6 name=SIGABRT addr=0x0 code=1 step=javaInitialize
+        """.trimIndent()
+    )!!
+    check("отсутствие libssl названо", sslMissing.palLines.any { it.contains("libssl.so=HET") },
+        sslMissing.palLines.toString())
+
     println()
     println("passed=$passed failed=${failures.size}")
     failures.forEach { println("FAIL  $it") }

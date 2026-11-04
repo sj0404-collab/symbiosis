@@ -121,6 +121,22 @@ cp "$P"/symbiosis/*.cpp "$P"/symbiosis/*.h "$E/src/common/symbiosis/"
 # Shader
 cp "$P"/shaders/present_retro.frag "$E/src/video_core/host_shaders/"
 
+# OpenSSL для .NET-ядра.
+#
+# Ядро — NativeAOT, и его криптография (.NET System.Security.Cryptography)
+# ищет libssl при первом же обращении. Находит список имён: libssl.so.3,
+# .so.1.1, .so.1.0.2, .so.1.0.0, .so.10 и, последним, просто libssl.so.
+# В Android таких библиотек нет, а в Eden своих не было: сборка падала с
+# «No usable version of libssl was found» и abort(). Оригинальное приложение
+# Kenji кладёт обе рядом с собой — делаем так же.
+#
+# libssl NEEDs libcrypto по имени, поэтому копируются обе и с теми именами,
+# которые ждёт загрузчик.
+mkdir -p "$A/jniLibs/arm64-v8a"
+cp "$P"/libs/arm64-v8a/libssl.so "$A/jniLibs/arm64-v8a/"
+cp "$P"/libs/arm64-v8a/libcrypto.so "$A/jniLibs/arm64-v8a/"
+echo "OpenSSL для ядра: $(ls "$A/jniLibs/arm64-v8a" | tr '\n' ' ')"
+
 # JNI bridge
 cp "$P"/native_symbiosis.cpp "$A/jni/"
 
