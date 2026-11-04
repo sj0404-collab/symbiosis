@@ -1246,6 +1246,12 @@ void PalPreflight() {
 
 std::atomic<int> g_envTraceBudget{80};
 
+// Самое крупное резервирование адресного пространства, которое запросило
+// ядро. Нужно, чтобы отчёт отвечал на вопрос «подействовала ли настройка
+// кучи» фактом, а не надеждой: 256 ГиБ здесь означает, что переменная не
+// прочитана, а 16 ГиБ — что прочитана.
+std::atomic<unsigned long long> g_largestReserve{0};
+
 void TraceEnv(const char* format, ...) {
     if (g_crashPath[0] == '\0') return;
     if (g_envTraceBudget.fetch_sub(1) <= 0) return;
@@ -1290,6 +1296,9 @@ void* SymbiosisMmap(void* addr, size_t length, int prot, int flags, int fd, off_
     void* result = g_realMmap != nullptr ? g_realMmap(addr, length, prot, flags, fd, offset)
                                          : MAP_FAILED;
     const std::string human = HumanSize(length);
+    if (length > g_largestReserve.load(std::memory_order_relaxed)) {
+        g_largestReserve.store(length, std::memory_order_relaxed);
+    }
     if (result == MAP_FAILED) {
         const int saved = errno;
         TraceEnv("call: mmap(%zu = %s) = FAIL errno=%d\n", length, human.c_str(), saved);
@@ -1514,6 +1523,11 @@ Java_org_yuzu_yuzu_1emu_utils_KenjiBridge_nativeLoad(JNIEnv* env, jobject, jstri
         if (n > 0) AppendCrashLine(line);
     }
 
+    // Настройки кучи — до dlopen, а не после: NativeAOT заводит рантайм в
+    // инициализаторе модуля, то есть при открытии библиотеки. Если GC
+    // инициализируется там, значение, выставленное после, он уже не прочтёт.
+    ConfigureCoreRuntimeEnv();
+
     // RTLD_NOW, not RTLD_LAZY. Lazy binding defers the failure to the first
     // call of a missing symbol, which surfaces as a crash somewhere unrelated;
     // resolving everything now turns the same problem into a message here.
@@ -1548,10 +1562,6 @@ Java_org_yuzu_yuzu_1emu_utils_KenjiBridge_nativeLoad(JNIEnv* env, jobject, jstri
         g_lastError = msg;
         return env->NewStringUTF(msg.c_str());
     }
-
-    // Настройки кучи задаются до первого обращения к GC, то есть до любого
-    // вызова внутрь ядра. Делаем это здесь, до значений по умолчанию.
-    ConfigureCoreRuntimeEnv();
 
     g_core = handle;
     ArmAbortTrap(handle);
@@ -1643,6 +1653,25 @@ Java_org_yuzu_yuzu_1emu_utils_KenjiBridge_nativeInitialize(JNIEnv* env, jobject,
     g_inCore = 1;
     bool ok = fn(const_cast<char*>(dataPath), passedEnv);
     g_inCore = 0;
+
+    // Итог по резерву кучи: подействовала настройка или нет.
+    if (g_crashPath[0] != '\0') {
+        const unsigned long long reserved = g_largestReserve.load();
+        char line[320];
+        int n;
+        if (reserved == 0) {
+            n = ::snprintf(line, sizeof(line),
+                           "gc: куча резерва не запрашивала — настройка не понадобилась\n");
+        } else if (reserved >= (64ULL << 30)) {
+            n = ::snprintf(line, sizeof(line),
+                           "gc: ядро всё равно просило %s — настройка не прочитана\n",
+                           HumanSize(static_cast<size_t>(reserved)).c_str());
+        } else {
+            n = ::snprintf(line, sizeof(line), "gc: резерв кучи %s — настройка прочитана\n",
+                           HumanSize(static_cast<size_t>(reserved)).c_str());
+        }
+        if (n > 0) AppendCrashLine(line);
+    }
 
     env->ReleaseStringUTFChars(jdataPath, dataPath);
 

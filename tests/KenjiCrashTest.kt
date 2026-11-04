@@ -677,6 +677,24 @@ fun main() {
     check("в отчёте видно настройку кучи", heapText.contains("DOTNET_GCRegionRange=400000000"), heapText)
     check("в отчёте видно отказ резерва", heapText.contains("FAIL errno=12"), heapText)
 
+    // Итог по резерву кучи: три возможных ответа — «не понадобился»,
+    // «прочитана» и «не прочитана». По ним видно, сработала правка или нет.
+    for ((line, expect) in listOf(
+        "gc: куча резерва не запрашивала — настройка не понадобилась" to "не понадобилась",
+        "gc: резерв кучи 16.0 ГиБ — настройка прочитана" to "прочитана",
+        "gc: ядро всё равно просило 256.0 ГиБ — настройка не прочитана" to "не прочитана"
+    )) {
+        val parsed = KenjiCrash.parse(
+            """
+            step=javaInitialize
+            $line
+            crash signal=11 name=SIGSEGV addr=0x0 code=1 step=javaInitialize
+            """.trimIndent()
+        )!!
+        check("итог по резерву: $expect", parsed.palLines.any { it.contains(expect) },
+            parsed.palLines.toString())
+    }
+
     println()
     println("passed=$passed failed=${failures.size}")
     failures.forEach { println("FAIL  $it") }
