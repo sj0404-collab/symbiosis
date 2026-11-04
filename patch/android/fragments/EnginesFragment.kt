@@ -29,6 +29,8 @@ import org.yuzu.yuzu_emu.utils.EngineHybrid
 import org.yuzu.yuzu_emu.utils.DeviceCompat
 import org.yuzu.yuzu_emu.utils.EngineLoader
 import org.yuzu.yuzu_emu.utils.EngineStore
+import org.yuzu.yuzu_emu.utils.KenjiBridge
+import org.yuzu.yuzu_emu.utils.KenjiData
 import org.yuzu.yuzu_emu.utils.KenjiProbeService
 import org.yuzu.yuzu_emu.utils.Spaces
 import org.yuzu.yuzu_emu.utils.SymbiosisTheme
@@ -258,6 +260,130 @@ class EnginesFragment : Fragment() {
             }
         )
         root.addView(cores)
+
+        // ── папка данных второго ядра ───────────────────────────────────
+        //
+        // Ядру передаётся одна папка, и внутри неё оно заводит своё дерево
+        // (bis/system/Contents/registered — прошивка, system — ключи,
+        // Games, Profiles, Logs). Так устроен Kenji: человек выбирает папку,
+        // а не импортирует данные. Пока папка была жёстко приватной, отдать
+        // ядру прошивку можно было только копированием сотен мегабайт.
+        root.addView(sectionTitle("Папка данных второго ядра", SymbiosisTheme.CYAN))
+        val dataRoot = runCatching { KenjiBridge.dataDir(ctx) }.getOrNull()
+        val ownDir = runCatching { KenjiBridge.configuredDataDir(ctx) }.getOrNull()
+        root.addView(
+            TextView(ctx).apply {
+                text = buildString {
+                    append(if (ownDir != null) "Своя папка: " else "Внутри приложения: ")
+                    append(dataRoot?.absolutePath ?: "не определена")
+                    if (dataRoot != null) append("\n").append(KenjiData.describe(dataRoot))
+                    append("\nПрошивка ищется в «bis/system/Contents/registered» внутри этой папки; ")
+                    append("если она там уже лежит — переносить ничего не нужно.")
+                }
+                textSize = 13f
+                setTextColor(if (ownDir != null) SymbiosisTheme.MINT else SymbiosisTheme.TEXT_DIM)
+                setPadding(0, 0, 0, dp(10))
+            }
+        )
+        root.addView(
+            outlineButton("Выбрать папку", SymbiosisTheme.CYAN) { showDataDirDialog() }
+        )
+        if (ownDir != null) {
+            root.addView(
+                outlineButton("Вернуть папку внутри приложения", SymbiosisTheme.AMBER) {
+                    runCatching { KenjiBridge.setDataDir(ctx, null) }
+                    statusLine = "данные второго ядра снова внутри приложения"
+                    render()
+                }
+            )
+        }
+    }
+
+    /**
+     * Выбор папки данных: поле пути плюс найденные на телефоне кандидаты.
+     *
+     * Кандидаты ищутся в фоне: обход /sdcard на телефоне с тысячами папок —
+     * это секунды ввода-вывода, а экран не имеет права замирать. Показываем
+     * только папки, в которых уже есть прошивка ядра: именно из-за них
+     * переносить ничего не нужно.
+     */
+    private fun showDataDirDialog() {
+        val ctx = requireContext()
+        val current = runCatching { KenjiBridge.dataDir(ctx).absolutePath }.getOrDefault("")
+        lifecycleScope.launch {
+            val roots = listOfNotNull(
+                android.os.Environment.getExternalStorageDirectory(),
+                ctx.getExternalFilesDir(null)
+            )
+            val found = withContext(Dispatchers.IO) { KenjiData.candidates(roots) }
+            if (!isAdded) return@launch
+
+            val box = LinearLayout(ctx).apply {
+                orientation = LinearLayout.VERTICAL
+                setPadding(dp(20), dp(12), dp(20), 0)
+            }
+            val field = android.widget.EditText(ctx).apply {
+                setText(current)
+                setSingleLine()
+                textSize = 13f
+                hint = "/sdcard/Kenji"
+            }
+            box.addView(
+                TextView(ctx).apply {
+                    text = "Путь к папке, где второе ядро держит свои данные. " +
+                        "Если прошивка там уже есть, копировать её не придётся."
+                    textSize = 13f
+                    setTextColor(SymbiosisTheme.TEXT_DIM)
+                    setPadding(0, 0, 0, dp(10))
+                }
+            )
+            if (found.isNotEmpty()) {
+                box.addView(
+                    TextView(ctx).apply {
+                        text = "Найдено на телефоне:"
+                        textSize = 13f
+                        setTextColor(SymbiosisTheme.MINT)
+                        setPadding(0, 0, 0, dp(6))
+                    }
+                )
+                for (dir in found.take(5)) {
+                    box.addView(
+                        TextView(ctx).apply {
+                            text = dir.absolutePath + "\n" + KenjiData.describe(dir)
+                            textSize = 12f
+                            setTextColor(SymbiosisTheme.TEXT)
+                            setPadding(0, dp(4), 0, dp(4))
+                            setOnClickListener { field.setText(dir.absolutePath) }
+                        }
+                    )
+                }
+            }
+            box.addView(field)
+
+            com.google.android.material.dialog.MaterialAlertDialogBuilder(ctx)
+                .setTitle("Папка данных второго ядра")
+                .setView(box)
+                .setPositiveButton("Сохранить") { _, _ ->
+                    val path = field.text.toString().trim()
+                    val dir = java.io.File(path)
+                    if (path.isEmpty() || !(dir.isDirectory || dir.mkdirs())) {
+                        statusLine = "папка недоступна: $path"
+                    } else if (!KenjiData.writable(dir)) {
+                        statusLine = "в папку нельзя писать: $path"
+                    } else {
+                        KenjiBridge.setDataDir(ctx, path)
+                        statusLine = "папка данных: $path · " + KenjiData.describe(dir)
+                    }
+                    render()
+                }
+                .setNeutralButton("Сбросить") { _, _ ->
+                    runCatching { KenjiBridge.setDataDir(ctx, null) }
+                    statusLine = "данные второго ядра снова внутри приложения"
+                    render()
+                }
+                .setNegativeButton("Отмена", null)
+                .show()
+        }
     }
 
     /** Ядро: состояние, цвет и действия. Оба видны всегда — это и есть «в одном». */

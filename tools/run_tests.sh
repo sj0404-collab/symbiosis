@@ -155,6 +155,10 @@ if command -v kotlinc >/dev/null 2>&1; then
       # Список папок с играми: после сбоя у пользователя осталась одна папка
       # из четырёх. Правила восстановления проверяются без телефона.
       GameFolderListTest) echo "$HERE/patch/android/utils/GameFolderList.kt" ;;
+      # Папка данных второго ядра: раскладка bis/system/Contents/registered и
+      # поиск готовых папок. Ошибка здесь — либо 300 МБ копирования на каждый
+      # запуск, либо чёрный экран без причины. Чистые File, без Android.
+      KenjiDataTest) echo "$HERE/patch/android/utils/KenjiData.kt" ;;
       # Совместимость ядра с устройством: разбор ELF и auxv, вывод «подходит/
       # не подходит» с причиной. Чистые функции над байтами.
       DeviceCompatTest) echo "$HERE/patch/android/utils/DeviceCompat.kt" ;;

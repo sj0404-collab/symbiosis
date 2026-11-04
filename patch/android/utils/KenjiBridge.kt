@@ -116,9 +116,45 @@ object KenjiBridge {
     private external fun nativePlayStop()
     private external fun nativeWindowOf(surface: android.view.Surface): Long
 
-    /** Каталог данных второго ядра — тот, что передаётся ядру при инициализации. */
-    fun dataDir(context: Context): File =
-        File(context.getExternalFilesDir(null), "kenji")
+    /**
+     * Каталог данных второго ядра — тот, что передаётся ядру при инициализации.
+     *
+     * По умолчанию приватный. Но его можно указать — и тогда ядро работает в
+     * папке, где данные уже лежат: так устроен Kenji (одна папка, внутри её
+     * собственное дерево). Это и есть способ обойтись без переноса прошивки:
+     * если в выбранной папке есть `bis/system/Contents/registered`, ядро
+     * находит прошивку там, где она стоит, и копировать нечего.
+     *
+     * Процесс `:kenji` читает настройку из файла при старте — SharedPreferences
+     * между процессами не синхронизируются, но свежий процесс читает файл с
+     * диска, а папку меняют только из главного процесса и только вне игры.
+     */
+    fun dataDir(context: Context): File {
+        val chosen = runCatching { dataPrefs(context).getString(KEY_DATA_ROOT, null) }
+            .getOrNull()?.takeIf { it.isNotBlank() }?.let { File(it) }
+        if (chosen != null && runCatching { chosen.isDirectory || chosen.mkdirs() }.getOrDefault(false)) {
+            return chosen
+        }
+        return File(context.getExternalFilesDir(null), "kenji")
+    }
+
+    /** Выбранная человеком папка данных, если она задана и доступна. */
+    fun configuredDataDir(context: Context): File? =
+        runCatching { dataPrefs(context).getString(KEY_DATA_ROOT, null) }
+            .getOrNull()?.takeIf { it.isNotBlank() }?.let { File(it) }
+            ?.takeIf { runCatching { it.isDirectory }.getOrDefault(false) }
+
+    /** Задать папку данных ядра. `null` — вернуться к приватной. */
+    fun setDataDir(context: Context, path: String?) {
+        dataPrefs(context).edit().apply {
+            if (path.isNullOrBlank()) remove(KEY_DATA_ROOT) else putString(KEY_DATA_ROOT, path)
+        }.apply()
+    }
+
+    private fun dataPrefs(context: Context) =
+        context.getSharedPreferences("symbiosis_kenji_data", Context.MODE_PRIVATE)
+
+    private const val KEY_DATA_ROOT = "root"
 
     /**
      * Собственный журнал ядра: каталог «Logs» с файлами вида `Ryujinx_*.log`.
@@ -320,7 +356,7 @@ object KenjiBridge {
     }
 
     fun seedKeys(context: Context) {
-        val dest = File(context.getExternalFilesDir(null), "kenji").apply { mkdirs() }
+        val dest = dataDir(context).apply { mkdirs() }
         val sys = File(dest, "system").apply { mkdirs() }
         val keys = File(dest, "keys").apply { mkdirs() }
         val srcRoot = runCatching { DirectoryInitialization.userDirectory }.getOrNull() ?: return
@@ -357,7 +393,14 @@ object KenjiBridge {
         val files = runCatching { src.listFiles()?.filter { it.isFile } }.getOrNull().orEmpty()
         if (files.isEmpty()) return "каталог прошивки Eden пуст"
 
-        val dest = File(File(File(dataDir(context), "bis"), "system"), "Contents/registered")
+        val root = dataDir(context)
+        // Главное: если прошивка уже лежит в папке данных ядра — её не трогаем.
+        // Ровно это и значит «без переноса»: папка выбрана, файлы на месте.
+        val have0 = KenjiData.firmwareCount(root)
+        if (have0 > 0) {
+            return "прошивка уже в папке ядра: $have0 файлов — переноса нет"
+        }
+        val dest = KenjiData.firmwareDir(root)
         if (!dest.isDirectory && !dest.mkdirs()) {
             return "не удалось создать каталог прошивки второго ядра"
         }
@@ -437,10 +480,11 @@ object KenjiBridge {
 
         lastConfig = EngineHybrid.summary(cfg)
         lastFirmware = firmwareVersion()
-        val fwText = if (lastFirmware.isBlank()) {
-            "прошивка: не установлена"
-        } else {
-            "прошивка: $lastFirmware"
+        val fwFiles = KenjiData.firmwareCount(dataDir(context))
+        val fwText = when {
+            lastFirmware.isNotBlank() -> "прошивка: $lastFirmware"
+            fwFiles > 0 -> "прошивка: $fwFiles файлов, версию ядро не назвало"
+            else -> "прошивки нет — укажите папку с прошивкой в «Ядра»"
         }
         return Status(
             true,
