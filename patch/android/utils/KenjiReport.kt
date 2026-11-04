@@ -84,7 +84,7 @@ object KenjiReport {
         runCatching {
             val file = watchFile(context)
             val old = if (file.isFile) file.readLines() else emptyList()
-            val text = (old + "$stamp() · $line").takeLast(12).joinToString("\n")
+            val text = (old + "${stamp()} · $line").takeLast(12).joinToString("\n")
             file.writeText(text + "\n")
         }
     }

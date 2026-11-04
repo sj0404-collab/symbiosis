@@ -201,7 +201,11 @@ class KenjiPlayerActivity : Activity(), SurfaceHolder.Callback {
                 // Уведомление поднимает приоритет процесса: без него система
                 // выгружает :kenji первой, как только кончается память, и игра
                 // пропадает вместе с плеером.
-                runCatching { KenjiPlayService.start(appContext, title) }
+                // `title` здесь — свойство Activity (CharSequence), а не имя
+                // игры: берём его из интента, иначе в уведомлении оказывается
+                // заголовок окна.
+                val gameTitle = intent.getStringExtra(EXTRA_TITLE).orEmpty()
+                runCatching { KenjiPlayService.start(appContext, gameTitle) }
                 startWatchdog(appContext)
             }
 
