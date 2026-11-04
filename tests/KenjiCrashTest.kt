@@ -626,6 +626,33 @@ fun main() {
     check("ярлык: предел соблюдён", KenjiCrash.linesByTag(tagLog, "RyujinxLog", limit = 2).size == 2,
         KenjiCrash.linesByTag(tagLog, "RyujinxLog", limit = 2).toString())
 
+    // Окружение, которое проверяет ядро: строки pal: (наш повтор его же
+    // проверок) и call: (настоящие вызовы самого ядра).
+    val palReport = KenjiCrash.parse(
+        """
+        got patch: mlock — подменено слотов: 1
+        init guard: обёрнута инициализация ядра
+        step=javaInitialize
+        pal: page(40)=4096 page(_SC_PAGESIZE)=4096 cpus(96)=8
+        pal: mmap(4096)=ok
+        pal: mlock=FAIL errno=12
+        call: sysconf(40) = 4096
+        call: mmap(4096) = ok
+        call: sigaction(11) = 0
+        init-callback=-1 calls=1
+        crash signal=11 name=SIGSEGV addr=0x0 code=1 step=javaInitialize
+        """.trimIndent()
+    )!!
+    check("окружение разобрано", palReport.palLines.size == 6, palReport.palLines.toString())
+    check("отказ mlock назван", palReport.palLines.any { it.contains("mlock=FAIL errno=12") },
+        palReport.palLines.toString())
+    check("вызовы ядра помечены стрелкой", palReport.palLines.any { it.startsWith("→ sysconf(40)") },
+        palReport.palLines.toString())
+    val palText = KenjiCrash.format(palReport)
+    check("в отчёте раздел окружения", palText.contains("окружение, которое проверяет ядро"), palText)
+    check("в отчёте назван отказ mlock", palText.contains("mlock=FAIL errno=12"), palText)
+    check("в отчёте виден последний вызов ядра", palText.contains("→ sigaction(11) = 0"), palText)
+
     println()
     println("passed=$passed failed=${failures.size}")
     failures.forEach { println("FAIL  $it") }

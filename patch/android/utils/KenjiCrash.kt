@@ -71,6 +71,16 @@ object KenjiCrash {
         val initArgs: String = "",
         /** Сколько функций ядро спросило у загрузчика всего. */
         val loaderCalls: Int = 0,
+        /**
+         * Ответы окружения, которые ядро проверяет первым делом:
+         * размер страницы, число процессоров, mmap, mlock, мьютекс.
+         *
+         * ЗАЧЕМ. Отказ инициализации ядро не печатает, но рождается он здесь:
+         * в файле ядра функция 0x173db04 заводит нулевую страницу и считает
+         * любой отказ mlock отказом всей инициализации. Эти строки — ответ на
+         * вопрос «что именно не так», своими словами.
+         */
+        val palLines: List<String> = emptyList(),
     ) {
         val isEmpty: Boolean get() = frames.isEmpty() && signal == 0 && debugBreaks.isEmpty()
     }
@@ -95,6 +105,7 @@ object KenjiCrash {
         var initArgs = ""
         val abortFrames = mutableListOf<String>()
         val trapState = mutableListOf<String>()
+        val palLines = mutableListOf<String>()
         val loaderMisses = mutableListOf<String>()
         var loaderCalls = 0
         val frames = mutableListOf<String>()
@@ -124,6 +135,8 @@ object KenjiCrash {
                     all[from - 1].startsWith("init-callback-fn=") ||
                     all[from - 1].startsWith("loader tap:") ||
                     all[from - 1].startsWith("init-args:") ||
+                    all[from - 1].startsWith("pal:") ||
+                    all[from - 1].startsWith("call:") ||
                     all[from - 1].startsWith("dlreq "))
         ) {
             --from
@@ -178,6 +191,17 @@ object KenjiCrash {
                 line.startsWith("init-args:") ->
                     initArgs = line.removePrefix("init-args:").trim()
 
+                // pal: page(40)=4096 cpus(96)=8 — ответы на проверки окружения,
+                // которые ядро делает до всего остального.
+                line.startsWith("pal:") ->
+                    palLines.add(line.removePrefix("pal:").trim())
+
+                // call: mmap(4096) = ok — настоящий вызов самого ядра: что
+                // спросило и что получило. По последней такой строке видно,
+                // на чём ядро остановилось.
+                line.startsWith("call:") ->
+                    palLines.add("→ " + line.removePrefix("call:").trim())
+
                 line.startsWith("init-callback-fn=") ->
                     initCallbackAt = line.removePrefix("init-callback-fn=").trim()
 
@@ -195,7 +219,7 @@ object KenjiCrash {
 
         val report = Report(step, signal, signalName, address, frames, breaks, registers,
             abortCaller, abortFrames, trapState, initResult, loaderMisses, initCallbackAt,
-            initArgs, loaderCalls)
+            initArgs, loaderCalls, palLines)
         return if (report.isEmpty) null else report
     }
 
@@ -266,6 +290,10 @@ object KenjiCrash {
                 builder.append(" (ненулевой ответ означает отказ; ядро обёрнуто и продолжает работу)")
             }
             builder.append('\n')
+        }
+        if (report.palLines.isNotEmpty()) {
+            builder.append("• окружение, которое проверяет ядро: ")
+                .append(report.palLines.joinToString("; ")).append('\n')
         }
         if (report.trapState.isNotEmpty()) {
             builder.append("• перехват abort: ").append(report.trapState.joinToString("; ")).append('\n')

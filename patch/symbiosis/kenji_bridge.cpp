@@ -54,8 +54,11 @@
 #include <link.h>
 #include <ucontext.h>
 
+#include <cerrno>
+#include <pthread.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
+#include <sys/syscall.h>
 
 #include "common/symbiosis/got_patch.h"
 #include <string>
@@ -1017,6 +1020,253 @@ void ArmAbortTrap(void* coreHandle) {
     }
 }
 
+// ── окружение рантайма: что именно проверяет ядро перед стартом ─────
+//
+// ЧТО ВИДНО ПО ФАЙЛУ ЯДРА
+//   Функция 0x173db04 — первая же проверка инициализации рантайма
+//   (0x1704320 → 0x173c2d8 → она). Её порядок такой:
+//
+//     page = sysconf(40)                     ; размер страницы, иначе 4096
+//     cpus = sysconf(96)                     ; число процессоров
+//     sdk  = atoi(__system_property_get("ro.build.version.sdk"))
+//     syscall(283, 0, 0)                     ; membarrier, только запрос
+//     p    = mmap(NULL, page, RW, PRIVATE|ANON, -1, 0)
+//     if (mlock(p, page) != 0) return 0;     ; ← НЕНУЛЕВОЙ ОТВЕТ = ОТКАЗ
+//     if (pthread_mutex_init(&lock, NULL)) return 0;
+//
+//   Любой нулевой ответ отсюда — это `init-callback=-1` в нашем отчёте:
+//   ядро возвращает отказ, ни слова не написав. Дальше managed-куча не
+//   заводится, и первая же аллокация падает по адресу 0 (0x174a09c).
+//
+// ЧТО ДЕЛАЕМ
+//   1. Повторяем эти же вызовы сами и записываем ответы в отчёт строкой
+//      `pal:` — так причина называется словами, а не адресом.
+//   2. `mlock` в ядре подменяем: блокировка страницы в памяти — просьба
+//      nice-to-have, и отказ на неё не должен означать «ядро не работает».
+//      Настоящий ответ при этом пишется в отчёт, чтобы подмена не была
+//      молчаливой.
+
+using MlockFn = int (*)(const void*, size_t);
+MlockFn g_realMlock = nullptr;
+int g_mlockCalls = 0;
+int g_mlockFailures = 0;
+int g_mlockLastError = 0;
+
+int SymbiosisMlock(const void* addr, size_t len) {
+    ++g_mlockCalls;
+    const int real = g_realMlock != nullptr ? g_realMlock(addr, len) : 0;
+    if (real == 0) return 0;
+
+    const int saved = errno;
+    ++g_mlockFailures;
+    g_mlockLastError = saved;
+    LOGI("mlock: настоящий отказал (errno=%d), сообщаю успех", saved);
+    if (g_crashPath[0] != '\0') {
+        char line[160];
+        const int n = ::snprintf(line, sizeof(line),
+                                 "mlock: настоящий отказал errno=%d — сообщено «заперто»\n", saved);
+        if (n > 0) AppendCrashLine(line);
+    }
+    errno = 0;
+    return 0;
+}
+
+/**
+ * Повторить проверки окружения, которые делает ядро, и записать ответы.
+ *
+ * Значения берутся те же, что в коде ядра (40 и 96, а не макросы): макрос
+ * в чужом заголовке может означать другое число, а нам нужно ровно то, что
+ * спросит ядро.
+ */
+void PalPreflight() {
+    if (g_crashPath[0] == '\0') return;
+
+    const long page = ::sysconf(40);
+    const long cpus = ::sysconf(96);
+    const long pageMacro = ::sysconf(_SC_PAGESIZE);
+    const long size = page > 0 ? page : (pageMacro > 0 ? pageMacro : 4096);
+
+    char line[320];
+    int n = ::snprintf(line, sizeof(line), "pal: page(40)=%ld page(_SC_PAGESIZE)=%ld cpus(96)=%ld\n",
+                       page, pageMacro, cpus);
+    if (n > 0) AppendCrashLine(line);
+
+    errno = 0;
+    void* zero = ::mmap(nullptr, static_cast<size_t>(size), PROT_READ | PROT_WRITE,
+                        MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    const int mmapErr = zero == MAP_FAILED ? errno : 0;
+    if (zero == MAP_FAILED) {
+        n = ::snprintf(line, sizeof(line), "pal: mmap(%ld)=FAIL errno=%d\n", size, mmapErr);
+        if (n > 0) AppendCrashLine(line);
+    } else {
+        n = ::snprintf(line, sizeof(line), "pal: mmap(%ld)=ok\n", size);
+        if (n > 0) AppendCrashLine(line);
+        errno = 0;
+        const int locked = ::mlock(zero, static_cast<size_t>(size));
+        const int lockErr = locked == 0 ? 0 : errno;
+        if (locked == 0) {
+            n = ::snprintf(line, sizeof(line), "pal: mlock=ok\n");
+        } else {
+            n = ::snprintf(line, sizeof(line), "pal: mlock=FAIL errno=%d\n", lockErr);
+        }
+        if (n > 0) AppendCrashLine(line);
+        ::munlock(zero, static_cast<size_t>(size));
+        ::munmap(zero, static_cast<size_t>(size));
+    }
+
+    pthread_mutex_t probe{};
+    const int mutexAt = ::pthread_mutex_init(&probe, nullptr);
+    if (mutexAt == 0) ::pthread_mutex_destroy(&probe);
+    n = ::snprintf(line, sizeof(line), "pal: pthread_mutex_init=%d\n", mutexAt);
+    if (n > 0) AppendCrashLine(line);
+
+    errno = 0;
+    const long barrier = ::syscall(283, 0, 0);
+    const int barrierErr = barrier < 0 ? errno : 0;
+    n = ::snprintf(line, sizeof(line), "pal: membarrier query=%ld errno=%d\n", barrier, barrierErr);
+    if (n > 0) AppendCrashLine(line);
+}
+
+// ── журнал вызовов окружения ────────────────────────────────────────
+//
+// ЧЕГО НЕ ХВАТАЕТ ОТЧЁТУ. Проверки окружения внутри ядра идут цепочкой, и
+// любая неудача превращается в один и тот же ответ `-1`. Мы уже повторяем
+// их сами (PalPreflight), но повтор — это наш вызов, а не вызов ядра: он
+// может удаться там, где у ядра не вышло, и наоборот. Поэтому настоящие
+// вызовы ядра тоже записываются — с аргументами и ответами. Тогда видно не
+// только «что не так», но и «на чём именно ядро остановилось».
+
+std::atomic<int> g_envTraceBudget{80};
+
+void TraceEnv(const char* format, ...) {
+    if (g_crashPath[0] == '\0') return;
+    if (g_envTraceBudget.fetch_sub(1) <= 0) return;
+
+    char line[320];
+    va_list args;
+    va_start(args, format);
+    const int n = ::vsnprintf(line, sizeof(line), format, args);
+    va_end(args);
+    if (n > 0) AppendCrashLine(line);
+}
+
+using SigactionFn = int (*)(int, const struct sigaction*, struct sigaction*);
+using MmapFn = void* (*)(void*, size_t, int, int, int, off_t);
+using SysconfFn = long (*)(int);
+using MutexInitFn = int (*)(pthread_mutex_t*, const pthread_mutexattr_t*);
+
+SigactionFn g_realSigaction = nullptr;
+MmapFn g_realMmap = nullptr;
+SysconfFn g_realSysconf = nullptr;
+MutexInitFn g_realMutexInit = nullptr;
+
+int SymbiosisSigaction(int signal, const struct sigaction* act, struct sigaction* old) {
+    const int result = g_realSigaction != nullptr ? g_realSigaction(signal, act, old) : -1;
+    TraceEnv("call: sigaction(%d) = %d\n", signal, result);
+    return result;
+}
+
+void* SymbiosisMmap(void* addr, size_t length, int prot, int flags, int fd, off_t offset) {
+    void* result = g_realMmap != nullptr ? g_realMmap(addr, length, prot, flags, fd, offset)
+                                         : MAP_FAILED;
+    if (result == MAP_FAILED) {
+        TraceEnv("call: mmap(%zu) = FAIL errno=%d\n", length, errno);
+    } else {
+        TraceEnv("call: mmap(%zu) = ok\n", length);
+    }
+    return result;
+}
+
+long SymbiosisSysconf(int name) {
+    const long result = g_realSysconf != nullptr ? g_realSysconf(name) : -1;
+    // Спрашивают десятки разных чисел; пишем только те два, что в проверке.
+    if (name == 40 || name == 96) {
+        TraceEnv("call: sysconf(%d) = %ld\n", name, result);
+    }
+    return result;
+}
+
+int SymbiosisMutexInit(pthread_mutex_t* mutex, const pthread_mutexattr_t* attr) {
+    const int result = g_realMutexInit != nullptr ? g_realMutexInit(mutex, attr) : -1;
+    TraceEnv("call: pthread_mutex_init = %d\n", result);
+    return result;
+}
+
+/**
+ * Поставить перехваты журнала на таблицу переходов ядра.
+ *
+ * Подменяются только те функции, чьи ответы нужны в отчёте; всё остальное
+ * ядро получает как есть. Порядок важен: настоящие адреса берутся до
+ * подмены, иначе `dlsym` вернёт наши же обёртки.
+ */
+void ArmEnvTrace(void* coreHandle) {
+    if (coreHandle == nullptr) return;
+    void* anchor = ::dlsym(coreHandle, "javaInitialize");
+    if (anchor == nullptr) return;
+
+    g_realSigaction = reinterpret_cast<SigactionFn>(::dlsym(RTLD_DEFAULT, "sigaction"));
+    g_realMmap = reinterpret_cast<MmapFn>(::dlsym(RTLD_DEFAULT, "mmap"));
+    g_realSysconf = reinterpret_cast<SysconfFn>(::dlsym(RTLD_DEFAULT, "sysconf"));
+    g_realMutexInit = reinterpret_cast<MutexInitFn>(::dlsym(RTLD_DEFAULT, "pthread_mutex_init"));
+
+    struct { const char* name; void* hook; bool ok; } traps[] = {
+        {"sigaction", reinterpret_cast<void*>(&SymbiosisSigaction), g_realSigaction != nullptr},
+        {"mmap", reinterpret_cast<void*>(&SymbiosisMmap), g_realMmap != nullptr},
+        {"sysconf", reinterpret_cast<void*>(&SymbiosisSysconf), g_realSysconf != nullptr},
+        {"pthread_mutex_init", reinterpret_cast<void*>(&SymbiosisMutexInit),
+         g_realMutexInit != nullptr},
+    };
+
+    for (auto& trap : traps) {
+        if (!trap.ok) {
+            if (g_crashPath[0] != '\0') {
+                char line[200];
+                const int n = ::snprintf(line, sizeof(line),
+                                         "got patch: %s не поставлен — нет настоящего адреса\n",
+                                         trap.name);
+                if (n > 0) AppendCrashLine(line);
+            }
+            continue;
+        }
+        const auto result = Symbiosis::PatchImport(anchor, trap.name, trap.hook);
+        LOGI("got patch %s: %s (%s)", trap.name, result.ok ? "ok" : "failed",
+             result.detail.c_str());
+        if (g_crashPath[0] != '\0') {
+            char line[256];
+            const int n = ::snprintf(line, sizeof(line), "got patch: %s — %s\n", trap.name,
+                                     result.detail.c_str());
+            if (n > 0) AppendCrashLine(line);
+        }
+    }
+}
+
+/**
+ * Подменить `mlock` в таблице переходов ядра.
+ *
+ * Подменяется только этот вызов: он единственный из проверок окружения,
+ * отказ которого ничего не значит. `mmap` и `pthread_mutex_init` подменять
+ * нельзя — они делают работу, без которой рантайм не заработает.
+ */
+void ArmMlockTrap(void* coreHandle) {
+    if (coreHandle == nullptr) return;
+
+    // Настоящий адрес нужен до подмены: после неё `dlsym` вернёт уже обёртку.
+    g_realMlock = reinterpret_cast<MlockFn>(::dlsym(RTLD_DEFAULT, "mlock"));
+    void* anchor = ::dlsym(coreHandle, "javaInitialize");
+    if (anchor == nullptr) return;
+
+    const auto result =
+        Symbiosis::PatchImport(anchor, "mlock", reinterpret_cast<void*>(&SymbiosisMlock));
+
+    LOGI("got patch mlock: %s (%s)", result.ok ? "ok" : "failed", result.detail.c_str());
+    if (g_crashPath[0] != '\0') {
+        char line[256];
+        const int n = ::snprintf(line, sizeof(line), "got patch: mlock — %s\n",
+                                 result.detail.c_str());
+        if (n > 0) AppendCrashLine(line);
+    }
+}
+
 // ── loading, carefully ──────────────────────────────────────────────
 
 // Every exported name the core is known to have, as read from its dynamic
@@ -1163,6 +1413,8 @@ Java_org_yuzu_yuzu_1emu_utils_KenjiBridge_nativeLoad(JNIEnv* env, jobject, jstri
     g_core = handle;
     ArmAbortTrap(handle);
     ArmLoaderTap(handle);
+    ArmMlockTrap(handle);
+    ArmEnvTrace(handle);
     ArmInitGuard(handle);
     LOGI("core loaded and verified");
     return env->NewStringUTF("");
@@ -1239,6 +1491,11 @@ Java_org_yuzu_yuzu_1emu_utils_KenjiBridge_nativeInitialize(JNIEnv* env, jobject,
                                  reinterpret_cast<void*>(passedEnv));
         if (n > 0) AppendCrashLine(line);
     }
+
+    // Проверки окружения, которые ядро сделает первым делом: их ответы и
+    // есть причина отказа, если он случится. Пишем до вызова — после него
+    // процесс может уже не отвечать.
+    PalPreflight();
 
     g_inCore = 1;
     bool ok = fn(const_cast<char*>(dataPath), passedEnv);
