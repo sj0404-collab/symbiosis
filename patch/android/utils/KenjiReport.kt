@@ -57,6 +57,19 @@ object KenjiReport {
             stateFile(context).parentFile?.mkdirs()
             stateFile(context).writeText("$MARK_START ${stamp()}\n")
         }
+        // Прошлый отчёт Java-ошибки в папке не трогаем, но и не выдаём за
+        // сегодняшний: он переименовывается. Иначе в отчёте этого запуска
+        // появляется падение ЧУЖОГО процесса из прошлой сессии — 05.11 так
+        // и вышло: в причине стоял SIGSEGV в libyuzu-android.so, которого в
+        // этом запуске не было.
+        runCatching {
+            val alive = UiGuard.file(context)
+            if (alive.isFile && alive.length() > 0) {
+                val prev = File(alive.parentFile, "ui-crash-prev.txt")
+                if (prev.exists()) prev.delete()
+                alive.renameTo(prev)
+            }
+        }
     }
 
     /** Плеер дошёл до своего `onDestroy` — запуск закончился штатно. */
@@ -120,10 +133,16 @@ object KenjiReport {
         } else {
             report
         }
+        // Решение «эта игра больше не идёт этим ядром» принимает главный
+        // процесс: он видит библиотеку. Плеер лишь оставил записку.
+        val fallback = runCatching { CoreFallback.applyIfAny(context) }.getOrNull().orEmpty()
         return buildString {
             append(text).append("\n\n").append(body)
             if (watch.isNotEmpty()) {
                 append("\n\nЧто было видно на экране перед остановкой:\n").append(watch)
+            }
+            if (fallback.isNotEmpty()) {
+                append("\n\n").append(fallback)
             }
         }
     }

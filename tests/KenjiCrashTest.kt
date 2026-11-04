@@ -759,6 +759,11 @@ fun main() {
     check("обычная строка — не гостевое исключение",
         KenjiCrash.guestFailure("step=deviceInitialize").isEmpty())
 
+    // Короткая строка для экрана: только тип сервиса.
+    eq("сервис из стека — тип, а не метод",
+       KenjiCrash.guestService(guest), "IAccountServiceForApplication")
+    eq("сервис без Services. — пусто", KenjiCrash.guestService("step=deviceInitialize"), "")
+
     println()
     println("passed=$passed failed=${failures.size}")
     failures.forEach { println("FAIL  $it") }

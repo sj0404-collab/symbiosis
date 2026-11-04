@@ -186,8 +186,12 @@ class KenjiProbeService : Service() {
             val javaCrash = runCatching {
                 val f = org.yuzu.yuzu_emu.utils.UiGuard.file(context)
                 f.takeIf { it.isFile && it.length() > 0 }?.let { clue ->
+                    val when_ = java.text.SimpleDateFormat("dd.MM HH:mm:ss", java.util.Locale.ROOT)
+                        .format(java.util.Date(clue.lastModified()))
                     val lines = clue.readLines().map { it.trim() }.filter { it.isNotEmpty() }
-                    lines.takeLast(14)
+                    // Время обязательно: файл переживает запуски, и без него
+                    // вчерашнее падение читается как сегодняшнее.
+                    listOf("(записано $when_)") + lines.takeLast(14)
                 }
             }.getOrNull().orEmpty()
             if (javaCrash.isNotEmpty()) {

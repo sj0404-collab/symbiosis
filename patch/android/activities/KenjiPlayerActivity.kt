@@ -19,8 +19,10 @@ import android.widget.FrameLayout
 import android.widget.TextView
 import android.widget.Toast
 import java.io.File
+import org.yuzu.yuzu_emu.utils.CoreFallback
 import org.yuzu.yuzu_emu.utils.EngineLoader
 import org.yuzu.yuzu_emu.utils.KenjiBridge
+import org.yuzu.yuzu_emu.utils.KenjiCrash
 import org.yuzu.yuzu_emu.utils.KenjiPlayService
 import org.yuzu.yuzu_emu.utils.KenjiReport
 import org.yuzu.yuzu_emu.utils.UiGuard
@@ -69,6 +71,14 @@ class KenjiPlayerActivity : Activity(), SurfaceHolder.Callback {
     private var surfaceHeight = 720
     /** Повторный пинок уже сделан: делается один раз, а не каждые 3 секунды. */
     private var kickedLate = false
+    /** Сколько байт журнала ядра уже прочитано: ищем только новое. */
+    private var coreLogOffset = 0L
+    /** Игра уже встала внутри ядра — второй раз не сообщаем. */
+    private var guestFailed = false
+    /** Путь игры: по нему основной процесс переведёт её на Eden. */
+    private var gamePath = ""
+    /** Когда начали: журнал старше этого времени — от прошлого запуска. */
+    private var playStartedAt = 0L
     private lateinit var status: TextView
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -138,6 +148,8 @@ class KenjiPlayerActivity : Activity(), SurfaceHolder.Callback {
         val h = holder.surfaceFrame.height().coerceAtLeast(128)
         surfaceWidth = w
         surfaceHeight = h
+        gamePath = path
+        playStartedAt = System.currentTimeMillis()
         val appContext = applicationContext
         started = true
         loopThread = Thread({
@@ -310,6 +322,11 @@ class KenjiPlayerActivity : Activity(), SurfaceHolder.Callback {
                         )
                     }
                 }
+                if (!guestFailed) checkGuestFailure(appContext)
+                // Игра встала внутри ядра: экран уже показывает причину, и
+                // перебивать её счётчиком кадров нельзя — человек читает
+                // именно объяснение.
+                if (guestFailed) return
                 val tail = coreLogTail(appContext, 2)
                 status.text = buildString {
                     append("второе ядро · играет · ").append(seconds).append(" с")
@@ -331,6 +348,75 @@ class KenjiPlayerActivity : Activity(), SurfaceHolder.Callback {
         }
         status.removeCallbacks(tick)
         status.postDelayed(tick, 3000)
+    }
+
+    /**
+     * Ядро уронило гостевой поток — сказать об этом сразу.
+     *
+     * ЗАЧЕМ. 05.11 игра встала через 20 секунд после старта: внутри ядра
+     * возникло исключение на вызове сервиса учётной записи, кадры перестали
+     * идти, а плеер ещё минуту показывал «поверхность создана, кадров нет» —
+     * человек ждал, хотя всё уже было кончено. Теперь журнал ядра читается
+     * каждые три секунды (только новые строки, чтобы не перечитывать файл
+     * целиком), и первое же «Unhandled exception in guest thread» заканчивает
+     * запуск с понятной причиной.
+     *
+     * Починить это наше ядро не может — это его внутренняя ошибка. Зато
+     * приложение запоминает игру и в следующий раз запускает её на Eden.
+     */
+    private fun checkGuestFailure(appContext: android.content.Context) {
+        val file = runCatching { KenjiBridge.coreLogFile(appContext) }.getOrNull() ?: return
+        if (!file.isFile) return
+        // Журнал от прошлого запуска: в нём уже есть чужое исключение, и
+        // принять его за сегодняшнее — значит перевести здоровую игру на
+        // Eden из-за вчерашней ошибки.
+        if (file.lastModified() < playStartedAt) return
+        val length = file.length()
+        // Журнал пересоздан (новый запуск) — читаем с начала.
+        if (length < coreLogOffset) coreLogOffset = 0L
+        if (length == coreLogOffset) return
+        val fresh = runCatching {
+            java.io.RandomAccessFile(file, "r").use { raf ->
+                raf.seek(coreLogOffset)
+                val size = (length - coreLogOffset).coerceAtMost(256L * 1024L).toInt()
+                val buffer = ByteArray(size)
+                val read = raf.read(buffer)
+                coreLogOffset = length
+                if (read <= 0) "" else String(buffer, 0, read)
+            }
+        }.getOrDefault("")
+        if (!fresh.contains("Unhandled exception in guest thread")) return
+
+        guestFailed = true
+        val why = KenjiCrash.guestFailure(fresh)
+        // Строки ДО исключения — единственное место, где ядро могло назвать
+        // номер процесса, который оно не нашло. Без них следующий отчёт
+        // опять будет «что-то внутри ядра».
+        val around = runCatching {
+            val all = fresh.lines()
+            val at = all.indexOfFirst { it.contains("Unhandled exception in guest thread") }
+            if (at < 0) emptyList()
+            else all.subList((at - 8).coerceAtLeast(0), (at + 4).coerceAtMost(all.size))
+        }.getOrDefault(emptyList())
+        around.forEach { line ->
+            if (line.isNotBlank()) runCatching { KenjiReport.watch(appContext, line.trim().take(150)) }
+        }
+        val service = KenjiCrash.guestService(fresh)
+        runCatching { CoreFallback.note(appContext, gamePath, why) }
+        runCatching { KenjiReport.watch(appContext, "ядро: " + why.take(160)) }
+        // Разблокировать цикл отрисовки: он стоит на мёртвом гостевом потоке.
+        runCatching { KenjiBridge.stopPlay() }
+        runOnUiThread {
+            // Короткая строка на экран: полное объяснение — в отчёте, а здесь
+            // человек читает его, стоя с телефоном в руках.
+            val short = if (service.isEmpty()) {
+                "игра остановилась внутри второго ядра"
+            } else {
+                "игра остановилась внутри второго ядра на вызове сервиса «$service»"
+            }
+            fail(short + ".\n\nЭто ошибка самого ядра, а не файла игры. " +
+                "Запомнил: эта игра будет запускаться на Eden.")
+        }
     }
 
     /**

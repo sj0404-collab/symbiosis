@@ -731,6 +731,27 @@ object KenjiCrash {
     }
 
     /**
+     * Имя сервиса из стека гостевого исключения — только тип.
+     *
+     * Отдельно от [guestFailure], потому что на экране нужна короткая
+     * строка («встало на сервисе X»), а в отчёте — полное объяснение.
+     * Пустая строка, когда разобрать нечего.
+     */
+    fun guestService(text: String): String =
+        Regex("""at ([A-Za-z0-9_.]+)\(""")
+            .findAll(text)
+            .map { it.groupValues[1] }
+            .firstOrNull { it.contains("Services.") }
+            ?.split('.')
+            ?.let { parts ->
+                val afterServices = parts.dropWhile { it != "Services" }.drop(1)
+                afterServices.firstOrNull { part ->
+                    part.length > 2 && part[0] == 'I' && part[1].isUpperCase()
+                } ?: parts.getOrNull(parts.size - 2) ?: parts.last()
+            }
+            .orEmpty()
+
+    /**
      * Исключение в гостевом потоке — словами, без .NET-стека.
      *
      * ЗАЧЕМ. «Kernel ThreadStart: Unhandled exception in guest thread:
@@ -748,22 +769,10 @@ object KenjiCrash {
         // с маленькой буквы, тип — с большой: по этому признаку и берётся имя
         // сервиса, а не имя метода. В прошлой попытке в фразу попал метод
         // (IsUserAccountSwitchLocked), и это ничего не говорило о сервисе.
-        val service = Regex("""at ([A-Za-z0-9_.]+)\(""")
-            .findAll(text)
-            .map { it.groupValues[1] }
-            .firstOrNull { it.contains("Services.") }
-            ?.split('.')
-            ?.let { parts ->
-                // В стеке .NET тип и метод пишутся одинаково — с большой
-                // буквы, поэтому «последний компонент» — это метод. Тип ищется
-                // по признаку интерфейса сервиса: имя начинается с «I» и
-                // следующая буква большая. Если такого нет — берётся
-                // предпоследний компонент (класс, а не метод).
-                val afterServices = parts.dropWhile { it != "Services" }.drop(1)
-                afterServices.firstOrNull { part ->
-                    part.length > 2 && part[0] == 'I' && part[1].isUpperCase()
-                } ?: parts.getOrNull(parts.size - 2) ?: parts.last()
-            }
+        // В стеке .NET тип и метод пишутся одинаково — с большой буквы,
+        // поэтому имя типа ищется по признаку интерфейса сервиса: «I» и
+        // большая буква после. Общий разбор — [guestService].
+        val service = guestService(text).ifEmpty { null }
         val nullRef = text.contains("NullReferenceException")
         return buildString {
             append("Игра остановилась на вызове сервиса эмулятора")
