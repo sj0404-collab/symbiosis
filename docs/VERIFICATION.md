@@ -1951,3 +1951,49 @@ APK: https://gofile.io/d/NmsbH2PE, MD5 `5816352375069c282634eb284bfc60f1`, 46.0 
 
 Запас по размеру: 46.0 МБ против цели 25 МБ — это debug-сборка, где dex лежит
 несжатым; цель относится к release.
+
+## 38. Ввод поднимался раньше, чем ядро было готово
+
+Отчёт с телефона (сборка `760d8f3`, 15:49) назвал причину сам:
+
+```
+шаг: attachSurface
+сигнал: 6 (SIGABRT)
+Журнал: Unhandled exception. System.NullReferenceException
+        at LibKenjinx.LibKenjinx.InitializeInput(Int32, Int32) + 0x1f0
+        at LibKenjinx.LibKenjinx.JnaInitializeInput(Int32, Int32) + 0x330
+```
+
+В `LibKenjinx.Input.cs` первая же строка `InitializeInput`:
+
+```csharp
+if (SwitchDevice!.InputManager != null) throw ...
+_gamepadDriver = new VirtualGamepadDriver(4);
+...
+_touchScreenManager.Initialize(SwitchDevice.EmulationContext);
+_npadManager.Initialize(SwitchDevice.EmulationContext, [], false, false);
+```
+
+`EmulationContext` создаётся в `deviceInitialize`. Наш `attachSurface` звал
+`inputInitialize` ДО устройства — контекста не было, NullReferenceException,
+необработанное исключение внутри `[UnmanagedCallersOnly]`, и .NET завершил
+процесс через `abort()`.
+
+В официальном приложении ввод поднимается в `GameHost.start`, то есть когда
+игра уже загружена. Порядок теперь такой же:
+
+```
+preparePlay        — ядро, настройки графики, версия прошивки
+attachSurface      — только рендерер и размер
+deviceInit         — из главного потока
+loadGame
+setWindowHandle + inputInit   — из главного потока
+runLoop
+```
+
+`nativeAttachSurface` больше не трогает ввод; добавлены `nativeInputInit` и
+`nativeSetWindowHandle` (`deviceSetWindowHandle` — так же, как `GameHost.start`
+отдаёт окно ядру при каждом появлении поверхности).
+
+Проверки без телефона: `check_jni_names` — 82 объявления (добавились два),
+`check_kotlin_refs` и `check_kotlin_syntax` — 108 файлов, C++ — чисто.

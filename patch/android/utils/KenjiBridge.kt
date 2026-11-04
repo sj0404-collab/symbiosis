@@ -108,6 +108,9 @@ object KenjiBridge {
     /** Версия прошивки по словам ядра (пусто — не установлена). */
     private external fun nativeFirmwareVersion(): String
     private external fun nativeAttachSurface(surface: android.view.Surface, width: Int, height: Int): String
+    /** Инициализация ввода — только после устройства и загрузки игры. */
+    private external fun nativeInputInit(width: Int, height: Int): String
+    private external fun nativeSetWindowHandle(handle: Long)
     private external fun nativeLoadGame(fd: Int, type: Int): String
     private external fun nativeRunLoop(): String
     private external fun nativePlayStop()
@@ -467,6 +470,26 @@ object KenjiBridge {
             "nro" -> 3
             else -> 1
         }
+    }
+
+    /**
+     * Поднять ввод (касания, геймпады).
+     *
+     * Строго после [deviceInit] и после загрузки игры: ядро передаёт в
+     * менеджеры ввода `EmulationContext`, а он существует только с этого
+     * момента. Раньше ввод поднимался вместе с поверхностью — и на этом
+     * месте процесс умирал с NullReferenceException.
+     */
+    fun inputInit(width: Int, height: Int): Status {
+        ensureBridge()?.let { return Status(false, it) }
+        val err = runCatching { nativeInputInit(width, height) }
+            .getOrElse { return Status(false, it.message ?: "ввод") }
+        return if (err.isEmpty()) Status(true, "ввод поднят") else Status(false, err)
+    }
+
+    /** Отдать ядру окно Android — по нему оно считает поворот и размер. */
+    fun setWindowHandle(handle: Long) {
+        if (bridgeLoaded) runCatching { nativeSetWindowHandle(handle) }
     }
 
     fun loadGame(fd: Int, type: Int): Status {

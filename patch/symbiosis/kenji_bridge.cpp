@@ -1752,11 +1752,15 @@ Java_org_yuzu_yuzu_1emu_utils_KenjiBridge_nativeAttachSurface(JNIEnv* env, jobje
     std::lock_guard<std::mutex> guard(g_lock);
     NoteStep("attachSurface");
     if (g_core == nullptr) return env->NewStringUTF("ядро не загружено");
-    if (auto infn = reinterpret_cast<void (*)(int, int)>(dlsym(g_core, "inputInitialize"))) {
-        g_inCore = 1;
-        infn(width > 0 ? width : 1280, height > 0 ? height : 720);
-        g_inCore = 0;
-    }
+    // Ввод здесь больше не инициализируется.
+    //
+    // ПОЧЕМУ. `InitializeInput` в ядре первым делом берёт
+    // `SwitchDevice.EmulationContext` и передаёт его в менеджеры касаний и
+    // геймпадов. До `deviceInitialize` контекста нет — вызов падал
+    // NullReferenceException в .NET TP Worker, а необработанное исключение
+    // в [UnmanagedCallersOnly] заканчивается abort(): отчёт показал ровно
+    // это, SIGABRT на шаге attachSurface. В официальном приложении ввод
+    // поднимается в GameHost.start, то есть уже после загрузки игры.
     using RendFn = bool (*)(const char**, int, long);
     auto rfn = reinterpret_cast<RendFn>(dlsym(g_core, "graphicsInitializeRenderer"));
     if (rfn == nullptr) return env->NewStringUTF("нет graphicsInitializeRenderer");
@@ -1784,6 +1788,49 @@ Java_org_yuzu_yuzu_1emu_utils_KenjiBridge_nativeAttachSurface(JNIEnv* env, jobje
     }
     (void)surface;
     return env->NewStringUTF("");
+}
+
+/**
+ * Ввод — после устройства и после игры.
+ *
+ * Порядок не наш вкус: `InitializeInput` передаёт `EmulationContext` в
+ * менеджеры касаний и геймпадов, и до `deviceInitialize` его просто нет.
+ * В официальном приложении это делает GameHost.start, когда игра уже
+ * загружена.
+ */
+JNIEXPORT jstring JNICALL
+Java_org_yuzu_yuzu_1emu_utils_KenjiBridge_nativeInputInit(JNIEnv* env, jobject, jint width,
+                                                          jint height) {
+    std::lock_guard<std::mutex> guard(g_lock);
+    NoteStep("inputInitialize");
+    if (g_core == nullptr) return env->NewStringUTF("ядро не загружено");
+    using Fn = void (*)(int, int);
+    auto fn = reinterpret_cast<Fn>(dlsym(g_core, "inputInitialize"));
+    if (fn == nullptr) return env->NewStringUTF("нет inputInitialize");
+    g_inCore = 1;
+    fn(width > 0 ? width : 1280, height > 0 ? height : 720);
+    g_inCore = 0;
+    return env->NewStringUTF("");
+}
+
+/**
+ * Отдать ядру дескриптор окна Android.
+ *
+ * Официальное приложение зовёт это при каждом появлении поверхности: по
+ * этому числу ядро применяет поворот и размер. Без него ядро берёт окно из
+ * своего JNI-колбэка `getWindowHandle`, но явный вызов убирает разницу между
+ * «окно ещё не спросили» и «окно сменилось».
+ */
+JNIEXPORT void JNICALL
+Java_org_yuzu_yuzu_1emu_utils_KenjiBridge_nativeSetWindowHandle(JNIEnv*, jobject, jlong handle) {
+    std::lock_guard<std::mutex> guard(g_lock);
+    if (g_core == nullptr) return;
+    using Fn = void (*)(long);
+    if (auto fn = reinterpret_cast<Fn>(dlsym(g_core, "deviceSetWindowHandle"))) {
+        g_inCore = 1;
+        fn(static_cast<long>(handle));
+        g_inCore = 0;
+    }
 }
 
 JNIEXPORT jstring JNICALL

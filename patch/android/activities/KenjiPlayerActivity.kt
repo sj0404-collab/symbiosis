@@ -164,7 +164,7 @@ class KenjiPlayerActivity : Activity(), SurfaceHolder.Callback {
             }
 
             KenjiBridge.noteStep("3/6 · устройство")
-            val dev = deviceInitOnMain()
+            val dev = onMainAndWait { KenjiBridge.deviceInit() }
             if (!dev.ok) {
                 runOnUiThread { fail(dev.message) }
                 return@Thread
@@ -177,34 +177,48 @@ class KenjiPlayerActivity : Activity(), SurfaceHolder.Callback {
                 return@Thread
             }
 
+            // Ввод — после игры, как в официальном Kenji (GameHost.start):
+            // ядро передаёт EmulationContext в менеджеры ввода, и до
+            // загрузки игры его нет. Окно отдаём тем же вызовом, что и оригинал.
+            KenjiBridge.noteStep("5/6 · ввод")
+            KenjiBridge.setWindowHandle(nw)
+            val input = onMainAndWait { KenjiBridge.inputInit(w, h) }
+            if (!input.ok) {
+                runOnUiThread { fail(input.message) }
+                return@Thread
+            }
+
             // Строка настроек рядом со статусом: «ядро запустилось» без них
             // ничего не говорит о том, с чем именно оно запустилось.
             runOnUiThread {
                 status.text = "второе ядро · играет\n" + prep.message
             }
 
-            KenjiBridge.noteStep("5/6 · цикл отрисовки")
+            KenjiBridge.noteStep("6/6 · цикл отрисовки")
             KenjiBridge.runLoop()
-            KenjiBridge.noteStep("6/6 · цикл завершён")
+            KenjiBridge.noteStep("цикл завершён")
             runOnUiThread { leave() }
         }, "kenji-loop").also { it.start() }
     }
 
     /**
-     * `deviceInitialize` — только из главного потока.
+     * Выполнить шаг из главного потока и дождаться ответа.
      *
-     * Это требование ядра, а не наша привычка: в официальном Kenji тот же
-     * вызов завёрнут в переброс на UI-поток с ожиданием результата.
+     * `deviceInitialize` обязан идти из главного потока — это прямо написано
+     * в официальном Kenji («We are only able to initialize the emulation
+     * context on the main thread»), и там же вызов завёрнут в переброс на
+     * UI-поток с ожиданием. Ввод поднимается оттуда же — его зовёт
+     * GameHost.start, то есть колбэк поверхности.
      */
-    private fun deviceInitOnMain(): KenjiBridge.Status {
-        var result = KenjiBridge.Status(false, "устройство не создалось")
+    private fun onMainAndWait(block: () -> KenjiBridge.Status): KenjiBridge.Status {
+        var result = KenjiBridge.Status(false, "шаг не выполнился")
         val latch = java.util.concurrent.CountDownLatch(1)
         runOnUiThread {
-            result = runCatching { KenjiBridge.deviceInit() }
-                .getOrElse { KenjiBridge.Status(false, it.message ?: "устройство") }
+            result = runCatching(block)
+                .getOrElse { KenjiBridge.Status(false, it.message ?: "шаг") }
             latch.countDown()
         }
-        latch.await(120, java.util.concurrent.TimeUnit.SECONDS)
+        latch.await(180, java.util.concurrent.TimeUnit.SECONDS)
         return result
     }
 
