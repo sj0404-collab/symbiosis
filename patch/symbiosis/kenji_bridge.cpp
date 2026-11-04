@@ -440,26 +440,6 @@ void TapLog(const char* fn, const char* a, const char* b) {
     ::close(fd);
 }
 
-/** Строка считается текстом, если в ней нет управляющих байтов. */
-const char* Printable(const char* text) {
-    if (text == nullptr) return nullptr;
-    for (const char* p = text; *p != '\0' && p - text < 120; ++p) {
-        const unsigned char c = static_cast<unsigned char>(*p);
-        if (c < 0x20 || c == 0x7f) return nullptr;
-    }
-    return text;
-}
-
-/** Настоящий JNIEnv этого потока. */
-JNIEnv* RealJni() {
-    if (g_tapVm == nullptr) return nullptr;
-    JNIEnv* env = nullptr;
-    if (g_tapVm->GetEnv(reinterpret_cast<void**>(&env), JNI_VERSION_1_6) != JNI_OK) {
-        return nullptr;
-    }
-    return env;
-}
-
 // ── проверка JNI вместо подмены таблицы ─────────────────────────────
 //
 // ЧТО БЫЛО И ПОЧЕМУ ПРИШЛОСЬ ОТКАЗАТЬСЯ
