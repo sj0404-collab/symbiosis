@@ -1075,6 +1075,70 @@ int SymbiosisMlock(const void* addr, size_t len) {
     return 0;
 }
 
+// ── настройки кучи .NET: 256 ГиБ адресного пространства ─────────────
+//
+// ЧТО ПОКАЗАЛ ОТЧЁТ С УСТРОЙСТВА (04.11 12:49)
+//   Последняя строка перехвата вызовов:
+//
+//     → mmap(274877911040) = FAIL errno=12
+//
+//   274877911040 = 256 ГиБ + одна страница. Это не наша проверка и не
+//   выделение под данные: столько .NET-GC резервирует себе под «регионы»
+//   (region range) сразу при инициализации. По умолчанию на 64-битной
+//   системе он берёт 256 ГБ виртуального адресного пространства, а на ARM64
+//   под Android его всего 39 бит, то есть 512 ГиБ. Половину этого объёма
+//   занять одним куском после ART и библиотек уже не удаётся — mmap отвечает
+//   ENOMEM.
+//
+//   Отсюда вся цепочка: исключение внутри Initialize → `catch` → печать в
+//   stdout → `init-callback=-1`. Дальше рантайм остаётся неинициализированным,
+//   и первая же аллокация падает по нулевому адресу (кадры 0x174a09c →
+//   0x1a70140).
+//
+// ЧТО ДЕЛАЕМ
+//   Говорим GC, сколько адресного пространства резервировать: переменная
+//   `DOTNET_GCRegionRange` (есть в этом файле ядра — строка присутствует).
+//   16 ГиБ — это вчетверо больше кучи, которую ядро реально занимает на
+//   телефоне с 8 ГБ памяти, и в тридцать раз меньше свободного места.
+//
+//   ВАЖНО: NativeAOT читает эту переменную как голое шестнадцатеричное
+//   число. Форма `0x400000000` молча игнорируется — резерв остаётся 256 ГиБ.
+
+void ConfigureCoreRuntimeEnv() {
+    // Куча .NET резервирует виртуальное пространство заранее; на 39-битной
+    // разметке 256 ГиБ не помещаются. 0x400000000 = 16 ГиБ.
+    const char* knob = "DOTNET_GCRegionRange";
+    const char* fallback = "400000000";
+
+    std::string value = fallback;
+    std::string source = "наш выбор 16 ГиБ";
+
+    const char* given = ::getenv(knob);
+    if (given != nullptr && given[0] != '\0') {
+        std::string text(given);
+        const bool prefixed = text.size() > 2 && text[0] == '0' && (text[1] == 'x' || text[1] == 'X');
+        if (prefixed) {
+            text = text.substr(2);
+            source = "задано с приставкой 0x — убрана, NativeAOT понимает только голый hex";
+        } else {
+            source = "задано вручную";
+        }
+        value = text;
+    }
+
+    ::setenv(knob, value.c_str(), 1);
+    LOGI("gc: %s=%s (%s)", knob, value.c_str(), source.c_str());
+
+    if (g_crashPath[0] != '\0') {
+        char line[320];
+        const int n = ::snprintf(line, sizeof(line),
+                                 "gc: %s=%s (%s) — иначе GC резервирует 256 ГиБ и не влезает "
+                                 "в 39-битное адресное пространство\n",
+                                 knob, value.c_str(), source.c_str());
+        if (n > 0) AppendCrashLine(line);
+    }
+}
+
 /**
  * Повторить проверки окружения, которые делает ядро, и записать ответы.
  *
@@ -1210,13 +1274,35 @@ int SymbiosisSigaction(int signal, const struct sigaction* act, struct sigaction
     return result;
 }
 
+/** Размер в байтах так, как его читает человек: 274877911040 → «256.0 ГиБ». */
+std::string HumanSize(size_t bytes) {
+    char text[64];
+    const double gib = static_cast<double>(bytes) / (1024.0 * 1024.0 * 1024.0);
+    if (gib >= 1.0) {
+        ::snprintf(text, sizeof(text), "%.1f ГиБ", gib);
+    } else {
+        ::snprintf(text, sizeof(text), "%.1f МиБ", static_cast<double>(bytes) / (1024.0 * 1024.0));
+    }
+    return text;
+}
+
 void* SymbiosisMmap(void* addr, size_t length, int prot, int flags, int fd, off_t offset) {
     void* result = g_realMmap != nullptr ? g_realMmap(addr, length, prot, flags, fd, offset)
                                          : MAP_FAILED;
+    const std::string human = HumanSize(length);
     if (result == MAP_FAILED) {
-        TraceEnv("call: mmap(%zu) = FAIL errno=%d\n", length, errno);
+        const int saved = errno;
+        TraceEnv("call: mmap(%zu = %s) = FAIL errno=%d\n", length, human.c_str(), saved);
+        // Запрос больше ГиБ — это резерв, а не данные. Если он не прошёл по
+        // нехватке адресного пространства, причина называется здесь, а не
+        // выясняется по кадрам через два круга.
+        if (length >= static_cast<size_t>(1024) * 1024 * 1024 && saved == ENOMEM) {
+            TraceEnv("call: ядру не хватило адресного пространства под резерв %s "
+                     "(на ARM64 под Android его 39 бит = 512 ГиБ)\n",
+                     human.c_str());
+        }
     } else {
-        TraceEnv("call: mmap(%zu) = ok\n", length);
+        TraceEnv("call: mmap(%zu = %s) = ok\n", length, human.c_str());
     }
     return result;
 }
@@ -1462,6 +1548,10 @@ Java_org_yuzu_yuzu_1emu_utils_KenjiBridge_nativeLoad(JNIEnv* env, jobject, jstri
         g_lastError = msg;
         return env->NewStringUTF(msg.c_str());
     }
+
+    // Настройки кучи задаются до первого обращения к GC, то есть до любого
+    // вызова внутрь ядра. Делаем это здесь, до значений по умолчанию.
+    ConfigureCoreRuntimeEnv();
 
     g_core = handle;
     ArmAbortTrap(handle);

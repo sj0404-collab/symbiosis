@@ -653,6 +653,30 @@ fun main() {
     check("в отчёте назван отказ mlock", palText.contains("mlock=FAIL errno=12"), palText)
     check("в отчёте виден последний вызов ядра", palText.contains("→ sigaction(11) = 0"), palText)
 
+    // Настройки кучи и отказ резерва адресного пространства: именно на них
+    // остановилась инициализация ядра на устройстве.
+    val heapReport = KenjiCrash.parse(
+        """
+        step=javaInitialize
+        gc: DOTNET_GCRegionRange=400000000 (наш выбор 16 ГиБ) — иначе GC резервирует 256 ГиБ
+        call: sigaction(11) = 0
+        call: mmap(274877911040 = 256.0 ГиБ) = FAIL errno=12
+        call: ядру не хватило адресного пространства под резерв 256.0 ГиБ (39 бит = 512 ГиБ)
+        init-callback=-1 calls=1
+        crash signal=11 name=SIGSEGV addr=0x0 code=1 step=javaInitialize
+        """.trimIndent()
+    )!!
+    check("настройка кучи в отчёте", heapReport.palLines.any { it.startsWith("DOTNET_GCRegionRange=") },
+        heapReport.palLines.toString())
+    check("отказ резерва назван размером", heapReport.palLines.any { it.contains("256.0 ГиБ") },
+        heapReport.palLines.toString())
+    check("причина отказа названа словами",
+        heapReport.palLines.any { it.contains("не хватило адресного пространства") },
+        heapReport.palLines.toString())
+    val heapText = KenjiCrash.format(heapReport)
+    check("в отчёте видно настройку кучи", heapText.contains("DOTNET_GCRegionRange=400000000"), heapText)
+    check("в отчёте видно отказ резерва", heapText.contains("FAIL errno=12"), heapText)
+
     println()
     println("passed=$passed failed=${failures.size}")
     failures.forEach { println("FAIL  $it") }

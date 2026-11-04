@@ -137,6 +137,7 @@ object KenjiCrash {
                     all[from - 1].startsWith("init-args:") ||
                     all[from - 1].startsWith("pal:") ||
                     all[from - 1].startsWith("call:") ||
+                    all[from - 1].startsWith("gc:") ||
                     all[from - 1].startsWith("dlreq "))
         ) {
             --from
@@ -201,6 +202,13 @@ object KenjiCrash {
                 // на чём ядро остановилось.
                 line.startsWith("call:") ->
                     palLines.add("→ " + line.removePrefix("call:").trim())
+
+                // gc: DOTNET_GCRegionRange=400000000 — с какими настройками
+                // кучи запускается ядро. По умолчанию .NET резервирует 256 ГиБ
+                // адресного пространства, а на ARM64 под Android его 512 ГиБ
+                // на весь процесс.
+                line.startsWith("gc:") ->
+                    palLines.add(line.removePrefix("gc:").trim())
 
                 // got patch: журнал вызовов — узлов N из 4 — сколько перехватов
                 // окружения удалось поставить. Без этого числа пустой раздел
