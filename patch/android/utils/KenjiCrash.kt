@@ -202,6 +202,12 @@ object KenjiCrash {
                 line.startsWith("call:") ->
                     palLines.add("→ " + line.removePrefix("call:").trim())
 
+                // got patch: журнал вызовов — узлов N из 4 — сколько перехватов
+                // окружения удалось поставить. Без этого числа пустой раздел
+                // «окружение» не отличить от «перехваты не встали».
+                line.startsWith("got patch:") && line.contains("журнал вызовов") ->
+                    trapState.add(line.trim())
+
                 line.startsWith("init-callback-fn=") ->
                     initCallbackAt = line.removePrefix("init-callback-fn=").trim()
 

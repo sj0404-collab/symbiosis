@@ -157,9 +157,19 @@ class KenjiProbeService : Service() {
                 val when_ = file?.takeIf { it.isFile }
                     ?.let { java.text.SimpleDateFormat("dd.MM HH:mm", java.util.Locale.ROOT)
                         .format(java.util.Date(it.lastModified())) }
+                // Когда установлен сам APK. Имя версии у нас — чужое (от Eden),
+                // и в двух наших сборках оно одинаковое: по нему новый APK от
+                // старого не отличить. А время установки отличает всегда.
+                val installed = runCatching {
+                    context.packageManager.getPackageInfo(context.packageName, 0).lastUpdateTime
+                }.getOrNull()?.let {
+                    java.text.SimpleDateFormat("dd.MM HH:mm", java.util.Locale.ROOT)
+                        .format(java.util.Date(it))
+                }
                 buildString {
                     append(version)
                     append(" (").append(BuildConfig.VERSION_CODE).append(')')
+                    if (installed != null) append(", APK установлен ").append(installed)
                     if (when_ != null) append(", файл отчёта изменён ").append(when_)
                 }
             }.getOrDefault("")

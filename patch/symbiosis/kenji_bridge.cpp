@@ -55,10 +55,14 @@
 #include <ucontext.h>
 
 #include <cerrno>
+#include <cstdlib>
 #include <pthread.h>
+#include <sched.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
+#include <sys/statfs.h>
 #include <sys/syscall.h>
+#include <sys/system_properties.h>
 
 #include "common/symbiosis/got_patch.h"
 #include <string>
@@ -1081,33 +1085,62 @@ int SymbiosisMlock(const void* addr, size_t len) {
 void PalPreflight() {
     if (g_crashPath[0] == '\0') return;
 
-    const long page = ::sysconf(40);
-    const long cpus = ::sysconf(96);
-    const long pageMacro = ::sysconf(_SC_PAGESIZE);
-    const long size = page > 0 ? page : (pageMacro > 0 ? pageMacro : 4096);
+    char line[400];
+    int n;
 
-    char line[320];
-    int n = ::snprintf(line, sizeof(line), "pal: page(40)=%ld page(_SC_PAGESIZE)=%ld cpus(96)=%ld\n",
-                       page, pageMacro, cpus);
+    // 1. Числа, которые ядро спрашивает первым делом. Номера — те же, что в
+    //    его коде (40, 96, 98), а не наши макросы: важно ответить на тот же
+    //    вопрос, а не на похожий. -1 означает «система не ответила», и в
+    //    ядре это сразу отказ.
+    const long pageByName = ::sysconf(40);      // _SC_PAGE_SIZE
+    const long pageMacro = ::sysconf(_SC_PAGESIZE);
+    const long cpus = ::sysconf(96);            // _SC_NPROCESSORS_CONF
+    const long physPages = ::sysconf(98);       // _SC_PHYS_PAGES
+    n = ::snprintf(line, sizeof(line),
+                   "pal: sysconf 40=%ld pagesize=%ld 96=%ld 98=%ld\n",
+                   pageByName, pageMacro, cpus, physPages);
     if (n > 0) AppendCrashLine(line);
 
+    const long size = pageByName > 0 ? pageByName : (pageMacro > 0 ? pageMacro : 4096);
+
+    // 2. Версия системы и membarrier: ядро при sdk >= 29 сначала пробует
+    //    membarrier и только при отказе заводит страницу через mmap.
+    char sdkRaw[128];
+    sdkRaw[0] = '\0';
+    ::__system_property_get("ro.build.version.sdk", sdkRaw);
+    errno = 0;
+    const long query = ::syscall(283, 0, 0);
+    const int queryErr = query < 0 ? errno : 0;
+    long registered = -1;
+    int registerErr = 0;
+    if (query >= 0 && (query & 8) != 0) {
+        errno = 0;
+        registered = ::syscall(283, 0x10, 0);
+        registerErr = registered < 0 ? errno : 0;
+    }
+    n = ::snprintf(line, sizeof(line),
+                   "pal: sdk=%s membarrier query=%ld errno=%d register=%ld errno=%d\n",
+                   sdkRaw, query, queryErr, registered, registerErr);
+    if (n > 0) AppendCrashLine(line);
+
+    // 3. Страница: mmap, mlock, мьютекс — ровно в том порядке и с теми же
+    //    аргументами, что у ядра. Здесь и рождается отказ без текста.
     errno = 0;
     void* zero = ::mmap(nullptr, static_cast<size_t>(size), PROT_READ | PROT_WRITE,
                         MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
-    const int mmapErr = zero == MAP_FAILED ? errno : 0;
     if (zero == MAP_FAILED) {
-        n = ::snprintf(line, sizeof(line), "pal: mmap(%ld)=FAIL errno=%d\n", size, mmapErr);
+        n = ::snprintf(line, sizeof(line), "pal: mmap(%ld)=FAIL errno=%d\n", size, errno);
         if (n > 0) AppendCrashLine(line);
     } else {
         n = ::snprintf(line, sizeof(line), "pal: mmap(%ld)=ok\n", size);
         if (n > 0) AppendCrashLine(line);
+
         errno = 0;
         const int locked = ::mlock(zero, static_cast<size_t>(size));
-        const int lockErr = locked == 0 ? 0 : errno;
         if (locked == 0) {
-            n = ::snprintf(line, sizeof(line), "pal: mlock=ok\n");
+            n = ::snprintf(line, sizeof(line), "pal: mlock(%ld)=ok\n", size);
         } else {
-            n = ::snprintf(line, sizeof(line), "pal: mlock=FAIL errno=%d\n", lockErr);
+            n = ::snprintf(line, sizeof(line), "pal: mlock(%ld)=FAIL errno=%d\n", size, errno);
         }
         if (n > 0) AppendCrashLine(line);
         ::munlock(zero, static_cast<size_t>(size));
@@ -1120,10 +1153,22 @@ void PalPreflight() {
     n = ::snprintf(line, sizeof(line), "pal: pthread_mutex_init=%d\n", mutexAt);
     if (n > 0) AppendCrashLine(line);
 
+    // 4. Дальше ядро читает маску процессоров и общий объём памяти в
+    //    страницах. Это тоже может отказать — молча, как и всё остальное.
+    cpu_set_t mask;
+    CPU_ZERO(&mask);
     errno = 0;
-    const long barrier = ::syscall(283, 0, 0);
-    const int barrierErr = barrier < 0 ? errno : 0;
-    n = ::snprintf(line, sizeof(line), "pal: membarrier query=%ld errno=%d\n", barrier, barrierErr);
+    const int affinity = ::sched_getaffinity(::getpid(), sizeof(mask), &mask);
+    const long cpusOn = affinity == 0 ? ::sysconf(97) : -1;
+    n = ::snprintf(line, sizeof(line), "pal: sched_getaffinity=%d errno=%d onln=%ld\n",
+                   affinity, affinity == 0 ? 0 : errno, cpusOn);
+    if (n > 0) AppendCrashLine(line);
+
+    struct statfs fs {};
+    errno = 0;
+    const int fsResult = ::statfs("/sys/fs/cgroup", &fs);
+    n = ::snprintf(line, sizeof(line), "pal: statfs(/sys/fs/cgroup)=%d errno=%d\n",
+                   fsResult, fsResult == 0 ? 0 : errno);
     if (n > 0) AppendCrashLine(line);
 }
 
@@ -1133,8 +1178,7 @@ void PalPreflight() {
 // любая неудача превращается в один и тот же ответ `-1`. Мы уже повторяем
 // их сами (PalPreflight), но повтор — это наш вызов, а не вызов ядра: он
 // может удаться там, где у ядра не вышло, и наоборот. Поэтому настоящие
-// вызовы ядра тоже записываются — с аргументами и ответами. Тогда видно не
-// только «что не так», но и «на чём именно ядро остановилось».
+// вызовы ядра тоже записываются — с аргументами и ответами.
 
 std::atomic<int> g_envTraceBudget{80};
 
@@ -1179,8 +1223,8 @@ void* SymbiosisMmap(void* addr, size_t length, int prot, int flags, int fd, off_
 
 long SymbiosisSysconf(int name) {
     const long result = g_realSysconf != nullptr ? g_realSysconf(name) : -1;
-    // Спрашивают десятки разных чисел; пишем только те два, что в проверке.
-    if (name == 40 || name == 96) {
+    // Спрашивают десятки разных чисел; пишем только те, что в проверке.
+    if (name == 40 || name == 96 || name == 97 || name == 98) {
         TraceEnv("call: sysconf(%d) = %ld\n", name, result);
     }
     return result;
@@ -1209,7 +1253,8 @@ void ArmEnvTrace(void* coreHandle) {
     g_realSysconf = reinterpret_cast<SysconfFn>(::dlsym(RTLD_DEFAULT, "sysconf"));
     g_realMutexInit = reinterpret_cast<MutexInitFn>(::dlsym(RTLD_DEFAULT, "pthread_mutex_init"));
 
-    struct { const char* name; void* hook; bool ok; } traps[] = {
+    int armed = 0;
+    struct Trap { const char* name; void* hook; bool ready; } traps[] = {
         {"sigaction", reinterpret_cast<void*>(&SymbiosisSigaction), g_realSigaction != nullptr},
         {"mmap", reinterpret_cast<void*>(&SymbiosisMmap), g_realMmap != nullptr},
         {"sysconf", reinterpret_cast<void*>(&SymbiosisSysconf), g_realSysconf != nullptr},
@@ -1218,7 +1263,7 @@ void ArmEnvTrace(void* coreHandle) {
     };
 
     for (auto& trap : traps) {
-        if (!trap.ok) {
+        if (!trap.ready) {
             if (g_crashPath[0] != '\0') {
                 char line[200];
                 const int n = ::snprintf(line, sizeof(line),
@@ -1229,6 +1274,7 @@ void ArmEnvTrace(void* coreHandle) {
             continue;
         }
         const auto result = Symbiosis::PatchImport(anchor, trap.name, trap.hook);
+        if (result.ok) ++armed;
         LOGI("got patch %s: %s (%s)", trap.name, result.ok ? "ok" : "failed",
              result.detail.c_str());
         if (g_crashPath[0] != '\0') {
@@ -1237,6 +1283,13 @@ void ArmEnvTrace(void* coreHandle) {
                                      result.detail.c_str());
             if (n > 0) AppendCrashLine(line);
         }
+    }
+
+    if (g_crashPath[0] != '\0') {
+        char line[120];
+        const int n = ::snprintf(line, sizeof(line), "got patch: журнал вызовов — узлов %d из 4\n",
+                                 armed);
+        if (n > 0) AppendCrashLine(line);
     }
 }
 
