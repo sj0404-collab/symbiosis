@@ -54,9 +54,14 @@ jobs:
           # step skipped, thirty minutes lost, and nothing wrong with the code.
           # sj0404-collab/eden-upstream-reference is our own untouched copy of
           # the same v0.2.1 tree, kept for exactly this.
+          # Каждый клон ограничен по времени. Без ограничения сервер вендора
+          # может не ответить и не разорвать соединение, а git в этом случае
+          # ждёт: заход 04.11.2026 висел на этом шаге 25 минут, и запасного
+          # пути (зеркало ниже) он не достиг, потому что до него просто не
+          # дошло. Таймаут не «портят сборку», а переводят на зеркало.
           ok=0
           for attempt in 1 2 3; do
-            if git clone --branch v0.2.1 \
+            if timeout 240 git clone --branch v0.2.1 \
                  https://git.eden-emu.dev/eden-emu/eden.git eden 2>/tmp/clone.log; then
               ok=1; break
             fi
@@ -70,7 +75,7 @@ jobs:
             # different commit, and the build then dies in CMake with an error
             # that looks like ours. That cost two runs on build2.yml.
             echo "::warning::upstream is unreachable; falling back to our mirror at v0.2.1"
-            git clone --branch v0.2.1 \
+            timeout 300 git clone --branch v0.2.1 \
               https://github.com/sj0404-collab/eden-upstream-reference.git eden \
               || { echo "::error::neither upstream nor the mirror could be cloned"; exit 1; }
           fi
