@@ -7,24 +7,30 @@ import android.os.Bundle
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
-import androidx.core.view.isVisible
 import android.widget.Toast
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.core.view.isVisible
 import androidx.fragment.app.Fragment
 import androidx.lifecycle.lifecycleScope
 import androidx.navigation.findNavController
 import androidx.recyclerview.widget.LinearLayoutManager
+import com.google.android.material.dialog.MaterialAlertDialogBuilder
+import com.google.android.material.snackbar.Snackbar
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import org.yuzu.yuzu_emu.R
-import org.yuzu.yuzu_emu.NativeLibrary
 import org.yuzu.yuzu_emu.HomeNavigationDirections
-import org.yuzu.yuzu_emu.adapters.GameFolderAdapter
+import org.yuzu.yuzu_emu.NativeLibrary
+import org.yuzu.yuzu_emu.R
 import org.yuzu.yuzu_emu.adapters.GameEntryAdapter
+import org.yuzu.yuzu_emu.adapters.GameFolderAdapter
 import org.yuzu.yuzu_emu.databinding.FragmentGameFoldersBinding
+import org.yuzu.yuzu_emu.utils.GameFolderList
 import org.yuzu.yuzu_emu.utils.GameFolderScanner
+import org.yuzu.yuzu_emu.utils.GameFoldersStore
 import org.yuzu.yuzu_emu.utils.GameHelper
+import org.yuzu.yuzu_emu.utils.NativeConfig
 import org.yuzu.yuzu_emu.utils.NativeSymbiosis
 
 /**
@@ -51,6 +57,31 @@ class GameFoldersFragment : Fragment() {
     private var scanJob: kotlinx.coroutines.Job? = null
     private val binding get() = _binding!!
 
+    /**
+     * Добавление папки прямо с этого экрана.
+     *
+     * Раньше папку можно было добавить только в расширенной панели, и экран
+     * «Папки с играми» не отвечал на самый вероятный вопрос: «а как добавить
+     * ещё одну?». Здесь используется тот же путь, что и в панели
+     * (MainActivity.processGamesDir): он берёт persistable-разрешение и
+     * показывает диалог выбора глубины обхода. Один путь — одно поведение,
+     * и разрешение не остаётся «временным».
+     */
+    private val pickFolder =
+        registerForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
+            if (uri == null) return@registerForActivityResult
+            val host = activity as? org.yuzu.yuzu_emu.ui.main.MainActivity
+            val root = _binding?.root
+            if (host == null || root == null) {
+                if (root != null) {
+                    Snackbar.make(root, R.string.folder_add_failed, Snackbar.LENGTH_LONG).show()
+                }
+                return@registerForActivityResult
+            }
+            host.processGamesDir(uri)
+            Snackbar.make(root, R.string.folder_add_hint, Snackbar.LENGTH_LONG).show()
+        }
+
     override fun onCreateView(
         inflater: LayoutInflater,
         container: ViewGroup?,
@@ -69,6 +100,7 @@ class GameFoldersFragment : Fragment() {
         }
 
         binding.listFolders.layoutManager = LinearLayoutManager(requireContext())
+        binding.buttonAddFolder.setOnClickListener { pickFolder.launch(null) }
         binding.swipeFolders.setOnRefreshListener {
             val open = openFolder
             if (open != null) showFolderContents(open) else rescan()
@@ -98,6 +130,7 @@ class GameFoldersFragment : Fragment() {
             if (_binding == null) return@launch
 
             binding.swipeFolders.isRefreshing = false
+            binding.buttonAddFolder.isVisible = true
             binding.textNoFolders.isVisible = folders.isEmpty()
             binding.listFolders.isVisible = folders.isNotEmpty()
 
@@ -112,12 +145,27 @@ class GameFoldersFragment : Fragment() {
 
             binding.listFolders.adapter = GameFolderAdapter(
                 requireActivity() as androidx.appcompat.app.AppCompatActivity,
-                folders
-            ) { folder ->
-                // Tapping a folder re-reads it and shows what is inside, so a
-                // game copied in a moment ago appears without a restart.
-                showFolderContents(folder)
-            }
+                folders,
+                { folder ->
+                    // Папка без доступа: не «0 игр», а «верните доступ».
+                    // Выбор той же папки заново и есть возврат доступа —
+                    // система выдаёт разрешение на дерево, а не на путь.
+                    if (folder.unreadable) {
+                        Snackbar.make(
+                            binding.root,
+                            R.string.folder_no_access_hint,
+                            Snackbar.LENGTH_LONG
+                        ).show()
+                        pickFolder.launch(null)
+                    } else {
+                        // Tapping a folder re-reads it and shows what is inside,
+                        // so a game copied in a moment ago appears without a
+                        // restart.
+                        showFolderContents(folder)
+                    }
+                },
+                { folder -> showFolderActions(folder) }
+            )
         }
     }
 
@@ -150,6 +198,7 @@ class GameFoldersFragment : Fragment() {
                 R.plurals.folder_game_count, entries.size, entries.size
             )
 
+            binding.buttonAddFolder.isVisible = false
             binding.textNoFolders.isVisible = entries.isEmpty()
             if (entries.isEmpty()) {
                 binding.textNoFolders.text = getString(R.string.folder_empty)
@@ -209,6 +258,66 @@ class GameFoldersFragment : Fragment() {
             binding.root.findNavController().navigate(
                 HomeNavigationDirections.actionGlobalEmulationActivity(game, true)
             )
+        }
+    }
+
+    /**
+     * Долгое нажатие на папку: пересканировать или убрать.
+     *
+     * Убрать — значит убрать из списка приложения, а не удалить с диска:
+     * игры остаются на месте, и это сказано в диалоге прямым текстом.
+     * Раньше единственным способом избавиться от папки, к которой больше
+     * нет доступа, была очистка данных приложения.
+     */
+    private fun showFolderActions(folder: GameFolderScanner.Folder) {
+        MaterialAlertDialogBuilder(requireContext())
+            .setTitle(folder.displayName)
+            .setItems(
+                arrayOf(
+                    getString(R.string.folder_rescan),
+                    getString(R.string.folder_remove)
+                )
+            ) { _, which ->
+                when (which) {
+                    0 -> showFolderContents(folder)
+                    1 -> confirmRemoveFolder(folder)
+                }
+            }
+            .show()
+    }
+
+    private fun confirmRemoveFolder(folder: GameFolderScanner.Folder) {
+        MaterialAlertDialogBuilder(requireContext())
+            .setTitle(folder.displayName)
+            .setMessage(R.string.folder_remove_confirm)
+            .setNegativeButton(android.R.string.cancel, null)
+            .setPositiveButton(R.string.folder_remove) { _, _ -> removeFolder(folder) }
+            .show()
+    }
+
+    private fun removeFolder(folder: GameFolderScanner.Folder) {
+        val appContext = requireContext().applicationContext
+        viewLifecycleOwner.lifecycleScope.launch {
+            val removed = withContext(Dispatchers.IO) {
+                runCatching {
+                    val list = NativeConfig.getGameDirs().toMutableList()
+                    list.removeAll { it.uriString == folder.uriString }
+                    NativeConfig.setGameDirs(list.toTypedArray())
+                    // Явное удаление должно дойти и до зеркала: иначе
+                    // восстановление «пропавших» папок вернуло бы её назад
+                    // при следующем запуске.
+                    GameFoldersStore.save(
+                        list.map { GameFolderList.Entry(it.uriString, it.deepScan) }
+                    )
+                    true
+                }.getOrDefault(false)
+            }
+            if (_binding == null) return@launch
+            if (!removed) {
+                Snackbar.make(binding.root, R.string.folder_remove_failed, Snackbar.LENGTH_LONG)
+                    .show()
+            }
+            rescan()
         }
     }
 

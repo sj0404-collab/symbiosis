@@ -15,6 +15,35 @@ object NativeSymbiosis {
     private const val RECORD_SEP = '\u001e'
 
     // --- Diagnostics -----------------------------------------------------
+
+    /**
+     * Папка журнала ядра — по мнению самого ядра.
+     *
+     * Путь не выводится в Kotlin из `filesDir`: корень данных настраивается
+     * (SharedDataDirectory), и после переноса в общую папку журнал лежит не
+     * там, где его ждёт догадка.
+     */
+    external fun logDirectory(): String
+
+    /**
+     * Включить отчёт о нативном падении этого процесса.
+     *
+     * Основная эмуляция живёт в libyuzu-android.so, и её SIGSEGV не доходит до
+     * Java-обработчика исключений: процесс умирает внутри нативной части.
+     * Обработчик в C++ пишет в файл шапку и кадры стека, а следующий запуск
+     * показывает их человеку ([UiGuard.pending]).
+     */
+    external fun armMainCrashLog(path: String)
+
+    /**
+     * Отметить текущее действие — оно попадёт в отчёт, если приложение упадёт.
+     *
+     * Зовётся на границах опасных операций (применение настроек, перезапуск
+     * игры). Одна строка в отчёте отделяет «упало на настройках» от «упало при
+     * запуске», и гадать потом не нужно.
+     */
+    external fun setMainStep(step: String)
+
     external fun getDriverTopology(): String
     external fun getMemoryState(): String
     external fun getMemoryJson(): String
@@ -32,6 +61,15 @@ object NativeSymbiosis {
      * asks the loader directly.
      */
     external fun diagnoseRom(path: String): String
+
+    /**
+     * Живые замеры звука: «просили|получили|каналы|буфер|ёмкость|порция|
+     * опустошения|вызовы|драйвер|ошибка|объяснение».
+     *
+     * Нужны, чтобы отличить «настройка применилась и не помогла» от
+     * «настройка не применилась вовсе». На слух эти два случая неразличимы.
+     */
+    external fun getAudioReport(): String
 
     /** The sentence half of [diagnoseRom], or null when the file is fine. */
     fun romProblem(path: String): String? = runCatching {
@@ -70,6 +108,22 @@ object NativeSymbiosis {
                 advice = p.getOrElse(4) { "" }
             )
         }.getOrElse { Thermal("Unknown", -1, -1, "", "") }
+
+    // --- Ровность кадров ---------------------------------------------------
+    /**
+     * Снимок того, что происходило с кадрами и звуком во время игры.
+     *
+     * Счётчики живут в нативной части и переживают выход из игры: поиграли,
+     * вышли, открыли экран — данные на месте. Разбор — в [FrameMetricsText].
+     */
+    external fun frameMetrics(): String
+
+    /** Начать новый замер. */
+    external fun resetFrameMetrics()
+
+    /** Снимок, уже разобранный. Пустой, если нативная часть недоступна. */
+    fun frameSnapshot(): FrameMetricsText.Snapshot =
+        FrameMetricsText.parse(runCatching { frameMetrics() }.getOrDefault(""))
 
     // --- Profiles --------------------------------------------------------
     private external fun getProfilesForDevice(): String
@@ -205,6 +259,15 @@ object NativeSymbiosis {
     }
 
     private external fun decompressDump(source: String, destination: String): String
+
+    /**
+     * Куда распаковке класть временные части (кэш приложения).
+     *
+     * Без этого вызова нативный код зовёт std::filesystem::temp_directory_path(),
+     * который на Android бросает исключение: TMPDIR не выставлен, а /tmp нет.
+     * Исключение в JNI - это abort, то есть падение приложения на ровном месте.
+     */
+    external fun setRomWorkDir(dir: String)
 
     fun decompress(source: String, destination: String): Pair<Long, String> {
         val raw = runCatching { decompressDump(source, destination) }.getOrDefault("0|failed")

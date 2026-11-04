@@ -5,6 +5,7 @@ package org.yuzu.yuzu_emu.utils
 
 import android.content.Context
 import android.net.Uri
+import android.os.Environment
 import android.provider.OpenableColumns
 import java.io.File
 import org.json.JSONArray
@@ -14,75 +15,240 @@ import org.yuzu.yuzu_emu.YuzuApplication
 /**
  * NSZ/XCZ/NCZ → файл, который ядро умеет открыть.
  *
- * Вкладка «Конвертер»: после работы показывается обложка и либо
- * «Запустить», либо «Удалить». Половинчатый выход удаляется в native.
+ * Три вещи здесь переделаны после отчёта с устройства:
+ *
+ *  1. **Куда попадают файлы.** Раньше результат складывался в
+ *     `files/converter` — приватную папку, которую не видит ни один файловый
+ *     менеджер. «Распаковалось, а где — неизвестно». Теперь результат идёт в
+ *     `Download/Symbiosis`: видно в проводнике, в «Загрузках» и по кабелю.
+ *     Если доступа к общей памяти нет, честно возвращаемся в приватную папку
+ *     и говорим об этом, а не делаем вид.
+ *  2. **Кто показывает прогресс.** Очередь больше не живёт в голом потоке:
+ *     её ведёт [ConverterService] с уведомлением в шторке, так что уход с
+ *     экрана не обрывает распаковку.
+ *  3. **Что видно в приложении.** [listJson] отдаёт не только готовые файлы,
+ *     но и текущее состояние: какой файл в работе, сколько в очереди и где
+ *     лежит результат.
  */
 object Converter {
 
-    fun dir(): File = File(YuzuApplication.appContext.filesDir, "converter").also { it.mkdirs() }
+    /** Итог последней очереди: для уведомления и для экрана. */
+    data class Result(
+        val ok: Boolean,
+        val count: Int,
+        val where: String,
+        val message: String
+    )
 
-    @Volatile var busy: Boolean = false
+    @Volatile
+    var lastResult: Result = Result(false, 0, "", "")
         private set
-    @Volatile var queueNote: String = ""
-        private set
-    private val pending = java.util.ArrayDeque<Pair<android.net.Uri, String>>()
-    private val done = java.util.ArrayList<org.json.JSONObject>()
 
-    fun queueJson(): String = org.json.JSONObject().apply {
+    @Volatile
+    var busy: Boolean = false
+        private set
+
+    @Volatile
+    var queueNote: String = ""
+        private set
+
+    /** Номер файла в работе и всего в очереди — для уведомления. */
+    @Volatile
+    var currentIndex: Int = 0
+        private set
+
+    @Volatile
+    var currentTotal: Int = 0
+        private set
+
+    @Volatile
+    var currentName: String = ""
+        private set
+
+    @Volatile
+    private var stopRequested: Boolean = false
+
+    private val pending = java.util.ArrayDeque<Pair<Uri, String>>()
+    private val done = java.util.ArrayList<JSONObject>()
+
+    // --- Куда складывать ---------------------------------------------------
+
+    /**
+     * Общая папка `Download/Symbiosis`.
+     *
+     * `canWrite()` на путях вне Android/data врёт так же, как врал при выборе
+     * корня данных: он отвечает «да» без разрешения и «нет» с ним. Поэтому
+     * проверка — настоящая запись пробного файла.
+     */
+    fun publicDir(): File =
+        File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS), "Symbiosis")
+
+    private fun publicWritable(): Boolean = runCatching {
+        val dir = publicDir()
+        if (!dir.isDirectory && !dir.mkdirs()) return@runCatching false
+        val probe = File(dir, ".write-probe")
+        val ok = probe.createNewFile() || probe.exists()
+        if (ok) probe.delete()
+        ok
+    }.getOrDefault(false)
+
+    /** Приватная папка — запасной вариант, всегда доступна. */
+    fun privateDir(): File =
+        File(YuzuApplication.appContext.filesDir, "converter").also { it.mkdirs() }
+
+    /** Куда пишем сейчас. */
+    fun dir(): File = if (publicWritable()) publicDir() else privateDir()
+
+    /** Где сейчас лежат файлы, словами для экрана и уведомления. */
+    fun whereText(): String {
+        val f = dir()
+        return if (f == privateDir()) {
+            "${f.absolutePath} (приватная папка приложения: нет доступа к «Загрузкам»)"
+        } else {
+            f.absolutePath
+        }
+    }
+
+    /** Все папки с результатами: текущая и старая приватная. */
+    private fun allDirs(): List<File> = listOf(dir(), privateDir()).distinctBy { it.absolutePath }
+
+    // --- Состояние ---------------------------------------------------------
+
+    @Synchronized
+    fun progressText(): String {
+        if (!busy) return if (lastResult.ok) "готово · ${lastResult.count}" else ""
+        if (currentName.isBlank()) return "подготовка…"
+        return if (currentTotal > 1) "$currentName · $currentIndex из $currentTotal" else currentName
+    }
+
+    fun queueJson(): String = JSONObject().apply {
         put("busy", busy)
         put("note", queueNote)
-        put("pending", pending.size)
-        val arr = org.json.JSONArray()
-        done.takeLast(12).forEach { arr.put(it) }
+        put("pending", synchronized(pending) { pending.size })
+        put("current", currentName)
+        put("index", currentIndex)
+        put("total", currentTotal)
+        put("where", whereText())
+        val arr = JSONArray()
+        synchronized(done) { done.takeLast(12) }.forEach { arr.put(it) }
         put("done", arr)
     }.toString()
 
+    /**
+     * Список готовых файлов.
+     *
+     * Читается с диска, а не из памяти: файл мог остаться от прошлого запуска
+     * или быть удалён через проводник, и список обязан это отражать.
+     */
     fun listJson(): String {
         val arr = JSONArray()
-        dir().listFiles()?.filter { it.isFile }?.sortedByDescending { it.lastModified() }?.forEach { f ->
-            arr.put(probeFile(f))
+        allDirs().forEach { d ->
+            d.listFiles()?.filter { it.isFile && !it.name.startsWith("in-") }
+                ?.sortedByDescending { it.lastModified() }
+                ?.forEach { f -> arr.put(probeFile(f)) }
         }
-        return JSONObject().put("items", arr).put("path", dir().absolutePath).toString()
+        return JSONObject()
+            .put("items", arr)
+            .put("path", dir().absolutePath)
+            .put("where", whereText())
+            .put("busy", busy)
+            .put("current", currentName)
+            .put("index", currentIndex)
+            .put("total", currentTotal)
+            .toString()
     }
 
+    // --- Очередь -----------------------------------------------------------
+
+    /**
+     * Ставит файлы в очередь и поднимает службу.
+     *
+     * Сама работа начинается в [ConverterService]: если запускать её здесь,
+     * то при закрытии экрана очередь остаётся без процесса и без
+     * уведомления — ровно то, на что жаловались.
+     */
     fun enqueue(context: Context, uris: List<Uri>): String {
-        uris.forEach { uri ->
-            pending.addLast(uri to displayName(context, uri))
-        }
-        queueNote = "в очереди ${pending.size} · не трогайте телефон"
-        if (!busy) drain(context)
+        uris.forEach { uri -> synchronized(pending) { pending.addLast(uri to displayName(context, uri)) } }
+        stopRequested = false
+        queueNote = "в очереди ${synchronized(pending) { pending.size }} · можно уйти с экрана"
+        if (!busy) ConverterService.start(context)
         return queueJson()
     }
 
-    private fun drain(context: Context) {
-        busy = true
-        Thread({
-            try {
-                var i = 0
-                val total = pending.size
-                while (true) {
-                    val item = synchronized(pending) {
-                        if (pending.isEmpty()) null else pending.removeFirst()
-                    } ?: break
-                    i++
-                    queueNote = "не трогайте телефон · $i/${i + pending.size} · ${item.second}"
-                    val raw = importAndConvert(context, item.first)
-                    val obj = runCatching { org.json.JSONObject(raw) }.getOrDefault(
-                        org.json.JSONObject().put("ok", false).put("message", raw)
-                    )
-                    obj.put("source", item.second)
-                    synchronized(done) { done.add(obj) }
-                }
-                queueNote = if (done.isEmpty()) "" else "готово · ${done.size}"
-            } finally {
-                busy = false
-            }
-        }, "convert-queue").start()
+    /** Просьба остановиться после текущего файла. */
+    fun requestStop() {
+        stopRequested = true
+        queueNote = "останавливаюсь после текущего файла"
     }
+
+    /**
+     * Разбирает очередь. Вызывается службой; повторный вход безопасен —
+     * второй поток увидит `busy` и вернётся.
+     */
+    fun runQueue(context: Context, onProgress: (index: Int, total: Int, name: String) -> Unit = { _, _, _ -> }) {
+        synchronized(this) {
+            if (busy) return
+            busy = true
+        }
+        var okCount = 0
+        var lastError = ""
+        var lastWhere = ""
+        try {
+            val total = synchronized(pending) { pending.size }
+            currentTotal = total
+            var index = 0
+            while (!stopRequested) {
+                val item = synchronized(pending) { if (pending.isEmpty()) null else pending.removeFirst() }
+                    ?: break
+                index++
+                currentIndex = index
+                currentName = item.second
+                queueNote = "распаковка: ${item.second}" +
+                    if (total > 1) " · $index из $total" else ""
+                onProgress(index, total, item.second)
+
+                val raw = importAndConvert(context, item.first)
+                val obj = runCatching { JSONObject(raw) }.getOrDefault(
+                    JSONObject().put("ok", false).put("message", raw)
+                )
+                obj.put("source", item.second)
+                if (obj.optBoolean("ok")) {
+                    okCount++
+                } else {
+                    // Имя файла в сообщении обязательно: «сжатые данные
+                    // повреждены» без него не отвечает, какой из выбранных
+                    // файлов чинить. Именно этого не хватило в отчёте с
+                    // устройства - причина была, а файла в ней не было.
+                    val who = obj.optString("source").ifBlank { item.second }
+                    val why = obj.optString("message").ifBlank { "не удалось" }
+                    lastError = "«$who»: $why"
+                }
+                synchronized(done) { done.add(obj) }
+            }
+            lastWhere = dir().absolutePath
+            currentName = ""
+            queueNote = when {
+                okCount > 0 -> "готово · $okCount · $lastWhere"
+                stopRequested -> "остановлено"
+                else -> lastError.ifBlank { "ничего не распаковано" }
+            }
+            lastResult = Result(okCount > 0, okCount, lastWhere, lastError)
+        } finally {
+            busy = false
+            currentIndex = 0
+            currentTotal = 0
+            currentName = ""
+        }
+    }
+
+    // --- Один файл ---------------------------------------------------------
 
     fun importAndConvert(context: Context, uri: Uri): String = runCatching {
         val name = displayName(context, uri).ifBlank { "dump.bin" }
-        val incoming = File(dir(), "in-${System.currentTimeMillis()}-${safe(name)}")
+        // Копия входящего — всегда в приватной папке: в «Загрузках» не
+        // должно появляться временных `in-…` файлов, которые пользователь
+        // увидит и не поймёт.
+        val incoming = File(privateDir(), "in-${System.currentTimeMillis()}-${safe(name)}")
         val copied = context.contentResolver.openInputStream(uri)?.use { input ->
             incoming.outputStream().use { input.copyTo(it) }
             incoming.length() > 0
@@ -91,6 +257,28 @@ object Converter {
             incoming.delete()
             return@runCatching fail("не удалось прочитать файл", name)
         }
+        // Что это на самом деле — по первым байтам, до всякой распаковки.
+        //
+        // Раньше здесь проверялось только расширение, и `.zip` с образом
+        // внутри уходил в нативную распаковку: она отвечала «Not an NSZ, XCZ
+        // or NCZ file», человек получал «закончилось без результата», а
+        // причина к нему не доезжала. Заодно впустую копировался большой файл.
+        val header = runCatching { incoming.headerBytes(RomSniff.HEADER_BYTES) }
+            .getOrDefault(ByteArray(0))
+        val kind = RomSniff.kind(header, name)
+        if (!RomSniff.shouldProcess(kind)) {
+            incoming.delete()
+            return@runCatching fail(RomSniff.advice(kind, name), name)
+        }
+
+        // Нативный код на Android не может взять системный временный каталог:
+        // TMPDIR не выставлен, /tmp нет, temp_directory_path() бросает
+        // исключение и роняет процесс. Даём ему наш кэш.
+        runCatching {
+            val work = File(context.cacheDir, "rom-work").apply { mkdirs() }
+            NativeSymbiosis.setRomWorkDir(work.absolutePath)
+        }
+
         val ext = name.substringAfterLast('.', "").lowercase()
         val outName = when (ext) {
             "nsz" -> stem(name) + ".nsp"
@@ -104,7 +292,15 @@ object Converter {
         incoming.delete()
         if (bytes <= 0L || !dest.isFile) {
             dest.delete()
-            return@runCatching fail(error.ifBlank { "конвертация не вышла" }, name)
+            // error - английская строка из ядра; она уходит в журнал и в
+            // «подробности», а человеку показывается перевод.
+            //
+            // Отдельный текстовый файл рядом с результатом: на устройстве
+            // причину «сжатые данные повреждены» не с чем сопоставить — не
+            // видно ни имени файла, ни того, на каком блоке оборвалось. Файл
+            // можно открыть и переслать, не разбирая журналы.
+            writeFailureReport(name, incoming.length(), kind, header, error)
+            return@runCatching fail(reasonText(error), name, error)
         }
         val card = probeFile(dest)
         card.put("ok", card.optBoolean("canLaunch"))
@@ -119,11 +315,69 @@ object Converter {
         fail(it.message ?: "сбой конвертера", "?")
     }
 
+    /**
+     * Записать подробности последнего отказа рядом с результатом.
+     *
+     * ПОЧЕМУ ФАЙЛ, А НЕ УВЕДОМЛЕНИЕ. В шторке нужна одна понятная строка.
+     * Диагностика требует другого: какое имя, сколько байт, что в первых
+     * байтах и что сказало ядро слово в слово. Это не помещается в
+     * уведомление и не должно в него попадать.
+     */
+    private fun writeFailureReport(name: String, bytes: Long, kind: RomSniff.Kind, header: ByteArray,
+                                   raw: String) {
+        runCatching {
+            val hex = header.joinToString(" ") { "%02X".format(it) }
+            File(dir(), "последняя-ошибка.txt").writeText(
+                buildString {
+                    append("Symbiosis · распаковка\n")
+                    append("файл: ").append(name).append('\n')
+                    append("размер: ").append(bytes).append(" Б\n")
+                    append("определён как: ").append(kind).append('\n')
+                    append("первые байты: ").append(hex.ifBlank { "(файл пуст)" }).append('\n')
+                    append("ответ ядра: ").append(raw.ifBlank { "(пусто)" }).append('\n')
+                    append("перевод: ").append(reasonText(raw)).append('\n')
+                    append('\n')
+                    append("Если ответ ядра называет номер блока — файл прочитан до этого\n")
+                    append("места и повреждён дальше; если «truncated» — скачивание не\n")
+                    append("завершилось. Тот же ответ есть в «Журнале ядра».\n")
+                }
+            )
+        }
+    }
+
+    /** Причина отказа: см. [ConverterReasons]. */
+    internal fun reasonText(error: String): String = ConverterReasons.text(error)
+
+    /**
+     * Кладёт готовый файл в «Загрузки» отдельной копией.
+     *
+     * Нужно, когда результат всё-таки оказался в приватной папке (нет
+     * доступа к общей памяти): так файл всё равно можно достать, не
+     * подключая телефон к компьютеру.
+     */
+    fun export(path: String): String = runCatching {
+        val src = File(path)
+        if (!src.isFile) return@runCatching JSONObject().put("ok", false)
+            .put("message", "файла уже нет")
+        val target = File(publicDir(), src.name)
+        val parent = target.parentFile ?: publicDir()
+        if (!parent.isDirectory && !parent.mkdirs()) {
+            return@runCatching JSONObject().put("ok", false).put("message", "нет доступа к «Загрузкам»")
+        }
+        src.copyTo(target, overwrite = true)
+        JSONObject().put("ok", true).put("path", target.absolutePath)
+            .put("message", "сохранено в ${target.absolutePath}")
+    }.getOrElse {
+        JSONObject().put("ok", false).put("message", it.message ?: "не удалось сохранить")
+    }.toString()
+
     fun delete(path: String): String {
-        val root = dir().canonicalPath
+        val roots = allDirs().map { runCatching { it.canonicalPath }.getOrDefault(it.absolutePath) }
         val f = File(path)
         if (!f.exists()) return fail("уже нет", path)
-        val ok = runCatching { f.canonicalPath.startsWith(root) && f.delete() }.getOrDefault(false)
+        val canonical = runCatching { f.canonicalPath }.getOrDefault(f.absolutePath)
+        val inside = roots.any { canonical.startsWith(it) }
+        val ok = inside && runCatching { f.delete() }.getOrDefault(false)
         return JSONObject().put("ok", ok).put("path", path).toString()
     }
 
@@ -142,6 +396,31 @@ object Converter {
         val reason = if (launch) "" else runCatching {
             NativeSymbiosis.romProblem(path)
         }.getOrNull().orEmpty().ifBlank { "ядро не принимает этот файл" }
+        // Полный разбор рядом с файлом.
+        //
+        // В шторке помещается две строки, и на устройстве текст обрывался ровно
+        // там, где начиналась суть («...и ещё 1; файл»). Отчёт о контейнере
+        // нужен целиком, и его можно переслать: список файлов с размерами и
+        // тем, что стоит на месте метки NCA. Это несколько килобайт текста,
+        // а не сам образ.
+        if (!launch) {
+            runCatching {
+                File(dir(), "почему-не-открывается.txt").writeText(
+                    buildString {
+                        append("Symbiosis · проверка контейнера\n")
+                        append("файл: ").append(path).append('\n')
+                        append("размер: ").append(f.length()).append(" Б\n")
+                        append("\n")
+                        append(reason).append('\n')
+                        append("\n")
+                        append("Что это значит: ядро открывает NSP только тогда, когда внутри\n")
+                        append("есть NCA с программой игры, а находит его по файлу *.cnmt.nca.\n")
+                        append("Метка NCA3 по смещению 0x200 в файле .nca — признак того, что\n")
+                        append("внутри лежит распакованный NCA, а не сжатые данные.\n")
+                    }
+                )
+            }
+        }
         return JSONObject().apply {
             put("ok", launch)
             put("canLaunch", launch)
@@ -154,6 +433,20 @@ object Converter {
             put("message", if (launch) "можно открыть" else reason)
         }
     }
+
+    /** Первые [count] байт файла — для определения контейнера. */
+    private fun File.headerBytes(count: Int): ByteArray = runCatching {
+        inputStream().use { input ->
+            val buffer = ByteArray(count)
+            var read = 0
+            while (read < count) {
+                val n = input.read(buffer, read, count - read)
+                if (n <= 0) break
+                read += n
+            }
+            if (read == count) buffer else buffer.copyOf(read)
+        }
+    }.getOrDefault(ByteArray(0))
 
     private fun displayName(context: Context, uri: Uri): String {
         val q = runCatching {
@@ -172,7 +465,7 @@ object Converter {
         return n.substringBeforeLast('.').ifBlank { n }
     }
 
-    private fun fail(reason: String, file: String): String =
+    private fun fail(reason: String, file: String, detail: String = ""): String =
         JSONObject().put("ok", false).put("canLaunch", false).put("message", reason)
-            .put("file", file).put("reason", reason).toString()
+            .put("file", file).put("reason", reason).put("detail", detail).toString()
 }

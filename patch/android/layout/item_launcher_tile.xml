@@ -1,0 +1,172 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+SPDX-FileCopyrightText: Copyright 2026 Eden Symbiosis Project
+SPDX-License-Identifier: GPL-3.0-or-later
+
+Одна строка библиотеки.
+
+Цвет ставится в коде ([LauncherTileAdapter] через [SymbiosisTheme]): у каждой
+игры свой оттенок из её Title ID. В разметке цвета намеренно нет — иначе
+пришлось бы держать десяток drawable-файлов и всё равно выбирать нужный
+вручную.
+
+Что здесь появилось ради «игрового» вида и зачем:
+  * view_tile_accent — цветная полоса слева. Она даёт узнать игру по цвету
+    раньше, чем прочитать название: в списке из сотен строк это быстрее.
+  * text_tile_monogram — буква игры в цветном кружке. Обложек у большинства
+    файлов нет, и пустое место слева выглядело как недогруз.
+-->
+<com.google.android.material.card.MaterialCardView
+    xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:id="@+id/card_launcher_tile"
+    style="?attr/materialCardViewOutlinedStyle"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:layout_marginVertical="6dp"
+    android:clickable="true"
+    android:focusable="true"
+    android:longClickable="true"
+    android:foreground="?attr/selectableItemBackground"
+    app:cardCornerRadius="20dp"
+    app:cardElevation="0dp"
+    app:strokeWidth="1dp">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal">
+
+        <View
+            android:id="@+id/view_tile_accent"
+            android:layout_width="4dp"
+            android:layout_height="match_parent"
+            android:layout_marginVertical="10dp"
+            android:background="?attr/colorPrimary" />
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:paddingStart="12dp"
+            android:paddingTop="12dp"
+            android:paddingEnd="14dp"
+            android:paddingBottom="12dp">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:gravity="center_vertical"
+                android:orientation="horizontal">
+
+                <!--
+                    Обложка игры. Раньше её здесь не было вовсе: плитка всегда
+                    рисовала монограмму, и библиотека выглядела как набор
+                    букв. В WebView-панели обложки были — потому что она
+                    запрашивала картинку у ядра отдельно.
+
+                    Обе лежат друг на друге: картинка сверху, буква снизу.
+                    Если иконки у файла нет (homebrew, битый заголовок, нет
+                    ключей), картинка прячется и остаётся буква — без пустого
+                    квадрата и без серой заглушки.
+                -->
+                <FrameLayout
+                    android:layout_width="46dp"
+                    android:layout_height="46dp">
+
+                    <TextView
+                        android:id="@+id/text_tile_monogram"
+                        android:layout_width="42dp"
+                        android:layout_height="42dp"
+                        android:layout_gravity="center"
+                        android:gravity="center"
+                        android:textAppearance="?attr/textAppearanceTitleMedium"
+                        android:textStyle="bold"
+                        tools:text="M"
+                        tools:textColor="#22D3EE" />
+
+                    <ImageView
+                        android:id="@+id/image_tile_cover"
+                        android:layout_width="46dp"
+                        android:layout_height="46dp"
+                        android:layout_gravity="center"
+                        android:contentDescription="@null"
+                        android:scaleType="fitCenter"
+                        android:visibility="gone"
+                        tools:src="@drawable/default_icon" />
+
+                </FrameLayout>
+
+                <LinearLayout
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="12dp"
+                    android:layout_weight="1"
+                    android:orientation="vertical">
+
+                    <TextView
+                        android:id="@+id/text_tile_title"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:ellipsize="end"
+                        android:maxLines="2"
+                        android:textAppearance="?attr/textAppearanceTitleMedium"
+                        tools:text="Metroid Dread" />
+
+                    <TextView
+                        android:id="@+id/text_tile_subtitle"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="2dp"
+                        android:ellipsize="end"
+                        android:maxLines="2"
+                        android:textAppearance="?attr/textAppearanceBodySmall"
+                        android:textColor="?attr/colorOnSurfaceVariant"
+                        tools:text="Nintendo · 01001F5010DCC000" />
+
+                </LinearLayout>
+
+                <com.google.android.material.chip.Chip
+                    android:id="@+id/chip_tile_core"
+                    style="@style/Widget.Material3.Chip.Assist"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="8dp"
+                    android:clickable="false"
+                    android:focusable="false"
+                    android:textAppearance="?attr/textAppearanceLabelSmall"
+                    android:visibility="gone"
+                    tools:text="kenji"
+                    tools:visibility="visible" />
+
+                <com.google.android.material.chip.Chip
+                    android:id="@+id/chip_tile_badge"
+                    style="@style/Widget.Material3.Chip.Assist"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="8dp"
+                    android:clickable="false"
+                    android:focusable="false"
+                    android:textAppearance="?attr/textAppearanceLabelSmall"
+                    tools:text="nsp" />
+
+            </LinearLayout>
+
+            <TextView
+                android:id="@+id/text_tile_note"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="54dp"
+                android:layout_marginTop="6dp"
+                android:textAppearance="?attr/textAppearanceLabelLarge"
+                android:textColor="?attr/colorTertiary"
+                android:visibility="gone"
+                tools:text="сжатый · распакует Конвертер"
+                tools:visibility="visible" />
+
+        </LinearLayout>
+
+    </LinearLayout>
+
+</com.google.android.material.card.MaterialCardView>

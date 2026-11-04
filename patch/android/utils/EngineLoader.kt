@@ -187,11 +187,75 @@ object EngineLoader {
     }
 
     /**
+     * Что известно об этом устройстве.
+     *
+     * Размер страницы читается из ядра, а не предполагается: с Android 15
+     * часть устройств работает со страницами 16 КБ, и на них библиотека,
+     * выровненная на 4 КБ, не загружается вообще. По версии системы это не
+     * различить — на одном и том же Android 15 бывает и так, и так.
+     */
+    fun device(): DeviceCompat.Device {
+        val page = runCatching {
+            val bytes = File("/proc/self/auxv").readBytes()
+            DeviceCompat.auxvPageSize(bytes)
+        }.getOrNull() ?: 4096L
+        return DeviceCompat.Device(
+            abis = Build.SUPPORTED_ABIS?.toList() ?: emptyList(),
+            sdkInt = Build.VERSION.SDK_INT,
+            pageSizeBytes = page,
+            model = "${Build.MANUFACTURER} ${Build.MODEL}".trim(),
+            // Process.is64Bit() есть с Android 8; ниже него 64-битных
+            // процессов всё равно не бывает.
+            is64Process = if (Build.VERSION.SDK_INT >= 23) {
+                android.os.Process.is64Bit()
+            } else {
+                false
+            }
+        )
+    }
+
+    /**
+     * Выравнивание уже скачанного ядра, или null.
+     *
+     * Читаются только заголовки: файл 57 МБ целиком в память не тянется —
+     * достаточно начала, где лежит таблица сегментов.
+     */
+    fun coreAlign(context: Context, engine: Engine): Long? = runCatching {
+        val file = coreFile(context, engine)
+        if (!file.isFile) return@runCatching null
+        file.inputStream().use { input ->
+            val head = ByteArray(1 shl 16)
+            var read = 0
+            while (read < head.size) {
+                val n = input.read(head, read, head.size - read)
+                if (n <= 0) break
+                read += n
+            }
+            DeviceCompat.elfMaxAlign(if (read == head.size) head else head.copyOf(read))
+        }
+    }.getOrNull()
+
+    /** Итог проверки совместимости — до скачивания или после. */
+    fun verdict(context: Context, engine: Engine): DeviceCompat.Verdict {
+        val dev = device()
+        if (engine == Engine.EDEN) {
+            return DeviceCompat.Verdict(true, "встроено в приложение", DeviceCompat.describe(dev))
+        }
+        val align = coreAlign(context, engine)
+        return if (align == null) {
+            DeviceCompat.checkBeforeDownload(dev)
+        } else {
+            DeviceCompat.checkCore(dev, align)
+        }
+    }
+
+    /**
      * Whether this device can run the downloaded core at all.
      *
-     * The core is built for arm64 only - a 32-bit device would download 55 MB
-     * and then fail to load it, which is worth saying up front.
+     * Kept as a thin wrapper over [verdict] so there is one rule, not two. A
+     * 32-bit device would otherwise download 57 MB and only then be told the
+     * library "is 32-bit instead of 64-bit".
      */
     fun deviceSupported(): Boolean =
-        Build.SUPPORTED_64_BIT_ABIS.any { it == "arm64-v8a" }
+        DeviceCompat.checkBeforeDownload(device()).supported
 }

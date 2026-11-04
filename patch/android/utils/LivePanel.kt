@@ -17,7 +17,7 @@ import org.yuzu.yuzu_emu.model.Game
  */
 object LivePanel {
 
-    const val BRIDGE_VERSION = 16
+    const val BRIDGE_VERSION = 17
 
     private const val PANEL_URL = "https://sj0404-collab.github.io/symbiosis/library.html"
 
@@ -98,9 +98,28 @@ object LivePanel {
     fun rememberedGames(): List<Game> =
         runCatching { GameHelper.rememberedGames() }.getOrDefault(emptyList())
 
+    /**
+     * Игры для панели.
+     *
+     * Раньше брались только из кэша настроек, и панель могла показывать
+     * меньше игр, чем нативный лаунчер: кэш пишется после полного обхода и
+     * бывает неполным (обход прерван, ключи появились позже, папку добавили
+     * только что). Лаунчер при этом читает живой список. Два разных ответа
+     * на вопрос «сколько у меня игр» — это и есть «там видит не всё».
+     *
+     * Теперь порядок один: живой обход, а кэш — запасной вариант, когда
+     * обхода ещё не было или он не удался.
+     */
+    private fun panelGames(): List<Game> {
+        val live = runCatching { GameHelper.currentGames() }.getOrNull()
+        if (!live.isNullOrEmpty()) return live
+        return rememberedGames()
+    }
+
     fun gamesJson(): String {
         val arr = JSONArray()
-        rememberedGames().forEach { g ->
+        panelGames().forEach { g ->
+            val idx = runCatching { LibraryIndex.classify(g.path) }.getOrNull()
             val probe = saveProbe(g)
             val addons = runCatching { GameAddons.visibleFor(g) }.getOrDefault(emptyList())
             arr.put(
@@ -108,6 +127,19 @@ object LivePanel {
                     put("title", g.title)
                     put("path", g.path)
                     put("programId", g.programId)
+                    // Что это на самом деле: игра, обновление или DLC.
+                    // Без этого панель показывала сорок DLC как сорок игр,
+                    // и «библиотека из одной игры» снова звучала правдой.
+                    put("runnable", true)
+                    put("kind", when (idx?.kind) {
+                        LibraryIndex.Kind.UPDATE -> "update"
+                        LibraryIndex.Kind.DLC -> "dlc"
+                        LibraryIndex.Kind.UNPACKED -> "unpacked"
+                        else -> "game"
+                    })
+                    if (idx != null && idx.titleId.isNotEmpty()) {
+                        put("baseTitleId", LibraryIndex.baseTitleId(idx.titleId))
+                    }
                     put("developer", g.developer)
                     put("saveDir", probe.path)
                     put("hasSave", probe.bytes >= MIN_SAVE_BYTES)
@@ -136,7 +168,115 @@ object LivePanel {
                 }
             )
         }
-        return JSONObject().put("games", arr).put("keys", keysPresent()).toString()
+        // Файлы, которые библиотека видит, но запустить не может.
+        //
+        // Это и есть ответ на «из сотен файлов видна одна»: сжатые nsz и
+        // непрочитанные образы больше не исчезают, а приходят в панель с
+        // причиной - её можно показать человеку, а не в лог.
+        runCatching { GameHelper.sidecar }.getOrDefault(emptyList()).forEach { it ->
+            val bytes = fileBytesOf(it.path)
+            arr.put(
+                JSONObject().apply {
+                    put("title", it.title.ifBlank { it.name })
+                    put("path", it.path)
+                    put("fileName", it.name)
+                    put("programId", "")
+                    put("developer", "")
+                    put("saveDir", "")
+                    put("hasSave", false)
+                    put("saveBytes", 0)
+                    put("saveSize", "")
+                    put("addons", JSONArray())
+                    put("titleId", "")
+                    put("version", "")
+                    put("fileBytes", bytes)
+                    put("fileSize", if (bytes > 0) GameFolderScanner.humanSize(bytes) else "")
+                    put("lastPlayed", 0)
+                    put("lastPlayedLabel", "")
+                    put("shaderBytes", 0)
+                    put("shaderSize", "")
+                    put("runnable", false)
+                    put("kind", it.kind)
+                    put("reason", it.reason)
+                }
+            )
+        }
+        val stats = runCatching { GameHelper.scanStats }.getOrNull()
+        return JSONObject()
+            .put("games", arr)
+            .put("keys", keysPresent())
+            .put("runnable", rememberedGames().size)
+            .put("sidecar", runCatching { GameHelper.sidecar.size }.getOrDefault(0))
+            .put("stats", statsJson(stats))
+            .toString()
+    }
+
+    /** Обход в цифрах: сколько файлов, что из них игра, что нет и почему. */
+    private fun statsJson(stats: GameHelper.ScanStats?): JSONObject = JSONObject().apply {
+        if (stats == null) {
+            put("known", false)
+            return@apply
+        }
+        put("known", true)
+        put("folders", stats.folders)
+        put("files", stats.files)
+        put("games", stats.games)
+        put("updates", stats.updates)
+        put("dlc", stats.dlc)
+        put("compressed", stats.compressed)
+        put("failed", stats.failed)
+        put("millis", stats.millis)
+        put("line", stats.line())
+    }
+
+    /**
+     * «Почему не видно» - один экран, который отвечает на вопрос целиком.
+     *
+     * Собирается из того же обхода, что и библиотека: файлов столько-то,
+     * игр столько-то, сжатых столько-то, не прочитано столько-то, вот эти
+     * файлы и вот эти причины словами. Раньше на этот вопрос отвечал лог,
+     * которого пользователь не видит.
+     */
+    fun libraryReport(context: Context): String {
+        val stats = runCatching { GameHelper.scanStats }.getOrNull()
+        val side = runCatching { GameHelper.sidecar }.getOrDefault(emptyList())
+        val byKind = side.groupingBy { it.kind }.eachCount()
+        val reasons = LinkedHashMap<String, Int>()
+        side.forEach { if (it.reason.isNotEmpty()) reasons.merge(it.reason, 1, Int::plus) }
+        val files = JSONArray()
+        side.take(40).forEach { it ->
+            files.put(
+                JSONObject().apply {
+                    put("name", it.name)
+                    put("title", it.title)
+                    put("path", it.path)
+                    put("kind", it.kind)
+                    put("reason", it.reason)
+                }
+            )
+        }
+        val reasonArr = JSONArray()
+        reasons.entries.sortedByDescending { it.value }.take(8).forEach { e ->
+            reasonArr.put(JSONObject().put("reason", e.key).put("count", e.value))
+        }
+        return JSONObject().apply {
+            put("stats", statsJson(stats))
+            put("byKind", JSONObject(byKind))
+            put("reasons", reasonArr)
+            put("files", files)
+            put("total", side.size)
+            put("keys", keysPresent())
+            put(
+                "headline",
+                when {
+                    stats == null -> "ещё ни одного полного обхода"
+                    stats.games == 0 && stats.compressed > 0 ->
+                        "игр нет, но ${stats.compressed} файлов сжаты - их распаковывает Конвертер"
+                    stats.games == 0 -> "в выбранных папках нет ни одного файла игры"
+                    else -> stats.line()
+                }
+            )
+        }.toString()
     }
 
     fun memoryJson(): String = runCatching {

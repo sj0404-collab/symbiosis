@@ -10,6 +10,7 @@
 
 #include "common/logging.h"
 #include "common/symbiosis/rom_tools.h"
+#include "common/symbiosis/ncz.h"
 #include "common/symbiosis/symbiosis_log.h"
 
 namespace Symbiosis {
@@ -53,6 +54,31 @@ std::string LowerExtension(const std::string& path) {
 }
 
 } // Anonymous namespace
+
+/// Where the root HFS0 of a gamecard image starts.
+///
+/// It is 0xF000, always, and this is a fixed part of the format — the
+/// previous code multiplied the header field at 0x130 by 0x200 and looked
+/// there, which lands on garbage for every real image. That is why converting
+/// an XCZ could not work even in principle.
+u64 FindXciRoot(std::ifstream& in, u64 file_size) {
+    u32 magic = 0;
+    if (file_size > 0xF000 + 16 && ReadAt(in, 0xF000, &magic, sizeof(magic)) &&
+        magic == kHfs0Magic) {
+        return 0xF000;
+    }
+    // Some tools write the root right after the key area. Accept it when the
+    // fixed place holds nothing, rather than refusing a file that plays.
+    u64 field = 0;
+    if (ReadAt(in, 0x130, &field, sizeof(field))) {
+        const u64 candidate = field * kMediaUnit;
+        if (candidate + 16 < file_size && ReadAt(in, candidate, &magic, sizeof(magic)) &&
+            magic == kHfs0Magic) {
+            return candidate;
+        }
+    }
+    return 0;
+}
 
 const char* ToString(DumpFormat format) {
     switch (format) {
@@ -232,9 +258,23 @@ DumpReport RomTools::Inspect(const std::string& path) {
         break;
     }
 
+    case DumpFormat::Ncz: {
+        // Сжатый одиночный NCA: размер после распаковки читается из его же
+        // заголовка, и это единственное число, которое тут интересно —
+        // сколько места понадобится на выходе.
+        report.health = DumpHealth::Unknown;
+        const u64 out = Ncz::DecompressedSize(file, 0, report.file_size);
+        report.summary = out > 0
+                             ? "Compressed NCA; it unpacks to " +
+                                   std::to_string(out / kMiB) + " MiB."
+                             : "Community compressed format.";
+        report.advice = "Open the Converter tab and turn this into an NCA. "
+                        "Eden cannot launch the compressed file as-is.";
+        break;
+    }
+
     case DumpFormat::Nsz:
     case DumpFormat::Xcz:
-    case DumpFormat::Ncz:
         report.health = DumpHealth::Unknown;
         report.summary = "Community compressed format.";
         report.advice = "Open the Converter tab and turn this into NSP/NCA. "
@@ -308,20 +348,14 @@ u64 RomTools::XciToNsp(const std::string& source, const std::string& destination
     }
 
     // An XCI holds several HFS0 partitions; the secure partition contains the
-    // content archives that make up the game. Locate it by walking the root
-    // HFS0 rather than assuming a fixed offset, because layouts differ.
-    u64 hfs0_offset = 0;
-    {
-        u64 units = 0;
-        if (!ReadAt(in, 0x130, &units, sizeof(units))) {
-            error_out = "Could not read the partition table offset.";
-            return 0;
-        }
-        hfs0_offset = units * kMediaUnit;
-    }
-
+    // content archives that make up the game. The root table sits at a fixed
+    // 0xF000, and the previous code did not know that — it took the header
+    // field at 0x130, multiplied it by 0x200 and read whatever happened to be
+    // there, so "save as NSP" failed on every real cartridge image.
+    u64 hfs0_offset = FindXciRoot(in, report.file_size);
     u32 magic = 0;
-    if (!ReadAt(in, hfs0_offset, &magic, sizeof(magic)) || magic != kHfs0Magic) {
+    if (hfs0_offset == 0 || !ReadAt(in, hfs0_offset, &magic, sizeof(magic)) ||
+        magic != kHfs0Magic) {
         error_out = "The partition table is missing or unreadable. This dump may use a "
                     "layout this tool does not handle.";
         return 0;
@@ -450,21 +484,13 @@ std::string RomTools::Describe(const DumpReport& report) {
 }
 
 
-// zstd lives in the Eden Android tree (externals/zstd) and is already
-// linked into libyuzu-android. Host tests compile this file with g++ and
-// no -lzstd: __has_include(<zstd.h>) was true on Ubuntu and then the
-// linker failed, turning t_rom into a fourth SKIP and failing CI.
-#if defined(__ANDROID__)
-#    define SYMBIOSIS_HAS_ZSTD 1
-#    include <zstd.h>
-#endif
 
 namespace {
 
-constexpr u64 kNcaHeaderSize = 0x4000;
-constexpr char kNczSectn[] = "NCZSECTN";
-constexpr char kNczBlock[] = "NCZBLOCK";
-constexpr u64 kMaxOutBytes = 34ULL * 1024ULL * 1024ULL * 1024ULL;
+// Разбор NCZ переехал в symbiosis/ncz.cpp целиком — здесь от него не
+// осталось ни одной константы. Незамеченные `constexpr` в анонимном
+// пространстве имён ловятся только `-Wunused-const-variable`, а на Android
+// он включён как ошибка, то есть всплывает через двадцать минут сборки.
 constexpr u32 kMaxPfsFiles = 512;
 
 struct PackFile {
@@ -481,67 +507,6 @@ bool EndsWithInsensitive(const std::string& name, const char* ext) {
     std::transform(tail.begin(), tail.end(), tail.begin(),
                    [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
     return tail == ext;
-}
-
-/// Uncompressed single-segment zstd frame (used by tests). Real NSZ uses
-/// compressed frames and goes through libzstd when the header is present.
-bool DecompressZstdRawFrame(const u8* src, std::size_t src_size, std::vector<u8>& out) {
-    if (src_size < 9) {
-        return false;
-    }
-    if (!(src[0] == 0x28 && src[1] == 0xB5 && src[2] == 0x2F && src[3] == 0xFD)) {
-        return false;
-    }
-    const u8 fhd = src[4];
-    const bool single = (fhd & 0x20) != 0;
-    const int fcs_flag = (fhd >> 6) & 0x3;
-    if (!single || fcs_flag != 0) {
-        return false;
-    }
-    const u8 fcs = src[5];
-    const u32 bh = static_cast<u32>(src[6]) | (static_cast<u32>(src[7]) << 8) |
-                   (static_cast<u32>(src[8]) << 16);
-    const bool last = (bh & 1u) != 0;
-    const u32 type = (bh >> 1) & 0x3u;
-    const u32 size = bh >> 3;
-    if (!last || type != 0 || size != fcs || src_size < 9 + size) {
-        return false;
-    }
-    out.assign(src + 9, src + 9 + size);
-    return true;
-}
-
-bool DecompressZstd(const u8* src, std::size_t src_size, std::vector<u8>& out,
-                    std::string& error) {
-    if (DecompressZstdRawFrame(src, src_size, out)) {
-        return true;
-    }
-#ifdef SYMBIOSIS_HAS_ZSTD
-    const unsigned long long bound = ZSTD_getFrameContentSize(src, src_size);
-    if (bound == ZSTD_CONTENTSIZE_ERROR) {
-        error = "zstd frame is not readable.";
-        return false;
-    }
-    const std::size_t cap = (bound == ZSTD_CONTENTSIZE_UNKNOWN)
-                                ? std::min<std::size_t>(src_size * 16 + 64, 64u << 20)
-                                : static_cast<std::size_t>(bound);
-    if (cap == 0 || cap > kMaxOutBytes) {
-        error = "zstd frame reports an implausible size.";
-        return false;
-    }
-    out.resize(cap);
-    const std::size_t got = ZSTD_decompress(out.data(), out.size(), src, src_size);
-    if (ZSTD_isError(got)) {
-        error = std::string("zstd: ") + ZSTD_getErrorName(got);
-        out.clear();
-        return false;
-    }
-    out.resize(got);
-    return true;
-#else
-    error = "this build has no zstd decoder for compressed NSZ blocks.";
-    return false;
-#endif
 }
 
 bool WriteAll(std::ofstream& out, const void* data, std::size_t size) {
@@ -565,111 +530,28 @@ bool CopyStream(std::ifstream& in, std::ofstream& out, u64 bytes) {
     return left == 0 && out.good();
 }
 
-bool DecompressNczToFile(std::ifstream& in, u64 start, u64 size, const std::filesystem::path& dest,
-                         std::string& error) {
-    if (size < kNcaHeaderSize + 16) {
-        error = "NCZ is shorter than a header.";
-        return false;
+/// One NCZ, wherever it sits inside a container.
+///
+/// A plain .nca that someone renamed to .ncz is copied, not rejected: telling
+/// "your file is fine but misnamed" apart from "your file is broken" is worth
+/// the three lines, and the alternative is a user deleting a working dump.
+bool DecompressNczToFile(std::ifstream& in, u64 start, u64 size,
+                         const std::filesystem::path& dest, std::string& error) {
+    if (Ncz::LooksCompressed(in, start)) {
+        return Ncz::Decompress(in, start, size, dest, error);
     }
     std::ofstream out{dest, std::ios::binary | std::ios::trunc};
     if (!out) {
-        error = "Could not create the decompressed NCA.";
+        error = "Could not create the decompressed file.";
         return false;
     }
-    std::vector<u8> header(kNcaHeaderSize);
-    if (!ReadAt(in, start, header.data(), header.size())) {
-        error = "Could not read the NCZ header.";
+    in.clear();
+    in.seekg(static_cast<std::streamoff>(start), std::ios::beg);
+    if (!CopyStream(in, out, size) || !out.good()) {
+        error = "Could not copy the file.";
         return false;
     }
-    if (!WriteAll(out, header.data(), header.size())) {
-        return false;
-    }
-
-    u64 cursor = start + kNcaHeaderSize;
-    char magic[8]{};
-    if (!ReadAt(in, cursor, magic, 8) || std::memcmp(magic, kNczSectn, 8) != 0) {
-        // Not actually compressed — copy the rest as a plain NCA.
-        in.clear();
-        in.seekg(static_cast<std::streamoff>(start + kNcaHeaderSize), std::ios::beg);
-        return CopyStream(in, out, size - kNcaHeaderSize);
-    }
-    cursor += 8;
-    u64 section_count = 0;
-    if (!ReadAt(in, cursor, &section_count, 8) || section_count > 64) {
-        error = "NCZ section table is unreadable.";
-        return false;
-    }
-    cursor += 8 + section_count * 64; // skip section descriptors (64 bytes each)
-
-    if (!ReadAt(in, cursor, magic, 8)) {
-        error = "NCZ body is truncated.";
-        return false;
-    }
-
-    const u64 payload_off = cursor;
-    const u64 payload_size = (start + size > payload_off) ? (start + size - payload_off) : 0;
-    if (payload_size == 0 || payload_size > kMaxOutBytes) {
-        error = "NCZ payload size is implausible.";
-        return false;
-    }
-
-    // Block-compressed NCZ: each block is its own zstd frame.
-    if (std::memcmp(magic, kNczBlock, 8) == 0) {
-        u8 meta[16]{};
-        if (!ReadAt(in, cursor, meta, 16)) {
-            error = "NCZBLOCK header is truncated.";
-            return false;
-        }
-        const u32 block_count = static_cast<u32>(meta[12]) | (static_cast<u32>(meta[13]) << 8) |
-                                (static_cast<u32>(meta[14]) << 16) | (static_cast<u32>(meta[15]) << 24);
-        if (block_count == 0 || block_count > 1'000'000) {
-            error = "NCZBLOCK count is implausible.";
-            return false;
-        }
-        std::vector<u32> sizes(block_count);
-        if (!ReadAt(in, cursor + 24, sizes.data(), sizes.size() * 4)) {
-            error = "NCZBLOCK size table is truncated.";
-            return false;
-        }
-        u64 off = cursor + 24 + static_cast<u64>(block_count) * 4;
-        for (u32 i = 0; i < block_count; ++i) {
-            const u32 cs = sizes[i];
-            if (cs == 0 || off + cs > start + size) {
-                error = "NCZBLOCK extends past the file.";
-                return false;
-            }
-            std::vector<u8> comp(cs);
-            if (!ReadAt(in, off, comp.data(), cs)) {
-                error = "Could not read an NCZBLOCK.";
-                return false;
-            }
-            std::vector<u8> raw;
-            std::string zerr;
-            if (!DecompressZstd(comp.data(), comp.size(), raw, zerr)) {
-                error = zerr.empty() ? "NCZBLOCK failed to decompress." : zerr;
-                return false;
-            }
-            if (!WriteAll(out, raw.data(), raw.size())) {
-                return false;
-            }
-            off += cs;
-        }
-        return out.good();
-    }
-
-    // Solid zstd of the NCA body.
-    std::vector<u8> comp(static_cast<std::size_t>(payload_size));
-    if (!ReadAt(in, payload_off, comp.data(), comp.size())) {
-        error = "Could not read the NCZ payload.";
-        return false;
-    }
-    std::vector<u8> raw;
-    std::string zerr;
-    if (!DecompressZstd(comp.data(), comp.size(), raw, zerr)) {
-        error = zerr.empty() ? "NCZ payload failed to decompress." : zerr;
-        return false;
-    }
-    return WriteAll(out, raw.data(), raw.size());
+    return true;
 }
 
 std::string NcaNameFrom(const std::string& name) {
@@ -778,6 +660,15 @@ bool UnpackPfs0(std::ifstream& in, u64 base, u64 span, const std::filesystem::pa
 
 } // namespace
 
+namespace {
+/// Каталог для временных частей, заданный снаружи (кэш приложения на Android).
+std::string g_workDir;
+} // namespace
+
+void RomTools::SetWorkDir(const std::string& path) {
+    g_workDir = path;
+}
+
 u64 RomTools::Decompress(const std::string& source, const std::string& destination,
                          std::string& error_out) {
     error_out.clear();
@@ -812,11 +703,37 @@ u64 RomTools::Decompress(const std::string& source, const std::string& destinati
     }
 
     std::error_code ec;
-    const auto work = std::filesystem::temp_directory_path() /
-                      ("eden-nsz-" + std::to_string(report.file_size) + "-" +
-                       std::to_string(static_cast<unsigned long long>(
-                           std::chrono::steady_clock::now().time_since_epoch().count())));
+
+    // Где работать. Порядок: заданный извне каталог, затем системный
+    // temp_directory_path(), затем папка рядом с результатом.
+    //
+    // temp_directory_path() на Android бросает исключение: TMPDIR не задан, а
+    // /tmp не существует. Необработанное исключение в JNI - это abort, то
+    // есть падение всего приложения на ровном месте. Отсюда try/catch и
+    // запасной вариант: папка результата всегда доступна на запись, раз мы
+    // уже смогли создать в ней файл.
+    std::filesystem::path base;
+    if (!g_workDir.empty()) {
+        base = g_workDir;
+    } else {
+        try {
+            base = std::filesystem::temp_directory_path();
+        } catch (...) {
+            base = std::filesystem::path(destination).parent_path();
+        }
+    }
+    if (base.empty()) base = std::filesystem::path(destination).parent_path();
+
+    const auto work = base / ("eden-nsz-" + std::to_string(report.file_size) + "-" +
+                              std::to_string(static_cast<unsigned long long>(
+                                  std::chrono::steady_clock::now().time_since_epoch().count())));
     std::filesystem::create_directories(work, ec);
+    if (ec) {
+        // Пишем причину, а не «не удалось»: без каталога для частей распаковка
+        // обречена, и человеку надо знать, что дело в месте, а не в файле.
+        error_out = "No writable work directory: " + work.string();
+        return 0;
+    }
     const auto wipe_work = [&]() { std::filesystem::remove_all(work, ec); };
 
     if (report.format == DumpFormat::Ncz) {
@@ -850,14 +767,9 @@ u64 RomTools::Decompress(const std::string& source, const std::string& destinati
     if (report.format == DumpFormat::Xcz) {
         // Same walk as XciToNsp, then treat the secure partition as HFS0/PFS0
         // of NCZ files and emit a launchable NSP.
-        u64 units = 0;
-        if (!ReadAt(in, 0x130, &units, sizeof(units))) {
-            error_out = "Could not read the XCZ partition table.";
-            return 0;
-        }
-        const u64 hfs0_offset = units * kMediaUnit;
+        const u64 hfs0_offset = FindXciRoot(in, report.file_size);
         u32 magic = 0, partition_count = 0, string_table_size = 0;
-        if (!ReadAt(in, hfs0_offset, &magic, 4) || magic != kHfs0Magic ||
+        if (hfs0_offset == 0 || !ReadAt(in, hfs0_offset, &magic, 4) || magic != kHfs0Magic ||
             !ReadAt(in, hfs0_offset + 4, &partition_count, 4) ||
             !ReadAt(in, hfs0_offset + 8, &string_table_size, 4) || partition_count == 0 ||
             partition_count > 16) {
@@ -979,6 +891,137 @@ u64 RomTools::Decompress(const std::string& source, const std::string& destinati
 
     error_out = "Not an NSZ, XCZ or NCZ file.";
     return 0;
+}
+
+namespace {
+
+/// Размер для человека: мегабайты с одним знаком, килобайты для мелочи.
+///
+/// Целое деление на мегабайт показывало «0 МиБ» и для сертификата, и для
+/// NCA в 900 КиБ — а по такому списку невозможно понять, распаковалось ли
+/// что-нибудь вообще. На устройстве это выглядело так, будто распаковка не
+/// записала ни одного байта.
+std::string HumanSize(u64 bytes) {
+    if (bytes >= kMiB) {
+        const u64 tenths = (bytes * 10 + kMiB / 2) / kMiB;
+        return std::to_string(tenths / 10) + "." + std::to_string(tenths % 10) + " МиБ";
+    }
+    if (bytes >= 1024) {
+        return std::to_string((bytes + 512) / 1024) + " КиБ";
+    }
+    return std::to_string(bytes) + " Б";
+}
+
+} // namespace
+
+std::string RomTools::DescribeContainer(const std::string& path) {
+    std::ifstream in{path, std::ios::binary};
+    if (!in) {
+        return "файл не открывается";
+    }
+
+    u32 magic = 0;
+    u32 count = 0;
+    u32 str_size = 0;
+    if (!ReadAt(in, 0, &magic, 4) || magic != kPfs0Magic) {
+        return "это не NSP: метки PFS0 в начале нет";
+    }
+    if (!ReadAt(in, 4, &count, 4) || !ReadAt(in, 8, &str_size, 4)) {
+        return "оглавление NSP не читается";
+    }
+    if (count == 0 || count > kMaxPfsFiles || str_size > (1u << 20)) {
+        return "оглавление NSP неправдоподобно: записей " + std::to_string(count);
+    }
+
+    std::vector<char> names(str_size + 1, 0);
+    const u64 names_off = 16 + static_cast<u64>(count) * 24;
+    if (str_size > 0 && !ReadAt(in, names_off, names.data(), str_size)) {
+        return "таблица имён NSP обрезана";
+    }
+    const u64 data_off = names_off + str_size;
+
+    // EndsWithInsensitive знает только четыре символа расширения, а
+    // ".cnmt.nca" — девять: он молча возвращал false для каждого CNMT, и
+    // исправный контейнер описывался как контейнер без CNMT. Отсюда местное
+    // сравнение суффикса целиком.
+    const auto ends_with = [](const std::string& name, const std::string& suffix) {
+        if (name.size() < suffix.size()) {
+            return false;
+        }
+        for (std::size_t i = 0; i < suffix.size(); ++i) {
+            const auto have = static_cast<unsigned char>(name[name.size() - suffix.size() + i]);
+            if (std::tolower(have) != static_cast<unsigned char>(suffix[i])) {
+                return false;
+            }
+        }
+        return true;
+    };
+
+    // Каждый файл перечисляется с размером из самого оглавления: это
+    // единственный способ увидеть, что распаковалось, а что осталось
+    // сжатым. Список не сокращается - за «и ещё N» на устройстве прятался
+    // именно тот файл, на который жаловалась проверка.
+    std::vector<std::string> listed;
+    std::string first_bad;
+    std::string first_bad_size;
+    std::string first_bad_hex;
+    bool has_cnmt = false;
+
+    for (u32 i = 0; i < count; ++i) {
+        const u64 entry = 16 + static_cast<u64>(i) * 24;
+        u64 offset = 0;
+        u64 size = 0;
+        u32 name_off = 0;
+        if (!ReadAt(in, entry, &offset, 8) || !ReadAt(in, entry + 8, &size, 8) ||
+            !ReadAt(in, entry + 16, &name_off, 4) || name_off >= str_size) {
+            return "запись оглавления NSP обрезана";
+        }
+        const std::string name{names.data() + name_off};
+        listed.push_back(name + " (" + HumanSize(size) + ")");
+
+        if (ends_with(name, ".cnmt.nca")) {
+            has_cnmt = true;
+        }
+        // ПЕРВАЯ ВЕРСИЯ ПРОВЕРЯЛА ЗДЕСЬ МЕТКУ NCA3 ПО 0x200 — И ОШИБАЛАСЬ.
+        //
+        // Метка лежит не по этому смещению и вообще не в открытом виде:
+        // Eden расшифровывает заголовок NCA (fssystem_nca_reader.cpp: ReadObject
+        // через AesXtsStorage, затем CheckNcaMagic) и только потом сравнивает
+        // с NCA3. По 0x200 находятся байты подписи. Поэтому проверка объявляла
+        // испорченной любую распаковку, включая исправную, — ровно это и
+        // случилось на устройстве.
+        //
+        // Улика осталась, но она больше ничего не обвиняет: сырые байты по
+        // 0x200 показываются как факт, а разбирается с ними ядро ключами.
+        if (ends_with(name, ".nca") && first_bad.empty()) {
+            u32 at_0x200 = 0;
+            if (!ReadAt(in, data_off + offset + 0x200, &at_0x200, 4)) {
+                first_bad = name;
+                first_bad_size = HumanSize(size);
+                first_bad_hex = "данных не хватает даже на заголовок";
+            }
+        }
+    }
+
+    std::string what;
+    for (std::size_t i = 0; i < listed.size(); ++i) {
+        if (i > 0) what += ", ";
+        what += listed[i];
+    }
+
+    if (!first_bad.empty()) {
+        return "внутри " + what + "; файл " + first_bad + " (" + first_bad_size +
+               ") меньше 0x204 байт: " + first_bad_hex +
+               ". Такой файл не может быть NCA, значит распаковка записала пустоту.";
+    }
+    if (!has_cnmt) {
+        return "внутри " + what + ", но файла *.cnmt.nca нет. Ядро узнаёт игру только "
+               "по нему: без CNMT контейнер не считается игрой, даже когда сами NCA "
+               "на месте.";
+    }
+    return "внутри " + what + "; CNMT и NCA на месте, оглавление целое. Значит причина "
+           "не в сборке контейнера, а в содержимом - чаще всего нет title key этой "
+           "игры в prod.keys.";
 }
 
 std::string RomTools::CompressionNote() {

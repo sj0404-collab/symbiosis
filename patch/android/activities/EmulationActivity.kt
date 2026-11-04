@@ -60,11 +60,16 @@ import org.yuzu.yuzu_emu.model.Game
 import org.yuzu.yuzu_emu.network.NetPlayManager
 import org.yuzu.yuzu_emu.utils.InputHandler
 import org.yuzu.yuzu_emu.utils.Log
+import org.yuzu.yuzu_emu.utils.KenjiCrash
+import org.yuzu.yuzu_emu.utils.UiGuard
 import org.yuzu.yuzu_emu.utils.MemoryUtil
 import org.yuzu.yuzu_emu.utils.NativeConfig
+import org.yuzu.yuzu_emu.utils.ExtraKeys
+import org.yuzu.yuzu_emu.utils.DirectoryInitialization
 import org.yuzu.yuzu_emu.utils.NfcReader
 import org.yuzu.yuzu_emu.utils.ParamPackage
 import org.yuzu.yuzu_emu.utils.ThemeHelper
+import java.io.File
 import java.text.NumberFormat
 import kotlin.math.roundToInt
 import org.yuzu.yuzu_emu.utils.ForegroundService
@@ -125,7 +130,19 @@ class EmulationActivity : AppCompatActivity(), SensorEventListener, InputManager
         Log.gameLaunched = true
         ThemeHelper.setTheme(this)
 
+        // Игра — первый экран, где падение особенно заметно. С этого момента
+        // необработанное исключение оставляет след в
+        // `<внешние файлы>/symbiosis/ui-crash.txt`, иначе от него остаётся
+        // только «приложение остановлено».
+        runCatching { UiGuard.install(this) }
+        runCatching { UiGuard.armNative(this) }
+
         super.onCreate(savedInstanceState)
+
+        // Причина прошлого падения — сразу, а не в переписке. Читаем ДО
+        // первого кадра эмуляции: если процесс снова упадёт, файл уже
+        // переименован и новая причина не смешается со старой.
+        showPreviousCrash()
 
         InputHandler.updateControllerData()
         val players = NativeConfig.getInputSettings(true)
@@ -283,6 +300,53 @@ class EmulationActivity : AppCompatActivity(), SensorEventListener, InputManager
         }
     }
 
+    /**
+     * Показать причину прошлого падения, если она записана.
+     *
+     * Диалог, а не уведомление: падение игры человек и так заметил, ему нужно
+     * прочитать, что случилось, и, если надо, скопировать текст для отчёта.
+     * Всё в runCatching — сам показ причины не имеет права уронить игру.
+     */
+    private fun showPreviousCrash() {
+        val text = runCatching { UiGuard.pending(this) }.getOrNull() ?: return
+        runCatching { UiGuard.consume(this) }
+        val summary = runCatching { KenjiCrash.uiSummary(text) }.getOrNull().orEmpty()
+        if (summary.isEmpty()) return
+        runCatching {
+            val body = android.widget.TextView(this).apply {
+                this.text = summary
+                textSize = 13f
+                typeface = android.graphics.Typeface.MONOSPACE
+                setPadding(24, 16, 24, 0)
+                setTextIsSelectable(true)
+            }
+            val scroll = android.widget.ScrollView(this).apply { addView(body) }
+            com.google.android.material.dialog.MaterialAlertDialogBuilder(this)
+                .setTitle("Прошлый запуск остановился")
+                .setView(scroll)
+                .setPositiveButton("Скопировать", null)
+                .setNegativeButton("Закрыть", null)
+                .create()
+                .apply {
+                    setOnShowListener {
+                        getButton(android.app.AlertDialog.BUTTON_POSITIVE).setOnClickListener {
+                            val clipboard = getSystemService(android.content.Context.CLIPBOARD_SERVICE)
+                                    as android.content.ClipboardManager
+                            clipboard.setPrimaryClip(
+                                android.content.ClipData.newPlainText("Symbiosis", text)
+                            )
+                            android.widget.Toast.makeText(
+                                this@EmulationActivity,
+                                "Причина скопирована",
+                                android.widget.Toast.LENGTH_SHORT
+                            ).show()
+                        }
+                    }
+                    show()
+                }
+        }.onFailure { Log.warning("[Symbiosis] не удалось показать причину падения: ${it.message}") }
+    }
+
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         handleSwapIntent(intent)
@@ -380,7 +444,26 @@ class EmulationActivity : AppCompatActivity(), SensorEventListener, InputManager
         applyGameLaunchIntent(swapIntent)
     }
 
+    private fun applyEmulationKeys() {
+        // Ключи, положенные отдельными файлами (свой prod.keys, title.keys,
+        // файл ключа одной игры), применяются ПЕРЕД каждым запуском, а не
+        // только когда человек открыл экран «Ключи»: ядро читает ключи один
+        // раз при старте, и без этого NSP с MissingTitlekey оставался
+        // неоткрываемым при рабочих остальных играх.
+        runCatching {
+            val dir = DirectoryInitialization.userDirectory?.let { File(it, "keys") } ?: return
+            if (!dir.exists()) return
+            val report = ExtraKeys.apply(dir) { NativeLibrary.reloadKeys() }
+            if (report.isNotBlank()) {
+                Log.info("[Symbiosis] ключи: $report")
+            }
+        }.onFailure {
+            Log.warning("[Symbiosis] дополнительные ключи не применены: ${it.message}")
+        }
+    }
+
     private fun applyGameLaunchIntent(intent: Intent) {
+        applyEmulationKeys()
         hasEmulationSession = true
         processHasEmulationSession = true
         emulationViewModel.setIsEmulationStopping(false)
@@ -389,7 +472,17 @@ class EmulationActivity : AppCompatActivity(), SensorEventListener, InputManager
         val navHostFragment =
             supportFragmentManager.findFragmentById(R.id.fragment_container) as NavHostFragment
         val navController = navHostFragment.navController
-        val startArgs = intent.extras?.let { Bundle(it) } ?: Bundle()
+        // classLoader ОБЯЗАТЕЛЕН, И ЭТО И БЫЛА ПРИЧИНА «игру найти не могу».
+        //
+        // Игра едет в extras как Parcelable. При копировании extras в новый
+        // Bundle загрузчик классов не переносится, и разборщик навигации не
+        // может восстановить объект: аргумент `game` приходит null. Экран
+        // видит «игры нет», показывает «Загрузочной игры нету!» и закрывает
+        // себя — то есть приложение выходит из игры, которую только что
+        // собиралось перезапустить.
+        val startArgs = (intent.extras?.let { Bundle(it) } ?: Bundle()).apply {
+            classLoader = Game::class.java.classLoader
+        }
         val navOptions = NavOptions.Builder()
             .setPopUpTo(R.id.emulationFragment, true)
             .build()

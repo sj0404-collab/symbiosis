@@ -19,7 +19,10 @@ import org.yuzu.yuzu_emu.viewholder.AbstractViewHolder
 class GameFolderAdapter(
     private val activity: AppCompatActivity,
     folders: List<GameFolderScanner.Folder>,
-    private val onClick: (GameFolderScanner.Folder) -> Unit
+    private val onClick: (GameFolderScanner.Folder) -> Unit,
+    /** Долгое нажатие — убрать папку. Необязательно: в списке игр внутри
+     *  папки этот адаптер не используется, и там обработчик не нужен. */
+    private val onLongClick: ((GameFolderScanner.Folder) -> Unit)? = null
 ) : AbstractListAdapter<GameFolderScanner.Folder, GameFolderAdapter.FolderViewHolder>(folders) {
 
     override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): FolderViewHolder =
@@ -49,6 +52,15 @@ class GameFolderAdapter(
             }
 
             binding.root.setOnClickListener { onClick(model) }
+            binding.root.setOnLongClickListener {
+                val handler = onLongClick
+                if (handler == null) {
+                    false
+                } else {
+                    handler(model)
+                    true
+                }
+            }
         }
     }
 }

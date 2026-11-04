@@ -138,6 +138,33 @@ object LauncherSettings {
 
     fun cpuBackend(): Int = readInt("CPU_BACKEND")
 
+    /**
+     * Настройки Eden для гибрида: одно и то же чтение, но наружу.
+     *
+     * Второе ядро берёт масштаб, док, кэш шейдеров и CPU-бэкенд из Eden
+     * (см. `EngineHybrid.seed`), поэтому ему нужен доступ к тем же ключам.
+     * null значит «ключ не прочитался» — вызывающий оставляет своё значение,
+     * а не подставляет ложь.
+     */
+    internal fun edenBool(key: String): Boolean? = readBool(key)
+
+    /**
+     * Масштаб Eden числом, а не индексом: индекс 3 — это `1x`, и путать
+     * индекс с множителем в чужом ядре нельзя, там масштаб дробный.
+     */
+    internal fun edenResolutionScale(): Float = when (readInt("RENDERER_RESOLUTION")) {
+        0 -> 0.25f
+        1 -> 0.5f
+        2 -> 0.75f
+        3 -> 1f
+        4 -> 1.25f
+        5 -> 1.5f
+        6 -> 2f
+        7 -> 3f
+        8 -> 4f
+        else -> 1f
+    }
+
     fun cpuLabel(index: Int): String = when (index) {
         1 -> "NCE"
         0 -> "Dynarmic"

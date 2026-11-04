@@ -46,6 +46,9 @@ import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.updateLayoutParams
 import androidx.drawerlayout.widget.DrawerLayout
 import androidx.drawerlayout.widget.DrawerLayout.DrawerListener
+import android.widget.HorizontalScrollView
+import android.widget.LinearLayout
+import android.graphics.Typeface
 import androidx.fragment.app.Fragment
 import androidx.fragment.app.activityViewModels
 import androidx.lifecycle.lifecycleScope
@@ -74,6 +77,7 @@ import org.yuzu.yuzu_emu.databinding.FragmentEmulationBinding
 import org.yuzu.yuzu_emu.dialogs.QuickSettings
 import org.yuzu.yuzu_emu.features.input.NativeInput
 import org.yuzu.yuzu_emu.features.settings.model.BooleanSetting
+import org.yuzu.yuzu_emu.features.settings.model.ByteSetting
 import org.yuzu.yuzu_emu.features.settings.model.IntSetting
 import org.yuzu.yuzu_emu.features.settings.model.Settings
 import org.yuzu.yuzu_emu.features.settings.model.Settings.EmulationOrientation
@@ -89,11 +93,16 @@ import org.yuzu.yuzu_emu.utils.DirectoryInitialization
 import org.yuzu.yuzu_emu.utils.FileUtil
 import org.yuzu.yuzu_emu.utils.GameCardMeta
 import org.yuzu.yuzu_emu.utils.GameHelper
+import org.yuzu.yuzu_emu.utils.LastGame
 import org.yuzu.yuzu_emu.utils.GameIconUtils
 import org.yuzu.yuzu_emu.utils.GpuDriverHelper
 import org.yuzu.yuzu_emu.utils.InputHandler
+import org.yuzu.yuzu_emu.utils.CloudSync
+import org.yuzu.yuzu_emu.utils.ExitTrace
 import org.yuzu.yuzu_emu.utils.Log
 import org.yuzu.yuzu_emu.utils.NativeConfig
+import org.yuzu.yuzu_emu.utils.NativeSymbiosis
+import org.yuzu.yuzu_emu.utils.QuickPanel
 import org.yuzu.yuzu_emu.utils.NativeFreedrenoConfig
 import org.yuzu.yuzu_emu.utils.ViewUtils
 import org.yuzu.yuzu_emu.utils.ViewUtils.setVisible
@@ -153,8 +162,29 @@ class EmulationFragment : Fragment(), SurfaceHolder.Callback {
     private var pausedFrameBitmap: Bitmap? = null
 
     var shouldUseCustom = false
+
+    /**
+     * Ключи, которые меняли в панели за этот запуск игры.
+     *
+     * Нужны, чтобы честно сказать «это применится после перезапуска» и
+     * показать кнопку перезапуска только тогда, когда она действительно нужна.
+     */
+    private val quickChanges = mutableSetOf<String>()
     private var isQuickSettingsMenuOpen = false
     private val quickSettings = QuickSettings(this)
+
+    /**
+     * Обновляет подписи собранной панели на месте.
+     *
+     * Раньше на каждое изменение вызывался `addQuickSettings()`, то есть
+     * `removeAllViews()`. Вызов приходил из обработчика элемента, который в
+     * этот момент находился внутри удаляемого дерева: у радиокнопки — из её
+     * собственного `setOnCheckedChangeListener`, у чипа буфера — из `onClick`.
+     * Удалять виджет из-под выполняющегося обработчика нельзя, и на телефоне
+     * это заканчивалось остановкой игры. Теперь панель не пересобирается:
+     * меняются только тексты и видимость кнопки перезапуска.
+     */
+    private var quickPanelRefresh: (() -> Unit)? = null
 
     private val loadAmiiboLauncher =
         registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
@@ -261,7 +291,15 @@ class EmulationFragment : Fragment(), SurfaceHolder.Callback {
      */
     private fun finishGameSetup() {
         try {
-            val gameToUse = args.game ?: intentGame
+            // Третий источник игры — файл с путём последней запущенной.
+            //
+            // Первые два (аргументы навигации и data интента) не всегда
+            // доезжают: при перезапуске экран переиспользуется, и объект игры
+            // может не восстановиться. Без третьего источника экран закрывал
+            // себя — снаружи это «перезапустил, а оно вышло из игры».
+            // Путь пишется до запуска, файл на месте, и объект собирается по
+            // нему заново тем же GameHelper.
+            val gameToUse = args.game ?: intentGame ?: lastGameFromDisk()
 
             if (gameToUse == null) {
                 Log.error("[EmulationFragment] No game found in arguments or intent")
@@ -272,6 +310,11 @@ class EmulationFragment : Fragment(), SurfaceHolder.Callback {
                 ).show()
                 requireActivity().finish()
                 return
+            }
+
+            // Запомнить игру, чтобы следующий перезапуск её не потерял.
+            runCatching {
+                LastGame.save(lastGameFile(requireContext()), gameToUse.path)
             }
 
             game = gameToUse
@@ -1203,8 +1246,464 @@ class EmulationFragment : Fragment(), SurfaceHolder.Callback {
                 R.array.rendererAntiAliasingNames,
                 R.array.rendererAntiAliasingValues
             )
+
+            // --- то, чего здесь не было -------------------------------
+            //
+            // Стандартная панель умеет десять пунктов, и в ней нет ни
+            // разрешения, ни звука. Отсюда и «качество поменять не могу»:
+            // настройка есть в общих настройках, но в игре её не достать.
+            addSymbiosisQuickSettings(container)
         }
     }
+
+    /**
+     * Дополнительные пункты панели: изображение целиком и звук целиком.
+     *
+     * Каждый пункт подписан «сразу» или «после перезапуска» — по таблице из
+     * [QuickPanel], собранной по коду ядра. Без подписи человек меняет
+     * разрешение, не видит разницы и решает, что настройки не работают.
+     */
+    private fun addSymbiosisQuickSettings(container: ViewGroup) {
+        // Ни один наш пункт не имеет права уронить игру. Панель — это экран
+        // поверх работающей эмуляции: исключение здесь закрывает её целиком,
+        // причём молча (в отчёте остаётся только «остановлено»). Поэтому всё
+        // тело под защитой, а причина пишется в журнал, а не теряется.
+        try {
+            buildSymbiosisQuickSettings(container)
+        } catch (error: RuntimeException) {
+            Log.error("[Symbiosis] панель быстрых настроек: ${error.message}")
+            runCatching {
+                container.addView(TextView(requireContext()).apply {
+                    text = "Дополнительные настройки не показаны: ${error.message?.take(120)}"
+                    textSize = 12f
+                    setTextColor(quickColor(android.R.attr.textColorSecondary))
+                })
+            }
+        }
+    }
+
+    private fun buildSymbiosisQuickSettings(container: ViewGroup) {
+        val ctx = requireContext()
+        val dimColor = quickColor(android.R.attr.textColorSecondary)
+        val primaryColor = quickColor(
+            com.google.android.material.R.attr.colorPrimary,
+            android.R.attr.colorAccent
+        )
+        val surfaceColor = quickColor(
+            com.google.android.material.R.attr.colorSurfaceVariant,
+            com.google.android.material.R.attr.colorSurface,
+            android.R.attr.colorBackground
+        )
+        val spacing = resources.getDimensionPixelSize(R.dimen.spacing_small)
+
+        fun header(text: String, top: Int = spacing): TextView = TextView(ctx).apply {
+            this.text = text
+            setPadding(0, top, 0, 0)
+            setTextColor(primaryColor)
+            textSize = 13f
+            setTypeface(typeface, Typeface.BOLD)
+        }
+
+        fun badge(entry: QuickPanel.Entry): TextView = TextView(ctx).apply {
+            text = QuickPanel.badge(entry)
+            textSize = 11f
+            setTextColor(if (entry.live) dimColor else 0xFFFF6B6B.toInt())
+            setPadding(0, 0, 0, spacing)
+        }
+
+        fun hint(text: String): TextView = TextView(ctx).apply {
+            this.text = text
+            textSize = 12f
+            setTextColor(dimColor)
+            setPadding(0, spacing / 2, 0, 0)
+        }
+
+        fun entryOf(key: String): QuickPanel.Entry =
+            QuickPanel.entries.first { it.key == key }
+
+        quickSettings.addDivider(container)
+        container.addView(header("Изображение", top = 0))
+        container.addView(badge(entryOf("resolution_setup")))
+
+        quickSettings.addIntSetting(
+            R.string.renderer_resolution,
+            container,
+            IntSetting.RENDERER_RESOLUTION,
+            R.array.rendererResolutionNames,
+            R.array.rendererResolutionValues
+        ) {
+            runCatching { NativeSymbiosis.setMainStep("настройки: разрешение") }
+            markQuickChange("resolution_setup")
+        }
+
+        quickSettings.addIntSetting(
+            R.string.renderer_vsync,
+            container,
+            IntSetting.RENDERER_VSYNC,
+            R.array.rendererVSyncNames,
+            R.array.rendererVSyncValues
+        ) {
+            runCatching { NativeSymbiosis.setMainStep("настройки: vsync") }
+            markQuickChange("use_vsync")
+        }
+
+        quickSettings.addDivider(container)
+        container.addView(header("Звук", top = 0))
+
+        // Громкость — единственная звуковая настройка, которая меняется на
+        // ходу, поэтому она первая: если человек просто хочет тише, ему не
+        // нужно ничего перезапускать.
+        container.addView(TextView(ctx).apply {
+            text = "Громкость · ${QuickPanel.badge(entryOf("audio_volume"))}"
+            textSize = 13f
+            setTypeface(typeface, Typeface.BOLD)
+            setTextColor(primaryColor)
+            setPadding(0, spacing, 0, 0)
+        })
+        container.addView(
+            com.google.android.material.slider.Slider(ctx).apply {
+                valueFrom = 0f
+                valueTo = 100f
+                stepSize = 1f
+                // Громкость — байтовая настройка (ByteSetting.AUDIO_VOLUME),
+                // а не целочисленная: getInt по её ключу вернул бы 0, и
+                // ползунок каждый раз показывал бы «тишину».
+                value = runCatching { ByteSetting.AUDIO_VOLUME.getByte(needsGlobal = false) }
+                    .getOrDefault(100).toInt().coerceIn(0, 100).toFloat()
+                addOnChangeListener { _, value, fromUser ->
+                    if (!fromUser) return@addOnChangeListener
+                    // set_byte у Eden требует байт: значение 0..100 в него
+                    // влезает, но тип приводим явно, иначе подпись не сойдётся.
+                    applySetting("громкость") {
+                        ByteSetting.AUDIO_VOLUME.setByte(value.toInt().toByte())
+                    }
+                }
+            },
+            LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            )
+        )
+
+        container.addView(badge(entryOf("output_engine")))
+
+        quickSettings.addIntSetting(
+            R.string.audio_output_engine,
+            container,
+            IntSetting.AUDIO_OUTPUT_ENGINE,
+            R.array.outputEngineEntries,
+            R.array.outputEngineValues
+        ) {
+            runCatching { NativeSymbiosis.setMainStep("настройки: движок вывода") }
+            markQuickChange("output_engine")
+        }
+
+        // Частота звука: три варианта, у каждого — следствие словами.
+        //
+        // Почему она перед буфером: при жалобе «шумы и хрип в музыке» первым
+        // подозреваемым оказался пересчёт частоты, а не размер буфера. Человек
+        // поднимает буфер, ничего не меняется — потому что дело было не в нём.
+        container.addView(header("Частота звука"))
+        val rateHint = hint(QuickPanel.rateHint(currentAudioRate()))
+        container.addView(rateHint)
+        val rateButtons = mutableListOf<Pair<Int, com.google.android.material.button.MaterialButton>>()
+        fun paintRateChip(button: com.google.android.material.button.MaterialButton, selected: Boolean) {
+            button.backgroundTintList = android.content.res.ColorStateList.valueOf(
+                if (selected) primaryColor else surfaceColor
+            )
+            button.setTextColor(if (selected) 0xFF0E1116.toInt() else dimColor)
+        }
+        val rateChips = LinearLayout(ctx).apply {
+            orientation = LinearLayout.HORIZONTAL
+            setPadding(0, spacing, 0, 0)
+        }
+        QuickPanel.rateChoices.forEach { rate ->
+            val button = com.google.android.material.button.MaterialButton(ctx).apply {
+                text = if (rate == 0) "авто" else "$rate Гц"
+                textSize = 13f
+                isAllCaps = false
+                cornerRadius = spacing
+                minWidth = 0
+                minimumWidth = 0
+                insetTop = 0
+                insetBottom = 0
+                paintRateChip(this, currentAudioRate() == rate)
+                setOnClickListener {
+                    applySetting("частота звука") { NativeConfig.setInt(QuickPanel.RATE_KEY, rate) }
+                    rateButtons.forEach { (chipRate, chip) -> paintRateChip(chip, chipRate == rate) }
+                    rateHint.text = QuickPanel.rateHint(rate)
+                    markQuickChange(QuickPanel.RATE_KEY)
+                }
+            }
+            rateButtons.add(rate to button)
+            rateChips.addView(
+                button,
+                LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.WRAP_CONTENT,
+                    LinearLayout.LayoutParams.WRAP_CONTENT
+                ).apply { rightMargin = spacing }
+            )
+        }
+        container.addView(
+            HorizontalScrollView(ctx).apply {
+                isHorizontalScrollBarEnabled = false
+                addView(rateChips)
+            }
+        )
+        container.addView(badge(entryOf("symbiosis_audio_rate")))
+
+        // Замеры звука: цифры из работающего потока.
+        //
+        // Это ответ на «применил настройку — не помогло». Здесь видно, дошла
+        // ли настройка до драйвера: какая частота пришла, сколько кадров в
+        // буфере, сколько раз буфер кончился. Если цифры те же, что были, —
+        // настройка не применилась; если изменились, а хрип остался — дело не
+        // в ней.
+        val audioMeasure = TextView(ctx).apply {
+            textSize = 12f
+            setTextColor(dimColor)
+            setPadding(0, spacing, 0, 0)
+        }
+        runCatching { audioMeasure.text = audioMeasurementText() }
+        container.addView(audioMeasure)
+
+        // Буфер звука: чипы, а не поле ввода. Значений мало и они
+        // осмысленные, а промахнуться пальцем по числу — легко.
+        container.addView(header("Буфер звука"))
+        val bufferHint = hint(QuickPanel.bufferHint(currentAudioBufferMs()))
+        container.addView(bufferHint)
+
+        // Подсветка выбранного чипа обновляется на месте: пересобирать панель
+        // из обработчика нажатия нельзя (см. quickPanelRefresh).
+        val bufferButtons = mutableListOf<Pair<Int, com.google.android.material.button.MaterialButton>>()
+        fun paintBufferChip(button: com.google.android.material.button.MaterialButton, selected: Boolean) {
+            button.backgroundTintList = android.content.res.ColorStateList.valueOf(
+                if (selected) primaryColor else surfaceColor
+            )
+            button.setTextColor(if (selected) 0xFF0E1116.toInt() else dimColor)
+        }
+
+        val chips = LinearLayout(ctx).apply {
+            orientation = LinearLayout.HORIZONTAL
+            setPadding(0, spacing, 0, 0)
+        }
+        QuickPanel.bufferChoices.forEach { ms ->
+            val button = com.google.android.material.button.MaterialButton(ctx).apply {
+                text = "$ms мс"
+                textSize = 13f
+                isAllCaps = false
+                // setCornerRadius в Material 1.12 принимает пиксели (int), а
+                // не float: прогон 41329247719 упал именно на этом.
+                cornerRadius = spacing
+                minWidth = 0
+                minimumWidth = 0
+                insetTop = 0
+                insetBottom = 0
+                paintBufferChip(this, currentAudioBufferMs() == ms)
+                setOnClickListener {
+                    applySetting("буфер звука") { NativeConfig.setInt(QuickPanel.BUFFER_KEY, ms) }
+                    // Только подсветка и подписи — без removeAllViews.
+                    bufferButtons.forEach { (chipMs, chip) -> paintBufferChip(chip, chipMs == ms) }
+                    bufferHint.text = QuickPanel.bufferHint(ms)
+                    markQuickChange(QuickPanel.BUFFER_KEY)
+                }
+            }
+            bufferButtons.add(ms to button)
+            chips.addView(
+                button,
+                LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.WRAP_CONTENT,
+                    LinearLayout.LayoutParams.WRAP_CONTENT
+                ).apply { rightMargin = spacing }
+            )
+        }
+        container.addView(
+            HorizontalScrollView(ctx).apply {
+                isHorizontalScrollBarEnabled = false
+                addView(chips)
+            }
+        )
+        container.addView(badge(entryOf("symbiosis_audio_buffer_ms")))
+
+        // Итог и кнопка перезапуска. Кнопка создаётся всегда и только
+        // показывается по необходимости: добавить её позже значило бы снова
+        // пересобрать панель, а это и было причиной остановки игры.
+        val status = TextView(ctx).apply {
+            textSize = 12f
+            setTextColor(dimColor)
+            setPadding(0, spacing, 0, 0)
+        }
+        container.addView(status)
+
+        val restart = com.google.android.material.button.MaterialButton(ctx).apply {
+            text = "Перезапустить игру"
+            textSize = 14f
+            isAllCaps = false
+            setOnClickListener { restartGameWithSettings() }
+        }
+        container.addView(
+            restart,
+            LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply { topMargin = spacing }
+        )
+
+        fun refresh() {
+            status.text = QuickPanel.statusLine(quickChanges).ifEmpty {
+                "Громкость и предел кадров применяются сразу; разрешение, vsync и звук — после перезапуска."
+            }
+            restart.visibility =
+                if (QuickPanel.needsRestart(quickChanges)) View.VISIBLE else View.GONE
+        }
+        refresh()
+        quickPanelRefresh = { runCatching { refresh() } }
+    }
+
+    /**
+     * Применить настройку и записать её на диск, отметив шаг для отчёта.
+     *
+     * ОДНО МЕСТО ВМЕСТО ПЯТИ. Раньше каждая кнопка панели сама звала
+     * `saveGlobalConfig`/`savePerGameConfig`, и падение на любой из них
+     * выглядело одинаково: «приложение остановлено», без единого указания,
+     * какой пункт его уронил. Теперь шаг пишется в нативный отчёт до вызова,
+     * а исключение не выходит наружу: пункт, который не смог примениться,
+     * пишет причину в журнал и не забирает с собой игру.
+     */
+    private fun applySetting(label: String, change: () -> Unit) {
+        runCatching { NativeSymbiosis.setMainStep("настройки: $label") }
+        val result = runCatching { change() }
+            .onFailure { Log.error("[Symbiosis] настройка «$label» не применилась: ${it.message}") }
+        if (result.isFailure) {
+            runCatching {
+                Toast.makeText(
+                    requireContext(),
+                    "«$label» не применилось: ${result.exceptionOrNull()?.message ?: "неизвестная причина"}",
+                    Toast.LENGTH_LONG
+                ).show()
+            }
+            return
+        }
+        runCatching { NativeConfig.saveGlobalConfig() }
+        if (shouldUseCustom) runCatching { NativeConfig.savePerGameConfig() }
+    }
+
+    /**
+     * Запомнить, что пункт меняли: от этого зависит и подпись, и кнопка.
+     *
+     * Панель при этом НЕ пересобирается — см. [quickPanelRefresh].
+     */
+    private fun markQuickChange(key: String) {
+        quickChanges.add(key)
+        runCatching { quickPanelRefresh?.invoke() }
+    }
+
+    /**
+     * Цвет темы, но не падение, если атрибута нет.
+     *
+     * `MaterialColors.getColor` бросает исключение, когда атрибут не задан в
+     * теме. Панель с пятью пунктами обращается к цветам чаще остальных экранов,
+     * и одного отсутствующего атрибута хватало, чтобы игра закрылась. Поэтому
+     * пробуем по порядку и в конце берём запасной оттенок текста.
+     */
+    private fun quickColor(vararg attrs: Int): Int {
+        for (attr in attrs) {
+            val color = runCatching { MaterialColors.getColor(binding.root, attr) }.getOrNull()
+            if (color != null) return color
+        }
+        return 0xFFA6B2C4.toInt()
+    }
+
+    /** Частота звука, выбранная сейчас. 0 — «как решит драйвер», это и есть умолчание. */
+    private fun currentAudioRate(): Int =
+        runCatching { NativeConfig.getInt(QuickPanel.RATE_KEY, false) }.getOrDefault(0)
+
+    /**
+     * Замеры звука одной строкой для панели.
+     *
+     * Источник — работающий поток, а не настройки: именно поэтому по строке
+     * видно, применилась ли настройка. Пусто, если поток ещё не открывался.
+     */
+    private fun audioMeasurementText(): String {
+        val raw = runCatching { NativeSymbiosis.getAudioReport() }.getOrNull().orEmpty()
+        if (raw.isBlank()) return ""
+        val parts = raw.split('|')
+        val summary = parts.lastOrNull().orEmpty()
+        if (summary.isBlank()) return ""
+        val requested = parts.getOrNull(0)?.toIntOrNull() ?: 0
+        val device = parts.getOrNull(1)?.toIntOrNull() ?: 0
+        val buffer = parts.getOrNull(3)?.toIntOrNull() ?: 0
+        val xruns = parts.getOrNull(6)?.toIntOrNull() ?: 0
+        val asked = if (requested == 0) "частоту выбирал драйвер" else "просили $requested Гц"
+        val measured = "Сейчас: $asked, телефон дал $device Гц, буфер $buffer кадров, " +
+            "опустошений $xruns."
+        return measured + "\n" + summary
+    }
+
+    private fun currentAudioBufferMs(): Int =
+        runCatching { NativeConfig.getInt(QuickPanel.BUFFER_KEY, false) }
+            .getOrDefault(20).let { if (it <= 0) 20 else it }
+
+    /**
+     * Перезапуск игры с сохранёнными настройками.
+     *
+     * ЧЕГО ЗДЕСЬ БОЛЬШЕ НЕТ И ПОЧЕМУ.
+     *
+     * Раньше здесь было `NativeLibrary.stopEmulation()`, `activity.finish()`,
+     * а затем `EmulationActivity.launch(...)`. На телефоне это выглядело так:
+     * нажал «Перезапустить игру» — выскочила ошибка и приложение ушло на
+     * рабочий стол или в лаунчер.
+     *
+     * Причина в том, что эти три вызова обходят штатную смену игры в Eden.
+     * `EmulationActivity` объявлен `singleTop` и умеет ровно это: новый intent
+     * на него приходит в `onNewIntent`, оттуда — в `handleSwapIntent`, который
+     * ОСТАНАВЛИВАЕТ сессию правильно (`stopForRomSwap`), ДОЖИДАЕТСЯ остановки
+     * потока эмуляции (`notifyWhenEmulationThreadStops`) и только потом
+     * запускает игру заново. Мы же закрывали активити руками и просили старт
+     * у уже закрывающейся — Android такой запуск выбрасывает, и человек
+     * оставался в лаунчере. А `stopEmulation()` в обход фрагмента оставлял
+     * поверхность и поток в состоянии, из которого следующий кадр ронял
+     * процесс.
+     *
+     * Теперь: сохранить настройки и попросить тот же экран перезапуститься.
+     * Всё остальное — забота Eden, у которого для этого уже есть код.
+     */
+    private fun restartGameWithSettings() {
+        val target = game ?: return
+        val activity = emulationActivity ?: return
+        runCatching { NativeConfig.saveGlobalConfig() }
+        if (shouldUseCustom) runCatching { NativeConfig.savePerGameConfig() }
+        quickChanges.clear()
+        runCatching { NativeSymbiosis.setMainStep("перезапуск игры") }
+        // Меню закрываем до перезапуска: экран перезапускается, и открытая
+        // панель поверх него — это лишний шанс на «Cannot perform this action
+        // after onSaveInstanceState».
+        runCatching { binding.drawerLayout.closeDrawer(binding.quickSettingsSheet) }
+        runCatching { EmulationActivity.launch(activity, target) }
+            .onFailure {
+                Log.error("[Symbiosis] перезапуск игры не удался: ${it.message}")
+                Toast.makeText(
+                    activity,
+                    "Не удалось перезапустить игру: ${it.message ?: "неизвестная причина"}",
+                    Toast.LENGTH_LONG
+                ).show()
+            }
+    }
+
+    /** Файл с путём последней запущенной игры. */
+    private fun lastGameFile(context: android.content.Context) =
+        java.io.File(java.io.File(context.getExternalFilesDir(null), "kenji"), "last-game.txt")
+
+    /**
+     * Собрать игру по записанному пути.
+     *
+     * Тихо возвращает null, если записи нет или файл уже удалён: подсказка не
+     * должна превращаться в ошибку, которую человек не может исправить.
+     */
+    private fun lastGameFromDisk(): Game? = runCatching {
+        val path = LastGame.load(lastGameFile(requireContext())) ?: return@runCatching null
+        GameHelper.getGame(Uri.parse(path), false)
+    }.getOrNull()
 
     private fun isFsrScalingFilterSelected(): Boolean {
         val fsrFilterValue = resolveFsrScalingFilterValue() ?: return false
@@ -1432,6 +1931,10 @@ class EmulationFragment : Fragment(), SurfaceHolder.Callback {
     }
 
     override fun onDestroyView() {
+        // Сейвы — наверх, пока приложение открыто и сеть есть. Тихо: если не
+        // вышло, следующий запуск попробует снова, а человеку не нужен
+        // диалог об облаке в момент, когда он закрыл игру.
+        runCatching { game?.let { CloudSync.uploadSavesQuietly(it) } }
         super.onDestroyView()
         amiiboLoadJob?.cancel()
         amiiboLoadJob = null
@@ -2260,6 +2763,10 @@ class EmulationFragment : Fragment(), SurfaceHolder.Callback {
 
         @Synchronized
         fun stop() {
+            // Метка до и после остановки: сбой между ними — это разрушение
+            // эмуляции, сбой после — уже возврат в библиотеку. Без двух
+            // меток оба случая выглядят одинаково.
+            ExitTrace.mark("остановка эмуляции")
             runCatching {
                 if (state == State.RUNNING) {
                     NativeLibrary.pauseEmulation()
@@ -2267,6 +2774,7 @@ class EmulationFragment : Fragment(), SurfaceHolder.Callback {
                 NativeLibrary.stopEmulation()
             }
             state = State.STOPPED
+            ExitTrace.mark("эмуляция остановлена")
         }
 
         @Synchronized

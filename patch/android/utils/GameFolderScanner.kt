@@ -28,6 +28,19 @@ object GameFolderScanner {
     private val ROM_EXTENSIONS = GameFormats.LAUNCHABLE
 
     /**
+     * Всё, что библиотека показывает: игры, обновления, DLC и сжатые.
+     *
+     * `LibraryIndex` - единственное место, где это решается. Здесь стояла
+     * вторая копия (`LAUNCHABLE + COMPRESSED`), и она разошлась с
+     * импортёром ровно так же, как когда-то разошлась глубина: счётчик
+     * обещал файлы, которых в списке не появлялось.
+     */
+    private fun wanted(name: String): Boolean = LibraryIndex.isWanted(name)
+
+    /** Сжатый образ: виден в счётчике, но ядром не открывается. */
+    private fun compressed(name: String): Boolean = LibraryIndex.classify(name).kind == LibraryIndex.Kind.COMPRESSED
+
+    /**
      * Всё, что человек считает файлом игры - включая то, что сам эмулятор
      * не откроет.
      *
@@ -75,8 +88,7 @@ object GameFolderScanner {
                     val mime = it.getString(1) ?: ""
                     val size = if (it.isNull(2)) 0L else it.getLong(2)
                     if (mime == DocumentsContract.Document.MIME_TYPE_DIR) continue
-                    val ext = name.substringAfterLast('.', "").lowercase(Locale.ROOT)
-                    if (ext in SHOWABLE_EXTENSIONS || name.lowercase(Locale.ROOT) in ROM_FILENAMES) {
+                    if (wanted(name)) {
                         out.add(Entry(name, size))
                     }
                 }
@@ -119,7 +131,14 @@ object GameFolderScanner {
         /** Depth this folder was scanned at, so the file list can match. */
         val depth: Int = 1,
         /** True when the folder could not be read at all. */
-        val unreadable: Boolean = false
+        val unreadable: Boolean = false,
+        /**
+         * Сжатые образы в этой папке.
+         *
+         * Отдельно от [gameCount], потому что это разные ответы на разные
+         * вопросы: «сколько игр» и «почему из сотни файлов видна одна».
+         */
+        val compressed: Int = 0
     )
 
     /**
@@ -257,6 +276,7 @@ object GameFolderScanner {
         var count = 0
         var bytes = 0L
         var skipped = 0
+        var compressedCount = 0
         var readable = false
 
         // Iterative rather than recursive: a pathological tree should not be
@@ -267,7 +287,8 @@ object GameFolderScanner {
 
         var guard = 0
         val seen = HashSet<String>()
-        while (queue.isNotEmpty() && guard < MAX_DIRECTORIES) {
+        val started = System.nanoTime()
+        while (queue.isNotEmpty() && guard < MAX_DIRECTORIES && !expired(started)) {
             guard++
             // Прервать обход, когда результат уже никому не нужен.
             //
@@ -325,18 +346,26 @@ object GameFolderScanner {
                     }
 
                     val ext = displayName.substringAfterLast('.', "").lowercase(Locale.ROOT)
-                    if (isRom(displayName)) {
-                        count++
-                        bytes += size
-                    } else if (ext in NON_GAME_EXTENSIONS) {
-                        skipped++
+                    when {
+                        GameFolderScanner.compressed(displayName) -> {
+                            compressedCount++
+                            bytes += size
+                        }
+                        isRom(displayName) -> {
+                            count++
+                            bytes += size
+                        }
+                        ext in NON_GAME_EXTENSIONS -> skipped++
                     }
                 }
             }
             }
         }
 
-        return Folder(uriString, name, count, bytes, skipped, maxDepth, unreadable = !readable)
+        return Folder(
+            uriString, name, count, bytes, skipped, maxDepth,
+            unreadable = !readable, compressed = compressedCount
+        )
     }
 
     data class Entry(
@@ -377,8 +406,9 @@ object GameFolderScanner {
         queue.add(Triple(root, "", maxDepth))
         var guard = 0
         val seen = HashSet<String>()
+        val started = System.nanoTime()
 
-        while (queue.isNotEmpty() && guard < MAX_DIRECTORIES) {
+        while (queue.isNotEmpty() && guard < MAX_DIRECTORIES && !expired(started)) {
             guard++
             if (!stillWanted()) break
             // Верхняя граница на размер ответа.
@@ -494,7 +524,8 @@ object GameFolderScanner {
         var guard = 0
         val queue = ArrayDeque<java.io.File>()
         queue.add(root)
-        while (queue.isNotEmpty() && guard < MAX_DIRECTORIES) {
+        val started = System.nanoTime()
+        while (queue.isNotEmpty() && guard < MAX_DIRECTORIES && !expired(started)) {
             guard++
             val entries = queue.removeFirst().listFiles() ?: continue
             for (entry in entries) {
@@ -514,8 +545,30 @@ object GameFolderScanner {
         return String.format(Locale.US, "%.0f KB", bytes / 1024.0)
     }
 
-    /** Stops a symlink loop or an absurd tree from hanging the scan. */
-    private const val MAX_DIRECTORIES = 400
+    /**
+     * Потолок на число каталогов в обходе.
+     *
+     * Было 400. Дамп «одна папка на игру» на 500 игр честно упирался в
+     * этот потолок и обрывался молча - счётчик показывал 400 файлов там,
+     * где их 500, а хвост алфавита пропадал целиком. Теперь потолок такой,
+     * что в него не влезает только совсем патологическое дерево, а от
+     * зависания защищает ещё и [SCAN_BUDGET_MS].
+     */
+    private const val MAX_DIRECTORIES = 20000
+
+    /**
+     * Сколько миллисекунд обход может идти до принудительной остановки.
+     *
+     * Каталог на SD-карте через SAF отвечает десятками миллисекунд, 20 000
+     * каталогов - это минуты. Бюджет срабатывает только на больном дереве
+     * (или на выдернутой карте), и лучше показать то, что успели, чем
+     * крутить вечность.
+     */
+    private const val SCAN_BUDGET_MS = 25_000L
+
+    /** Истёк ли бюджет обхода. */
+    private fun expired(startedAtNanos: Long): Boolean =
+        (System.nanoTime() - startedAtNanos) / 1_000_000L > SCAN_BUDGET_MS
 
     /**
      * Потолок на длину списка файлов.
@@ -524,5 +577,5 @@ object GameFolderScanner {
      * в куче и целиком уходит в адаптер. Три тысячи строк экран всё равно
      * не покажет осмысленно, а вылет по нехватке памяти покажет.
      */
-    private const val MAX_ENTRIES = 3000
+    private const val MAX_ENTRIES = 20000
 }

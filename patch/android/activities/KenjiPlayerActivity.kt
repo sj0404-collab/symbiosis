@@ -32,10 +32,25 @@ class KenjiPlayerActivity : Activity(), SurfaceHolder.Callback {
         const val EXTRA_PATH = "kenji_path"
         const val EXTRA_TITLE = "kenji_title"
 
-        fun intent(context: Context, path: String, title: String): Intent =
+        /**
+         * Действующие настройки, посчитанные в главном процессе.
+         *
+         * SharedPreferences между процессами не синхронизируются, поэтому
+         * `:kenji` не может доверять своему чтению: он получает готовый
+         * набор строкой и применяет его как есть.
+         */
+        const val EXTRA_CONFIG = "kenji_config"
+
+        fun intent(
+            context: Context,
+            path: String,
+            title: String,
+            config: String = ""
+        ): Intent =
             Intent(context, KenjiPlayerActivity::class.java)
                 .putExtra(EXTRA_PATH, path)
                 .putExtra(EXTRA_TITLE, title)
+                .putExtra(EXTRA_CONFIG, config)
                 .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
     }
 
@@ -113,7 +128,10 @@ class KenjiPlayerActivity : Activity(), SurfaceHolder.Callback {
             val nw = KenjiBridge.nativeWindow(holder.surface)
             org.kenjinx.android.KenjinxNative.nativeSurface = nw
             org.kenjinx.android.KenjinxNative.nativeWindow = nw
-            val prep = KenjiBridge.preparePlay(this)
+            val prep = KenjiBridge.preparePlay(
+                this,
+                intent.getStringExtra(EXTRA_CONFIG).orEmpty()
+            )
             if (!prep.ok) {
                 runOnUiThread { fail(prep.message) }
                 return@Thread
@@ -128,7 +146,9 @@ class KenjiPlayerActivity : Activity(), SurfaceHolder.Callback {
                 runOnUiThread { fail(load.message) }
                 return@Thread
             }
-            runOnUiThread { status.text = "второе ядро · играет" }
+            // Строка настроек рядом со статусом: «ядро запустилось» без них
+            // ничего не говорит о том, с чем именно оно запустилось.
+            runOnUiThread { status.text = "второе ядро · играет\n" + prep.message }
             KenjiBridge.runLoop()
             runOnUiThread { leave() }
         }, "kenji-loop").also { it.start() }

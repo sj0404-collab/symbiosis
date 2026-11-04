@@ -7,12 +7,31 @@
  *        per-device tuning profile catalogue.
  */
 
+#include <atomic>
+#include <csignal>
+#include <cstdio>
+#include <cstring>
+#include <algorithm>
+#include <cctype>
+#include <filesystem>
+#include <fstream>
 #include <string>
 #include <vector>
+
+#include <dlfcn.h>
+#include <fcntl.h>
+#include <unistd.h>
+
+#if defined(__aarch64__)
+#include <ucontext.h>
+#else
+#include <unwind.h>
+#endif
 
 #include <jni.h>
 
 #include "common/android/android_common.h"
+#include "common/fs/path_util.h"
 #include "common/logging.h"
 #include "common/settings.h"
 #include "common/symbiosis/abi_shim.h"
@@ -23,8 +42,10 @@
 #include "common/symbiosis/auto_modes.h"
 #include "common/symbiosis/firmware_vault.h"
 #include "common/symbiosis/game_catalogue.h"
+#include "common/symbiosis/audio_metrics.h"
 #include "common/symbiosis/rom_tools.h"
 #include "common/symbiosis/settings_audit.h"
+#include "common/symbiosis/frame_metrics.h"
 #include "common/symbiosis/settings_guide.h"
 #include "common/symbiosis/save_guard.h"
 #include "common/symbiosis/mali_tuning.h"
@@ -88,9 +109,187 @@ Symbiosis::DriverOrigin CurrentOrigin() {
     return Symbiosis::DriverOrigin::System;
 }
 
+// ── Отчёт о падении ОСНОВНОГО процесса ────────────────────────────────
+//
+// ЗАЧЕМ. Второе ядро живёт в `:kenji` и у него свой отчёт — его пишет мост.
+// А падение самой эмуляции (libyuzu-android) до сих пор не оставляло ничего,
+// кроме «Eden Symbiosis Debug остановлено» в шторке. Именно так выглядело
+// падение при работе с панелью настроек: человек видел только факт.
+//
+// Обработчик сигнала пишет шапку и кадры стека из ucontext — по ним видно,
+// какая библиотека виновата. Файл читается при СЛЕДУЮЩЕМ запуске и
+// показывается диалогом: причина нужна сразу, а не в переписке.
+//
+// Закрываем предыдущий анонимный namespace и открываем свой: вставлять эти
+// функции в чужой — значит менять его видимость и порядок объявлений.
 } // Anonymous namespace
 
+namespace {
+
+char g_mainCrashPath[512] = {0};
+std::atomic<int> g_mainInHandler{0};
+
+/**
+ * Что делало приложение в момент падения.
+ *
+ * Без метки в отчёте видно «libyuzu-android.so+0x…» и ничего больше. С меткой
+ * понятно, что это была панель настроек, а не, скажем, старт игры. Метка
+ * меняется на границах опасных действий — это одна запись строки, дешевле
+ * любого лога.
+ */
+char g_mainStep[96] = "приложение";
+
+void MainWriteFrame(int fd, uintptr_t pc) {
+    if (pc == 0) return;
+    Dl_info info{};
+    char line[320];
+    int n;
+    if (::dladdr(reinterpret_cast<void*>(pc - 1), &info) != 0 && info.dli_fname != nullptr) {
+        const char* slash = ::strrchr(info.dli_fname, '/');
+        n = ::snprintf(line, sizeof(line), "pc=%s+0x%lx\n", slash ? slash + 1 : info.dli_fname,
+                       static_cast<unsigned long>(pc -
+                                                  reinterpret_cast<uintptr_t>(info.dli_fbase)));
+    } else {
+        n = ::snprintf(line, sizeof(line), "pc=0x%lx\n", static_cast<unsigned long>(pc));
+    }
+    if (n > 0) ::write(fd, line, static_cast<size_t>(n));
+}
+
+#if defined(__aarch64__)
+void MainWriteFrames(int fd, void* uctx) {
+    auto* uc = static_cast<ucontext_t*>(uctx);
+    if (uc == nullptr) return;
+    const uintptr_t pc = uc->uc_mcontext.pc;
+    uintptr_t frame = uc->uc_mcontext.regs[29];
+    const uintptr_t link = uc->uc_mcontext.regs[30];
+    MainWriteFrame(fd, pc);
+    MainWriteFrame(fd, link);
+    for (int i = 0; i < 14 && frame != 0; ++i) {
+        if ((frame & 0x7) != 0 || frame < 0x1000) break;
+        const auto* words = reinterpret_cast<const uintptr_t*>(frame);
+        const uintptr_t next = words[0];
+        const uintptr_t ret = words[1];
+        MainWriteFrame(fd, ret);
+        if (next <= frame) break;
+        frame = next;
+    }
+}
+#else
+struct MainUnwindState {
+    int fd;
+    int depth;
+};
+
+_Unwind_Reason_Code MainUnwindCallback(_Unwind_Context* ctx, void* arg) {
+    auto* state = static_cast<MainUnwindState*>(arg);
+    MainWriteFrame(state->fd, _Unwind_GetIP(ctx));
+    return ++state->depth < 12 ? _URC_NO_REASON : _URC_END_OF_STACK;
+}
+
+void MainWriteFrames(int fd, void* uctx) {
+    (void)uctx;
+    MainUnwindState state{fd, 0};
+    _Unwind_Backtrace(MainUnwindCallback, &state);
+}
+#endif
+
+const char* MainSignalName(int sig) {
+    switch (sig) {
+    case SIGSEGV: return "SIGSEGV";
+    case SIGABRT: return "SIGABRT";
+    case SIGBUS: return "SIGBUS";
+    case SIGILL: return "SIGILL";
+    case SIGFPE: return "SIGFPE";
+    default: return "SIG";
+    }
+}
+
+void MainCrashHandler(int sig, siginfo_t* info, void* uctx) {
+    if (g_mainInHandler.exchange(1) != 0) {
+        ::signal(sig, SIG_DFL);
+        ::raise(sig);
+        return;
+    }
+    const int fd = ::open(g_mainCrashPath, O_WRONLY | O_CREAT | O_APPEND, 0600);
+    if (fd >= 0) {
+        char head[320];
+        const int n = ::snprintf(head, sizeof(head),
+                                 "crash signal=%d name=%s addr=%p code=%d step=%s\n", sig,
+                                 MainSignalName(sig), info ? info->si_addr : nullptr,
+                                 info ? info->si_code : 0, g_mainStep);
+        if (n > 0) ::write(fd, head, static_cast<size_t>(n));
+        MainWriteFrames(fd, uctx);
+        ::close(fd);
+    }
+    ::signal(sig, SIG_DFL);
+    ::raise(sig);
+}
+
+} // namespace
+
 extern "C" {
+
+/**
+ * Папка, в которую ядро пишет свой журнал.
+ *
+ * Корень данных настраивается, поэтому «Android/data/<пакет>/files/log» —
+ * только значение по умолчанию. Спрашиваем путь у самого ядра: журнал ищется
+ * там, где его файловый backend действительно создаёт, и после переноса
+ * данных в общую папку экран продолжает работать.
+ */
+/**
+ * Включить отчёт о падении для основного процесса.
+ *
+ * Вызывается при входе в игру: с этого момента сигнал (SIGSEGV, SIGABRT и
+ * прочие) оставляет в файле шапку и кадры стека. Файл создаётся сразу —
+ * «есть, но пуст» значит «падения не было», и это тоже нужный ответ.
+ */
+JNIEXPORT void JNICALL
+Java_org_yuzu_yuzu_1emu_utils_NativeSymbiosis_armMainCrashLog(JNIEnv* env, jobject,
+                                                              jstring jpath) {
+    const std::string path = Common::Android::GetJString(env, jpath);
+    if (path.empty()) return;
+    ::strncpy(g_mainCrashPath, path.c_str(), sizeof(g_mainCrashPath) - 1);
+    g_mainCrashPath[sizeof(g_mainCrashPath) - 1] = '\0';
+
+    const int fd = ::open(g_mainCrashPath, O_WRONLY | O_CREAT | O_TRUNC, 0600);
+    if (fd >= 0) ::close(fd);
+
+    // Альтернативный стек не ставим: обработчик пишет в файл, а на нём же
+    // может не хватить места, если падение случилось внутри записи журнала.
+    struct sigaction action {};
+    action.sa_sigaction = MainCrashHandler;
+    action.sa_flags = SA_SIGINFO | SA_ONSTACK;
+    ::sigemptyset(&action.sa_mask);
+    // Массив, а не список в фигурных скобках: последний требует
+    // <initializer_list>, и на голом TU это вылезает ошибкой сборки.
+    const int handled[] = {SIGSEGV, SIGABRT, SIGBUS, SIGILL, SIGFPE};
+    for (const int sig : handled) {
+        ::sigaction(sig, &action, nullptr);
+    }
+    LOG_INFO(Frontend, "[Symbiosis] main-process crash report armed: {}", g_mainCrashPath);
+}
+
+/**
+ * Отметить, что делает приложение: строка попадёт в отчёт о падении.
+ *
+ * Не потокобезопасно осознанно: это метка для человека, а не данные, и
+ * стоимость атомарной записи на каждый пункт меню не нужна. Худшее, что
+ * может случиться, — в отчёте окажется соседняя по времени метка.
+ */
+JNIEXPORT void JNICALL
+Java_org_yuzu_yuzu_1emu_utils_NativeSymbiosis_setMainStep(JNIEnv* env, jobject, jstring jstep) {
+    const std::string step = Common::Android::GetJString(env, jstep);
+    if (step.empty()) return;
+    ::strncpy(g_mainStep, step.c_str(), sizeof(g_mainStep) - 1);
+    g_mainStep[sizeof(g_mainStep) - 1] = '\0';
+}
+
+JNIEXPORT jstring JNICALL
+Java_org_yuzu_yuzu_1emu_utils_NativeSymbiosis_logDirectory(JNIEnv* env, jobject) {
+    const auto& dir = Common::FS::GetEdenPath(Common::FS::EdenPath::LogDir);
+    return Common::Android::ToJString(env, dir.string());
+}
 
 JNIEXPORT jstring JNICALL
 Java_org_yuzu_yuzu_1emu_utils_NativeSymbiosis_getDriverTopology(JNIEnv* env, jobject) {
@@ -246,6 +445,24 @@ Java_org_yuzu_yuzu_1emu_utils_NativeSymbiosis_applyProfile(JNIEnv* env, jobject,
 }
 
 /**
+ * Снимок кадров и звука для экрана «Ровность кадров».
+ *
+ * Возвращает текст «ключ=значение», который разбирает FrameMetricsText на
+ * Kotlin: так формат нельзя разобрать «почти» — либо ключ есть, либо нет.
+ */
+JNIEXPORT jstring JNICALL
+Java_org_yuzu_yuzu_1emu_utils_NativeSymbiosis_frameMetrics(JNIEnv* env, jobject) {
+    const std::string snapshot = Symbiosis::FrameMetrics::Snapshot();
+    return env->NewStringUTF(snapshot.c_str());
+}
+
+/** Начать новый замер: забыть кадры, провалы звука и сборки шейдеров. */
+JNIEXPORT void JNICALL
+Java_org_yuzu_yuzu_1emu_utils_NativeSymbiosis_resetFrameMetrics(JNIEnv*, jobject) {
+    Symbiosis::FrameMetrics::Reset();
+}
+
+/**
  * Explains, in one sentence, why a specific ROM will not open.
  *
  * "check keys and firmware" is what the UI said before, and it was wrong
@@ -305,6 +522,100 @@ Java_org_yuzu_yuzu_1emu_utils_NativeSymbiosis_diagnoseRom(JNIEnv* env, jobject,
     u64 program_id = 0;
     const auto status = loader->ReadProgramId(program_id);
     if (status == Loader::ResultStatus::Success) {
+        // А вот здесь прошлая проверка расходилась с настоящей.
+        //
+        // getIsValid (game_metadata.cpp:239) требует больше, чем ReadProgramId:
+        // для NSP и XCI он дополнительно зовёт IsBootableGameContainer, а тот
+        // ищет внутри NCA с ролью Application/Program. Файл с целым
+        // оглавлением, но без такого NCA проходил первую проверку, падал на
+        // второй — и в шторке оставалось «ядро не принимает этот файл» без
+        // причины. Ровно это и случилось с распакованным NSP на устройстве.
+        const auto file_type = loader->GetFileType();
+        if (Loader::IsContainerType(file_type) &&
+            !Loader::IsBootableGameContainer(file, file_type)) {
+            std::string why;
+            if (Symbiosis::RomTools::DetectFormat(path) == Symbiosis::DumpFormat::Nsp) {
+                why = Symbiosis::RomTools::DescribeContainer(path);
+            } else {
+                why = "внутри нет NCA с программой игры: вероятно, это обновление "
+                      "или DLC, а не сама игра";
+            }
+            // ГЛАВНОЕ ПРО ТЕКУЩИЙ ОТКАЗ. Контейнер, у которого ReadProgramId
+            // успешен, а NCA с программой не находится, почти всегда означает
+            // не «файл собран не так», а «NCA не разобрался». А не разбирается
+            // он по одной причине: содержимое зашифровано тикетом игры, и без
+            // title key этого тикета (или самого .tik) внутри ничего не
+            // читается. Оглавление при этом целое - потому что оно в открытом
+            // виде.
+            //
+            // Поэтому перечисляем, что известно о каждом NCA: путь, тип
+            // содержимого по открытому оглавлению (в NCA это 0x21) и статус
+            // разбора. Статус - это и есть ответ: MissingTitlekey, а не
+            // «неизвестно почему».
+            why += "  Каждый NCA по отдельности: ";
+            bool any = false;
+            try {
+                // NSP строим сами: OpenContainerAsNsp есть только внутри
+                // loader.cpp, в анонимном namespace. Для XCI снаружи
+                // понадобился бы разбор раздела secure, поэтому там список
+                // остаётся прежним, а подробности даёт сам контейнер.
+                std::shared_ptr<FileSys::NSP> nsp;
+                if (file_type == Loader::FileType::NSP) {
+                    nsp = std::make_shared<FileSys::NSP>(file, 0, 0);
+                }
+                if (nsp != nullptr && nsp->GetStatus() == Loader::ResultStatus::Success) {
+                    const auto ncas = nsp->GetNCAsCollapsed();
+                    for (const auto& nca : ncas) {
+                        if (nca == nullptr) {
+                            continue;
+                        }
+                        any = true;
+                        const auto status = nca->GetStatus();
+                        why += nca->GetName();
+                        why += " [тип ";
+                        why += std::to_string(static_cast<int>(nca->GetType()));
+                        why += ", ";
+                        why += Loader::GetResultStatusString(status);
+
+                        // Rights id и наличие title key — то, чего не хватает
+                        // для расшифровки. Без этой пары «MissingTitlekey»
+                        // ничего не говорит: непонятно, какого ключа нет и
+                        // есть ли он вообще в загруженных файлах.
+                        const auto rights = nca->GetRightsId();
+                        if (rights != FileSys::RightsId{}) {
+                            std::string rid;
+                            for (const u8 byte : rights) {
+                                static const char* digits = "0123456789abcdef";
+                                rid.push_back(digits[byte >> 4]);
+                                rid.push_back(digits[byte & 0xF]);
+                            }
+                            u128 rid_u128{};
+                            std::memcpy(rid_u128.data(), rights.data(), rights.size());
+                            const bool has_title_key = Core::Crypto::KeyManager::Instance().HasKey(
+                                Core::Crypto::S128KeyType::Titlekey, rid_u128[1], rid_u128[0]);
+                            why += ", rights ";
+                            why += rid;
+                            why += has_title_key ? ", title key ЕСТЬ" : ", title key НЕТ";
+                        }
+                        why += "] ";
+                    }
+                }
+            } catch (...) {
+                why += "разобрать список NCA не удалось. ";
+            }
+            if (!any) {
+                why += "ядро не смогло прочитать из контейнера ни одного NCA.";
+            }
+            why += "  Дополнительные файлы ключей (любые *.keys и *.txt в папке keys и в";
+            why += " keys/extra) подхватываются автоматически - так можно доложить";
+            why += " title key для одной игры, не трогая prod.keys.";
+            why += "  Если у NCA стоит MissingTitlekey - нужен title key этой игры:";
+            why += " в контейнере его нет, а ключом подписи (header key) содержимое";
+            why += " не открывается, потому что оно дополнительно зашифровано";
+            why += " тикетом. Положите в папку keys полный prod.keys (с title keys)";
+            why += " или title.keys с ключом для 01004F302847E000.";
+            return Common::Android::ToJString(env, "not_bootable|" + why);
+        }
         return Common::Android::ToJString(env, "ok|файл читается");
     }
 
@@ -360,6 +671,45 @@ Java_org_yuzu_yuzu_1emu_utils_NativeSymbiosis_diagnoseRom(JNIEnv* env, jobject,
     } catch (...) {
         return Common::Android::ToJString(env, "corrupt|файл не читается");
     }
+}
+
+/**
+ * Живые замеры звука: цифры и их объяснение.
+ *
+ * ЗАЧЕМ ОТДЕЛЬНЫЙ ВЫЗОВ. «Любую настройку применю — не помогает» нельзя ни
+ * подтвердить, ни опровергнуть на слух. Здесь возвращаются числа: какая
+ * частота запрошена, какая пришла от драйвера, сколько кадров в буфере
+ * реально, сколько раз буфер успел кончиться. По ним видно, применилась ли
+ * настройка вообще.
+ *
+ * Формат: value|value|...|summary|advice — как у остальных снимков слоя.
+ */
+JNIEXPORT jstring JNICALL
+Java_org_yuzu_yuzu_1emu_utils_NativeSymbiosis_getAudioReport(JNIEnv* env, jobject) {
+    const auto report = Symbiosis::GetAudioReport();
+    std::string out;
+    out += std::to_string(report.requested_rate);
+    out += '|';
+    out += std::to_string(report.device_rate);
+    out += '|';
+    out += std::to_string(report.channels);
+    out += '|';
+    out += std::to_string(report.buffer_frames);
+    out += '|';
+    out += std::to_string(report.capacity_frames);
+    out += '|';
+    out += std::to_string(report.frames_per_burst);
+    out += '|';
+    out += std::to_string(report.xruns);
+    out += '|';
+    out += std::to_string(report.callbacks);
+    out += '|';
+    out += report.backend;
+    out += '|';
+    out += report.last_error;
+    out += '|';
+    out += Symbiosis::DescribeAudio(report);
+    return Common::Android::ToJString(env, out);
 }
 
 /// Live thermal state as "state|tempC|gpuClockPercent|summary|advice".
@@ -835,6 +1185,18 @@ Java_org_yuzu_yuzu_1emu_utils_NativeSymbiosis_convertXciToNsp(JNIEnv* env, jobje
 JNIEXPORT jstring JNICALL
 Java_org_yuzu_yuzu_1emu_utils_NativeSymbiosis_getRomCompressionNote(JNIEnv* env, jobject) {
     return Common::Android::ToJString(env, Symbiosis::RomTools::CompressionNote());
+}
+
+/**
+ * Куда распаковке класть временные части.
+ *
+ * Путь приходит из Kotlin: temp_directory_path() на Android не работает (см.
+ * RomTools::SetWorkDir), а значит без этого вызова распаковка NSZ/XCZ
+ * заканчивалась ничем.
+ */
+JNIEXPORT void JNICALL
+Java_org_yuzu_yuzu_1emu_utils_NativeSymbiosis_setRomWorkDir(JNIEnv* env, jobject, jstring j_dir) {
+    Symbiosis::RomTools::SetWorkDir(j_dir ? Common::Android::GetJString(env, j_dir) : std::string{});
 }
 
 /// "bytes|error"

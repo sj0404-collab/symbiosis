@@ -57,6 +57,21 @@ void FmtLogMessageImpl(Class, Level, const char*, unsigned int, const char*,
 } // namespace Common::Log
 STUB
 
+# zstd нужен по-настоящему: без него NSZ не распаковывается, и именно это
+# раньше уходило в APK незамеченным. Поэтому пакет обязателен, а не «если
+# найдётся»: отсутствие libzstd-dev — ошибка окружения, а не повод тихо
+# пропустить тест распаковки.
+ZSTD_FLAGS=""
+ZSTD_LIBS=""
+if printf '#include <zstd.h>\nint main(){return 0;}\n' | g++ -x c++ -o "$BUILD/zstd_probe" -lzstd - >/dev/null 2>&1; then
+  ZSTD_FLAGS="-DSYMBIOSIS_HOST_ZSTD"
+  ZSTD_LIBS="-lzstd"
+else
+  echo "libzstd-dev не найден (нужен для теста распаковки NSZ)." >&2
+  echo "  sudo apt-get install -y libzstd-dev" >&2
+  exit 1
+fi
+
 CORE="$S/symbiosis_log.cpp $S/symbiosis_types.cpp $BUILD/log_stub.cpp"
 # Settings::values lives here; several tests read or write real settings.
 SETTINGS="$E/src/common/settings.cpp"
@@ -65,9 +80,14 @@ deps_for() {
   case "$1" in
     t_mali|t_parse) echo "$S/mali_tuning.cpp $CORE" ;;
     t_fw)           echo "$S/firmware_vault.cpp $CORE" ;;
-    t_rom)          echo "$S/rom_tools.cpp $CORE" ;;
+    t_rom)          echo "$S/rom_tools.cpp $S/ncz.cpp $S/aes128.cpp $CORE" ;;
+    t_nsz)          echo "$S/rom_tools.cpp $S/ncz.cpp $S/aes128.cpp $CORE" ;;
     t_save)         echo "$S/save_guard.cpp $S/thermal_monitor.cpp $CORE" ;;
     t_guard)        echo "$CORE" ;;
+    t_audio)        echo "$S/audio_metrics.cpp $CORE" ;;
+    # Подмена слота в таблице переходов: проверяется на настоящей .so, собранной
+    # самим тестом. Нужен libdl — он в LINK-флагах по умолчанию для этого теста.
+    t_got)          echo "$S/got_patch.cpp $CORE" ;;
     t_modes)        echo "$S/auto_modes.cpp $S/device_profiles.cpp $SETTINGS $CORE" ;;
     t_uaf)          echo "$S/memory_governor.cpp $CORE" ;;
     t_v12)          echo "$S/device_profiles.cpp $S/auto_modes.cpp $SETTINGS $CORE" ;;
@@ -82,9 +102,15 @@ for f in "$HERE"/tests/t_*.cpp; do
   n=$(basename "$f" .cpp)
   # shellcheck disable=SC2046
   # shellcheck disable=SC2086
-  if g++ -std=c++20 -O1 $FMT_FLAGS -I"$E/src" -o "$BUILD/$n" "$f" $(deps_for "$n") $LINK_FMT \
-       > "$BUILD/$n.err" 2>&1; then
-    if out=$("$BUILD/$n" 2>&1); then
+  # -fno-rtti — как в сборке Eden. Без него тест на хосте собирается, а CI
+  # падает на `use of dynamic_cast requires -frtti` через двадцать пять минут
+  # (сборка 41387047290). Флаг в тестах, а не в коде, потому что проверять
+  # надо именно ту конфигурацию, в которой код поедет на телефон.
+  if g++ -std=c++20 -fno-rtti -O1 $FMT_FLAGS $ZSTD_FLAGS -I"$E/src" -o "$BUILD/$n" "$f" $(deps_for "$n") \
+       $LINK_FMT $ZSTD_LIBS > "$BUILD/$n.err" 2>&1; then
+    # Тестам NSZ нужны файлы-образцы; путь передаётся явно, чтобы бинарник
+    # работал и запущенный из любой папки.
+    if out=$(SYMBIOSIS_TEST_DATA="$HERE/tests/data" "$BUILD/$n" 2>&1); then
       echo "  PASS  $n — $(printf '%s' "$out" | tail -1)"; pass=$((pass+1))
     else
       echo "  FAIL  $n"; printf '%s\n' "$out" | tail -5 | sed 's/^/        /'
@@ -104,10 +130,118 @@ done
 
 # Kotlin tests, when a compiler is available.
 if command -v kotlinc >/dev/null 2>&1; then
+  # Sources a Kotlin test compiles against, beyond itself.
+  #
+  # A test that calls real code cannot be built from its own file alone, and
+  # the loop below compiles exactly one file. `LibraryIndexTest` imports
+  # `LibraryIndex`, both plain Kotlin with no Android imports, so the pair
+  # compiles with a bare kotlinc. Anything needing the Android framework is
+  # still modelled, not imported.
+  kt_deps_for() {
+    case "$1" in
+      LibraryIndexTest) echo "$HERE/patch/android/utils/LibraryIndex.kt" ;;
+      # The native launcher keeps its decisions in a presenter and its text in
+      # Manual, both plain Kotlin. A test that calls them should compile against
+      # them rather than against a hand-written copy of the same logic.
+      NativeLibraryPresenterTest) echo "$HERE/patch/android/utils/LibraryIndex.kt \
+        $HERE/patch/android/utils/NativeLibraryPresenter.kt \
+        $HERE/patch/android/utils/Manual.kt" ;;
+      # The hybrid decides which Eden setting reaches the second core, and
+      # which stays its own. Plain Kotlin, so it compiles against the real file.
+      EngineHybridTest) echo "$HERE/patch/android/utils/EngineHybrid.kt" ;;
+      # Палитра: цвет игры, читаемость текста, монограммы. Чистые функции —
+      # поэтому проверяются без Android.
+      SymbiosisThemeTest) echo "$HERE/patch/android/utils/SymbiosisTheme.kt" ;;
+      # Список папок с играми: после сбоя у пользователя осталась одна папка
+      # из четырёх. Правила восстановления проверяются без телефона.
+      GameFolderListTest) echo "$HERE/patch/android/utils/GameFolderList.kt" ;;
+      # Совместимость ядра с устройством: разбор ELF и auxv, вывод «подходит/
+      # не подходит» с причиной. Чистые функции над байтами.
+      DeviceCompatTest) echo "$HERE/patch/android/utils/DeviceCompat.kt" ;;
+      # Сводка по сейвам: дни, часы без сохранения, склонения. Ошибка здесь
+      # меняет решение «начинать заново или нет».
+      SavesOverviewTest) echo "$HERE/patch/android/utils/SavesOverview.kt" ;;
+      # WebDAV: разбор ответов сервера и сборка путей.
+      WebDavParseTest) echo "$HERE/patch/android/utils/WebDavParse.kt" ;;
+      # Журнал ядра: чтение хвоста файла и подсчёт ошибок. Чистый Kotlin без
+      # Android — поэтому проверяется на хосте; ошибка здесь означает
+      # OutOfMemory на телефоне или «ошибок: 0» при семи ошибках.
+      KernelLogTest) echo "$HERE/patch/android/utils/KernelLogFormat.kt" ;;
+      # Архив журнала: правила «что сохранить и что стереть», лимиты и
+      # подписи. Чистые функции — проверяются без телефона.
+      KernelLogArchiveTest) echo "$HERE/patch/android/utils/KernelLogArchive.kt" ;;
+      # Причины отказа конвертера: таблица «сообщение ядра → фраза для
+      # человека». Ошибка здесь означает, что вместо причины человек увидит
+      # «не удалось».
+      ConverterReasonsTest) echo "$HERE/patch/android/utils/ConverterReasons.kt" ;;
+      # Плагины: разбор JSON, проверка правил, порядок применения и пометки на
+      # плитках. Чистый Kotlin, поэтому проверяется целиком на хосте.
+      PluginEngineTest) echo "$HERE/patch/android/utils/PluginJson.kt \
+        $HERE/patch/android/utils/PluginApi.kt \
+        $HERE/patch/android/utils/PluginEngine.kt \
+        $HERE/patch/android/utils/BuiltinPlugins.kt \
+        $HERE/patch/android/utils/EngineHybrid.kt \
+        $HERE/patch/android/utils/NativeLibraryPresenter.kt \
+        $HERE/patch/android/utils/LibraryIndex.kt" ;;
+      # Торренты: bencode, разбор .torrent, арифметика кусков, рукопожатие и
+      # трекеры. Всё чистые функции над байтами — проверяются на хосте.
+      TorrentFormatTest) echo "$HERE/patch/android/utils/TorrentBencode.kt \
+        $HERE/patch/android/utils/TorrentMeta.kt \
+        $HERE/patch/android/utils/TorrentPlan.kt \
+        $HERE/patch/android/utils/TorrentWire.kt \
+        $HERE/patch/android/utils/TorrentTracker.kt \
+        $HERE/patch/android/utils/SourceIndex.kt" ;;
+      # Скачивание по-настоящему: локальный трекер и локальный пир на
+      # 127.0.0.1, настоящие сокеты. Log — заглушка из tests/host.
+      # Панель быстрых настроек: что применяется сразу, а что только после
+      # перезапуска игры. Ошибка здесь = «настройка включена, эффекта нет».
+      QuickPanelTest) echo "$HERE/patch/android/utils/QuickPanel.kt" ;;
+      # Формат по первым байтам: самый частый отказ конвертера — выбран не
+      # образ, а архив, и раньше это выяснялось через сорок минут.
+      RomSniffTest) echo "$HERE/patch/android/utils/RomSniff.kt" ;;
+      # Текст в шторке: при отказе причина должна быть первой строкой, а не
+      # заменяться путём к папке.
+      ConverterOutcomeTest) echo "$HERE/patch/android/utils/ConverterReasons.kt" ;;
+      # Разбор отчёта о падении второго ядра: файл пишет обработчик сигнала,
+      # читает обычный код после смерти процесса.
+      KenjiCrashTest) echo "$HERE/patch/android/utils/KenjiCrash.kt" ;;
+      # Дополнительные ключи: какая строка — ключ игры, что дописывать в
+      # prod.keys/title.keys, чего не перезаписывать. Ошибка здесь снова
+      # оставила бы «нет ключа для этой игры» без объяснения.
+      ExtraKeysTest) echo "$HERE/patch/android/utils/ExtraKeys.kt" ;;
+      # Ровность кадров: почему «60 → 15 → 45 → 5» и когда виноват звук, а не
+      # картинка. Чистая арифметика над рядами длительностей кадров.
+      FramePacingTest) echo "$HERE/patch/android/utils/FramePacing.kt" ;;
+      # Разбор снимка от нативной части: мусор и пустой ответ не должны
+      # ронять экран диагностики.
+      FrameMetricsTextTest) echo "$HERE/patch/android/utils/FrameMetricsText.kt \
+        $HERE/patch/android/utils/FramePacing.kt" ;;
+      TorrentDownloadTest) echo "$HERE/patch/android/utils/TorrentBencode.kt \
+        $HERE/patch/android/utils/TorrentMeta.kt \
+        $HERE/patch/android/utils/TorrentPlan.kt \
+        $HERE/patch/android/utils/TorrentWire.kt \
+        $HERE/patch/android/utils/TorrentTracker.kt \
+        $HERE/patch/android/utils/TorrentDownload.kt \
+        $HERE/tests/host/log_stub.kt" ;;
+      *)                echo "" ;;
+    esac
+  }
+
   for f in "$HERE"/tests/*.kt; do
     [ -e "$f" ] || continue
     n=$(basename "$f" .kt)
-    kotlinc "$f" -include-runtime -d "$BUILD/$n.jar" 2>/dev/null
+    # shellcheck disable=SC2046
+    if ! kotlinc "$f" $(kt_deps_for "$n") -include-runtime -d "$BUILD/$n.jar" \
+          > "$BUILD/$n.kerr" 2>&1; then
+      # A test that does not build used to be reported as "FAIL" with the
+      # reason thrown away (2>/dev/null), which then surfaced as the useless
+      # "Unable to access jarfile". Say what the compiler said instead.
+      why=$(grep -m1 -E "^.*error:" "$BUILD/$n.kerr" | head -1)
+      echo "  FAIL  $n — does not build"
+      echo "        ${why:-no compiler output}"
+      fail=$((fail+1)); failed="$failed $n"
+      continue
+    fi
     # Run from the repository root. A test that reads its own subject - as
     # PanelAssetsTest does, checking docs/ and the shell source against the
     # copy of the routing logic it asserts - resolves those paths relative to

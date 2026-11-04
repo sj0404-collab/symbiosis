@@ -65,6 +65,67 @@ class ToolsFragment : Fragment() {
         // the launch report and FPS tuning are what a struggling device calls
         // for, and burying them under the ROM tools helps nobody.
         val tools = mutableListOf<HomeSetting>().apply {
+            // Два ядра — первым: это не «ещё одна настройка», а второе ядро
+            // эмулятора. Раньше этот экран был доступен только со старого
+            // домашнего экрана, то есть после перевода библиотеки на нативную
+            // вёрстку до него было не добраться.
+            add(
+                HomeSetting(
+                    R.string.engine_choice,
+                    R.string.engine_choice_description,
+                    R.drawable.ic_verified,
+                    { nav(R.id.action_global_enginesFragment) }
+                )
+            )
+            // Плагины — сразу после ядер: это тот же класс инструмента
+            // «починить без пересборки», и искать его в конце списка никто
+            // не станет.
+            add(
+                HomeSetting(
+                    R.string.plugins_title,
+                    R.string.plugins_description,
+                    R.drawable.ic_verified,
+                    { nav(R.id.action_global_pluginsFragment) }
+                )
+            )
+            // Облако — рядом с папками игр: это тоже «где лежат данные»,
+            // но за пределами телефона.
+            add(
+                HomeSetting(
+                    R.string.cloud_title,
+                    R.string.cloud_description,
+                    R.drawable.ic_folder_open,
+                    { nav(R.id.action_global_cloudFragment) }
+                )
+            )
+            // Журнал ядра — рядом с диагностикой: это тот же вопрос «почему
+            // не работает», но про конкретный запуск, а не про устройство.
+            add(
+                HomeSetting(
+                    R.string.kernel_log_title,
+                    R.string.kernel_log_description,
+                    R.drawable.ic_verified,
+                    { nav(R.id.action_global_kernelLogFragment) }
+                )
+            )
+            // Источники — рядом с журналом: это тоже «откуда взять»,
+            // только не лог, а сами файлы: каталоги, прямые ссылки, торренты.
+            add(
+                HomeSetting(
+                    R.string.sources_title,
+                    R.string.sources_description,
+                    R.drawable.ic_folder_open,
+                    { nav(R.id.action_global_sourcesFragment) }
+                )
+            )
+            add(
+                HomeSetting(
+                    R.string.performance_title,
+                    R.string.performance_description,
+                    R.drawable.ic_speed,
+                    { nav(R.id.action_global_performanceFragment) }
+                )
+            )
             add(
                 HomeSetting(
                     R.string.fps_tuning,
@@ -129,13 +190,30 @@ class ToolsFragment : Fragment() {
                     { nav(R.id.action_global_guideFragment) }
                 )
             )
+            // Руководство стоит выше панели и выше справочника настроек:
+            // это единственный экран, который объясняет порядок действий
+            // целиком, а не одно понятие.
+            add(
+                HomeSetting(
+                    R.string.settings_manual,
+                    R.string.settings_manual_description,
+                    R.drawable.ic_info_outline,
+                    { nav(R.id.action_global_manualFragment) }
+                )
+            )
             // Панель, содержимое которой обновляется без пересборки APK:
             // страница живёт на GitHub Pages, данные читает локально через
             // мост. Правка вёрстки видна сразу, скачивать 25 МБ не нужно.
+            //
+            // Названа «расширенной» не для красоты: после перевода
+            // библиотеки на нативную вёрстку всё, что нужно каждый день,
+            // есть на стартовом экране, а здесь остались редкие вещи -
+            // пространства, выбор ядра, тонкие переключатели. Пусть это
+            // будет видно из названия, а не выясняется опытным путём.
             add(
                 HomeSetting(
-                    R.string.live_panel,
-                    R.string.live_panel_description,
+                    R.string.live_panel_extended,
+                    R.string.live_panel_extended_description,
                     R.drawable.ic_info_outline,
                     { nav(R.id.action_global_livePanelFragment) }
                 )

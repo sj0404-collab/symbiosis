@@ -1445,8 +1445,93 @@
     <string name="status_storage_manual">Откройте: Настройки → Приложения → Специальный доступ → Доступ ко всем файлам</string>
     <string name="folder_launch_failed">Не удалось открыть файл игры</string>
     <string name="folder_launch_unreadable">Файл не читается — проверь ключи и прошивку</string>
-    <string name="engine_choice">Движок эмуляции</string>
-    <string name="engine_choice_description">Eden или Kenji-NX. Игра, которая не идёт на одном, иногда идёт на другом.</string>
+    
+    
     <string name="live_panel">Панель</string>
     <string name="live_panel_description">Состояние, папки и файлы. Обновляется сама, без переустановки</string>
+
+    <!-- Нативный лаунчер: стартовый экран библиотеки -->
+    <string name="launcher_title">Symbiosis</string>
+    <string name="launcher_subtitle">Библиотека игр</string>
+    <string name="launcher_rescan">Искать игры</string>
+    <string name="launcher_rescanning">Обход папок: список обновится сам</string>
+    <string name="launcher_action_folders">Папки</string>
+    <string name="launcher_action_convert">Конвертер</string>
+    <string name="launcher_action_keys">Ключи</string>
+    <string name="launcher_action_tools">Инструменты</string>
+    <string name="launcher_action_help">Руководство</string>
+    <string name="launcher_search_hint">Поиск: название, Title ID или имя файла</string>
+    <string name="launcher_filter_all">Все файлы</string>
+    <string name="launcher_filter_runnable">Запускается</string>
+    <string name="launcher_filter_dead">Не запускается</string>
+    <string name="launcher_convert_start">Выбрать файл</string>
+    <string name="launcher_convert_queued">В очереди конвертера: %1$d. Не закрывайте приложение, пока идёт распаковка.</string>
+    <string name="launcher_convert_failed">Не удалось поставить файл в очередь конвертера</string>
+    <string name="launcher_open_keys">Где ключи</string>
+    <string name="launcher_launch_failed">Игра не открылась. Причина — в «Инструменты» → «Диагностика».</string>
+    <string name="launcher_nav_failed">Экран не открылся: попробуйте ещё раз</string>
+    <string name="launcher_properties_failed">Свойства игры не открылись</string>
+
+    <!-- Руководство пользования -->
+    <string name="manual_title">Руководство</string>
+    <string name="manual_subtitle">Как пользоваться и где что лежит</string>
+    <string name="manual_search_hint">Поиск по руководству</string>
+    <string name="manual_search_empty_title">Ничего не нашлось</string>
+    <string name="manual_search_empty">Попробуйте одно слово: конвертер, ключи, папки, сейвы, сжатый.</string>
+    <string name="manual_nav_failed">Экран не открылся: попробуйте ещё раз</string>
+    <string name="settings_manual">Руководство пользования</string>
+    <string name="settings_manual_description">Пошагово: ключи, папки, запуск, что делать со сжатыми файлами</string>
+
+    <string name="live_panel_extended">Расширенная панель</string>
+    <string name="live_panel_extended_description">Всё редкое в одном месте: пространства, выбор ядра, тонкие переключатели</string>
+
+    <!-- Плагины: правки поведения без пересборки -->
+    <string name="plugins_title">Плагины</string>
+    <string name="plugins_description">Правила на случай, когда что-то работает плохо: другая настройка, другое ядро, пометка — без новой сборки</string>
+
+    <!-- Гибрид: два ядра в одном -->
+    <string name="engine_choice">Два ядра (гибрид)</string>
+    <string name="engine_choice_description">Eden и Kenji-NX в одном приложении: у каждого свои настройки, ядро выбирается на игру</string>
+    <string name="launcher_core_eden">Запустить на Eden</string>
+    <string name="launcher_core_kenji">Запустить на Kenji-NX</string>
+    <string name="launcher_properties">Свойства игры</string>
+    <string name="launcher_core_now">Сейчас эта игра запускается на: %1$s. Выбор запомнится за ней.</string>
+    <string name="launcher_core_kenji_missing">Второе ядро не скачано — запускаю на Eden. Скачать: «Инструменты» → «Два ядра»</string>
+    <string name="launcher_core_kenji_broken">Второе ядро непригодно (%1$s) — запускаю на Eden</string>
+    <string name="launcher_core_kenji_failed">Второе ядро не открылось — запускаю на Eden</string>
+
+
+    <!-- Папки с играми: добавление и удаление прямо с экрана -->
+    <string name="folders_add">Добавить папку</string>
+    <string name="folder_add_hint">Выберите глубину обхода — от неё зависит, увидит ли библиотека игры в подпапках.</string>
+    <string name="folder_add_failed">Не удалось открыть выбор папки</string>
+    <string name="folder_no_access_hint">К папке нет доступа. Выберите её снова — разрешение выдаётся заново.</string>
+    <string name="folder_rescan">Пересканировать</string>
+    <string name="folder_remove">Убрать из списка</string>
+    <string name="folder_remove_confirm">Игры останутся на месте — из списка приложения убирается только папка. Вернуть её можно кнопкой «Добавить папку».</string>
+    <string name="folder_remove_failed">Не удалось убрать папку</string>
+
+    <!-- Конвертер: уведомление, прогресс и место результата -->
+    <string name="converter_title">Распаковка</string>
+    <string name="converter_starting">подготовка…</string>
+    <string name="converter_stop">Остановить</string>
+    <string name="converter_stopped">Распаковка остановлена</string>
+    <string name="converter_done">Готово: %1$d</string>
+    <string name="converter_done_with_problems">Распаковка закончилась без результата</string>
+    <string name="converter_done_where">Файлы здесь: %1$s</string>
+    <string name="converter_channel_name">Распаковка игр</string>
+    <string name="converter_channel_description">Ход распаковки NSZ, XCZ и NCZ</string>
+    <string name="converter_where">Файлы попадают в %1$s</string>
+    <string name="converter_export">Сохранить в «Загрузки»</string>
+    <string name="exit_trace_title">Последние шаги перед выходом</string>
+    <!-- Облако: сейвы и образы -->
+    <string name="cloud_title">Облако</string>
+    <string name="cloud_description">Сейвы в облаке: Яндекс.Диск, Nextcloud, свой сервер</string>
+    <string name="launcher_saves_menu">Сейвы и прогресс</string>
+    <string name="kernel_log_title">Журнал ядра</string>
+    <string name="kernel_log_description">Что говорило ядро в этом и прошлом запуске. Копировать, отправить, очистить.</string>
+    <string name="sources_title">Источники</string>
+    <string name="sources_description">Ссылка на каталог, файл, торрент или magnet: показать файлы, скачать или смотреть по частям.</string>
+    <string name="performance_title">Ровность кадров</string>
+    <string name="performance_description">Почему прыгает картинка и почему рвётся звук: факты, причина, что менять.</string>
 </resources>

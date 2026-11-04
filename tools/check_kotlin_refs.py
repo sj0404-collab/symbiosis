@@ -16,6 +16,13 @@ WHAT IT CHECKS
     Kotlin or upstream Eden are ignored - we cannot see their sources here and
     guessing about them would produce noise instead of signal.
 
+    Second check, added after a build failed on it: a member used through one
+    of our objects - `KenjiBridge.crashReportFile(context)` - must exist on
+    that object. The compiler is the first thing to notice otherwise, and it
+    notices twenty-five minutes in. Only `object` members are checked, and only
+    names that appear nowhere as a declaration in the object's file, so
+    extension functions and inherited members cannot produce false alarms.
+
 Usage: python3 tools/check_kotlin_refs.py [--patch <dir>]
 """
 
@@ -45,6 +52,22 @@ def declared_types(files):
             if indent.strip() != "" or len(indent) > 0:
                 continue
             out.setdefault(name, pkg.group(1))
+    return out
+
+
+def object_members(files):
+    """Map of object name -> set of member names declared anywhere in its file."""
+    out = {}
+    for path in files:
+        text = path.read_text(encoding="utf-8")
+        for m in re.finditer(r"^object\s+(\w+)", text, re.M):
+            name = m.group(1)
+            # Members: fun, val, var, const, nested types, external funs.
+            members = set(re.findall(
+                r"\b(?:fun|val|var)\s+(?:<[^>]+>\s*)?(?:\w+\.)?(\w+)", text))
+            members |= set(re.findall(
+                r"\b(?:object|class|interface|enum class|data class)\s+(\w+)", text))
+            out.setdefault(name, set()).update(members)
     return out
 
 
@@ -97,6 +120,24 @@ def main() -> int:
             bare = re.search(rf"(?<![\w.]){name}\s*[.(<]", body)
             if bare:
                 print(f"{path.name}: uses {name} ({home}) without importing it")
+                problems += 1
+
+    # Second pass: members of our own objects that are used but not declared.
+    members = object_members(files)
+    for path in files:
+        text = path.read_text(encoding="utf-8")
+        body = re.sub(r"//[^\n]*", "", text)
+        body = re.sub(r"/\*.*?\*/", "", body, flags=re.S)
+        body = re.sub(r'"""(?:.|\n)*?"""', '""', body)
+        body = re.sub(r'"(?:[^"\\]|\\.)*"', '""', body)
+        for obj, known in members.items():
+            for used in set(re.findall(rf"(?<![\w.]){obj}\.(\w+)", body)):
+                if used in known:
+                    continue
+                # Not declared in that object's file at all: either a genuine
+                # missing member, or something this check cannot see. Report it
+                # with the file, so the fix is one grep away.
+                print(f"{path.name}: uses {obj}.{used} — no such member in {obj}")
                 problems += 1
 
     print(f"\nchecked {len(files)} Kotlin files, {problems} problem(s)")

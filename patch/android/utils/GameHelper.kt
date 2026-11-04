@@ -38,7 +38,76 @@ object GameHelper {
     var hasScanned = false
         private set
 
-    private lateinit var preferences: SharedPreferences
+    /**
+     * Настройки, доступные всегда.
+     *
+     * Было `lateinit var preferences` и присваивание только внутри
+     * getGames(). `getGame()` зовётся ещё и из добавления игры по одной
+     * файловой кнопкой - там lateinit бросал UninitializedPropertyAccess-
+     * Exception, и добавление падало целиком.
+     */
+    private val prefs: SharedPreferences
+        get() {
+            val cached = prefsCache
+            if (cached != null) return cached
+            val fresh = PreferenceManager.getDefaultSharedPreferences(YuzuApplication.appContext)
+            prefsCache = fresh
+            return fresh
+        }
+
+    @Volatile
+    private var prefsCache: SharedPreferences? = null
+
+    private var preferences: SharedPreferences
+        get() = prefs
+        set(value) {
+            prefsCache = value
+        }
+
+    /**
+     * Файлы, которые библиотека видит, но запустить не может.
+     *
+     * Ими и объясняется «из сотен файлов видна одна»: сжатый NSZ ядро не
+     * открывает, `getIsValid` возвращает false, и раньше запись просто не
+     * создавалась. Теперь она есть - с причиной словами, - и панель может
+     * предложить распаковку вместо пустого экрана.
+     */
+    data class Sidecar(
+        val name: String,
+        val path: String,
+        val title: String,
+        val reason: String,
+        val kind: String
+    )
+
+    @Volatile
+    var sidecar: List<Sidecar> = emptyList()
+        private set
+
+    /** Итог последнего обхода. Показывается строкой «что нашлось и почему». */
+    data class ScanStats(
+        var folders: Int = 0,
+        var files: Int = 0,
+        var games: Int = 0,
+        var updates: Int = 0,
+        var dlc: Int = 0,
+        var compressed: Int = 0,
+        var failed: Int = 0,
+        var millis: Long = 0
+    ) {
+        fun line(): String = buildString {
+            append("$games ${if (games == 1) "игра" else "игр"}")
+            if (updates > 0) append(" · $updates обновл.")
+            if (dlc > 0) append(" · $dlc DLC")
+            if (compressed > 0) append(" · $compressed сжатых")
+            if (failed > 0) append(" · $failed не прочитано")
+            append(" · $files файлов за ${millis} мс")
+        }
+    }
+
+    @Volatile
+    var scanStats: ScanStats = ScanStats()
+        private set
 
     /**
      * The last list the emulator managed to read, from memory or from disk.
@@ -48,6 +117,16 @@ object GameHelper {
      * turning into a full scan. Returns an empty list only when there has
      * never been a successful one.
      */
+    /**
+     * Игры из последнего обхода этого запуска.
+     *
+     * Отличается от [rememberedGames] тем, что не возвращает кэш из
+     * настроек: если обхода ещё не было, ответ пустой, и вызывающий сам
+     * решает, чем его заменить. Нужен панели, чтобы она показывала тот же
+     * список, что и нативный лаунчер, а не устаревшую копию.
+     */
+    fun currentGames(): List<Game> = if (hasScanned) cachedGameList.toList() else emptyList()
+
     fun rememberedGames(): List<Game> {
         val live = runCatching { cachedGameList }.getOrDefault(emptyList())
         if (live.isNotEmpty()) return live
@@ -95,15 +174,27 @@ object GameHelper {
         }
         gameDirs.addAll(NativeConfig.getGameDirs())
 
-        // Слои: родитель + его ребёнок в одном списке. Оставляем только
-        // более узкую папку, иначе обход идёт по одному дереву дважды и
-        // заходит в nand/load/cache корня данных.
-        val collapsed = GameFolderScanner.collapseLayers(gameDirs.map { it.uriString }).toSet()
-        if (collapsed.size != gameDirs.size) {
-            val kept = gameDirs.filter { it.uriString in collapsed }
-            gameDirs.clear()
-            gameDirs.addAll(kept)
-            runCatching { NativeConfig.setGameDirs(gameDirs.toTypedArray()) }
+        // Папки, которые пропали из конфига, возвращаются из зеркала.
+        //
+        // Здесь раньше стояло схлопывание «слоёв»: если одна папка была
+        // вложена в другую, родительская удалялась из конфига. Для списка
+        // папок это необратимо и неверно: игры, лежавшие в корне родителя,
+        // оставались без папки, а пользователь видел, что «папки сами
+        // почистились». Вложенность теперь учитывается только на время
+        // обхода (GameFolderList.coveredByParent), конфиг не переписывается.
+        //
+        // Второй источник потерь — недописанный конфиг после сбоя: на диске
+        // остаётся одна первая папка. Зеркало (GameFoldersStore) хранит их
+        // отдельно и здесь же возвращает недостающие.
+        runCatching {
+            val known = gameDirs.map { GameFolderList.Entry(it.uriString, it.deepScan) }
+            val lost = GameFoldersStore.missing(known)
+            if (lost.isNotEmpty()) {
+                lost.forEach { gameDirs.add(GameDir(it.uri, it.deepScan)) }
+                NativeConfig.setGameDirs(gameDirs.toTypedArray())
+                GameFoldersStore.save(gameDirs.map { GameFolderList.Entry(it.uriString, it.deepScan) })
+                Log.info("[Folders] возвращено из зеркала: ${lost.size}")
+            }
         }
 
         // Без ключей заголовок ROM не расшифруется: getIsValid врёт или
@@ -141,6 +232,10 @@ object GameHelper {
         val mountedContainerUris = mutableSetOf<String>()
         mountExternalContentDirectories(mountedContainerUris)
 
+        val stats = ScanStats()
+        val startedAt = System.currentTimeMillis()
+        val side = mutableListOf<Sidecar>()
+
         val badDirs = mutableListOf<Int>()
         gameDirs.forEachIndexed { index: Int, gameDir: GameDir ->
             val gameDirUri = gameDir.uriString.toUri()
@@ -158,26 +253,52 @@ object GameHelper {
                     games,
                     FileUtil.listFiles(gameDirUri),
                     scanDepth,
-                    mountedContainerUris
+                    mountedContainerUris,
+                    side,
+                    stats
                 )
             } else {
                 badDirs.add(index)
             }
         }
 
-        // Remove all game dirs with insufficient permissions from config
-        if (badDirs.isNotEmpty()) {
-            var offset = 0
-            badDirs.forEach {
-                gameDirs.removeAt(it - offset)
-                offset++
-            }
+        // Папки без доступа НЕ удаляются из конфига.
+        //
+        // Здесь стояло удаление: `gameDirs.removeAt(...)` и запись укороченного
+        // списка. Один обход при отозванном разрешении — и папка исчезала
+        // навсегда, вместе со всеми играми, которые в ней были. Разрешение
+        // отзывается не только пользователем: система делает это сама, если
+        // процесс упал, а приложение настроек «почистило» права. Именно так
+        // выглядит «после падения осталась одна папка» — и восстановить
+        // остальные без этого исправления нельзя даже вручную, потому что
+        // путь уже нигде не записан.
+        //
+        // Теперь папка остаётся в списке и помечается «нет доступа», а
+        // вернуть её можно одним нажатием на том же экране.
+        val blocked = badDirs.map { gameDirs[it].uriString }
+        GameFoldersStore.markNoAccess(blocked)
+        if (blocked.isNotEmpty()) {
+            Log.warning("[Folders] нет доступа: ${blocked.size} из ${gameDirs.size}")
         }
-        NativeConfig.setGameDirs(gameDirs.toTypedArray())
+        GameFoldersStore.keep(gameDirs.map { GameFolderList.Entry(it.uriString, it.deepScan) })
+
+        // Одна и та же игра может быть найдена дважды — если пользователь
+        // добавил и родительскую папку, и вложенную.
+        //
+        // Отсекать по `path` было недостаточно: путь — это весь URI, а он
+        // отличается частью `/tree/…` у каждой папки, через которую файл
+        // нашли. Родитель даёт
+        //   …/tree/primary%3AGames/document/primary%3AGames%2FА%2Fигра.nsp
+        // а сама вложенная папка —
+        //   …/tree/primary%3AGames%2FА/document/primary%3AGames%2FА%2Fигра.nsp
+        // Две строки, один файл, две плитки. Поэтому ключ берётся по
+        // идентификатору документа (GameFolderList.fileKey).
+        val seenFiles = HashSet<String>()
+        val unique = games.filter { seenFiles.add(GameFolderList.fileKey(it.path)) }
 
         // Cache list of games found on disk
         val serializedGames = mutableSetOf<String>()
-        games.forEach {
+        unique.forEach {
             serializedGames.add(Json.encodeToString(it))
         }
         preferences.edit() {
@@ -185,9 +306,13 @@ object GameHelper {
                 .putStringSet(KEY_GAMES, serializedGames)
         }
 
-        cachedGameList = games.toMutableList()
+        cachedGameList = unique.toMutableList()
+        sidecar = side.toList()
+        stats.folders = gameDirs.size
+        stats.millis = System.currentTimeMillis() - startedAt
+        scanStats = stats
         hasScanned = true
-        return games.toList()
+        return unique
     }
 
     fun restoreContentForGame(game: Game) {
@@ -232,7 +357,9 @@ object GameHelper {
         games: MutableList<Game>,
         files: Array<MinimalDocumentFile>,
         depth: Int,
-        mountedContainerUris: MutableSet<String>
+        mountedContainerUris: MutableSet<String>,
+        side: MutableList<Sidecar>,
+        stats: ScanStats
     ) {
         if (depth <= 0) {
             return
@@ -251,27 +378,76 @@ object GameHelper {
                         games,
                         FileUtil.listFiles(it.uri),
                         depth - 1,
-                        mountedContainerUris
+                        mountedContainerUris,
+                        side,
+                        stats
                     )
                 }
             } else {
                 val extension = FileUtil.getExtension(it.uri).lowercase()
                 val filePath = it.uri.toString()
+                val filename = FileUtil.getFilename(it.uri)
+                stats.files++
 
                 if (externalContentExtensions.contains(extension) &&
                     mountedContainerUris.add(filePath)) {
                     NativeLibrary.addGameFolderFileToFilesystemProvider(filePath)
                 }
 
-                // Game.extensions — урезанный список. Ядро открывает
-                // ещё nso/kip и файлы main/00 (loader.cpp).
-                val filename = FileUtil.getFilename(it.uri)
-                if (Game.extensions.contains(extension) || GameFormats.isLaunchable(filename)) {
-                    val game = getGame(it.uri, true, false)
-                    if (game != null) {
-                        games.add(game)
-                    }
+                // Одно правило видимости на всех: GameFormats и LibraryIndex.
+                //
+                // Здесь стояло `Game.extensions.contains(extension) ||
+                // GameFormats.isLaunchable(filename)` - и nsz/xcz/ncz,
+                // которых в папке большинство, не попадали ни в список, ни
+                // в отчёт. Пользователь видел единственный nsp, который
+                // случайно оказался рядом.
+                if (!LibraryIndex.isWanted(filename)) {
+                    return@forEach
                 }
+
+                val entry = LibraryIndex.classify(filename)
+                val base = LibraryIndex.titleFrom(filename).ifBlank { filename }
+
+                when (entry.kind) {
+                    LibraryIndex.Kind.COMPRESSED -> {
+                        stats.compressed++
+                        side.add(
+                            Sidecar(filename, filePath, base, entry.reason, "compressed")
+                        )
+                        return@forEach
+                    }
+                    LibraryIndex.Kind.SPLIT_PART -> {
+                        side.add(
+                            Sidecar(filename, filePath, base, entry.reason, "split")
+                        )
+                        return@forEach
+                    }
+                    LibraryIndex.Kind.OTHER -> return@forEach
+                    else -> Unit
+                }
+
+                // getGame() разбирает заголовок через native. Один битый файл
+                // ронял весь обход (исключение из getIsValid/getProgramId
+                // шло наверх, а обход - в корутине, которая не ловила), и
+                // библиотека оставалась той частью, что успела прочитаться.
+                val game = runCatching { getGame(it.uri, true, false) }.getOrNull()
+                if (game == null) {
+                    stats.failed++
+                    side.add(
+                        Sidecar(
+                            filename, filePath, base,
+                            "ядро не прочитало заголовок · проверьте ключи или распакуйте файл",
+                            "unreadable"
+                        )
+                    )
+                    return@forEach
+                }
+                when (entry.kind) {
+                    LibraryIndex.Kind.UPDATE -> stats.updates++
+                    LibraryIndex.Kind.DLC -> stats.dlc++
+                    else -> stats.games++
+                }
+                games.add(game)
             }
         }
     }
@@ -362,11 +538,18 @@ object GameHelper {
         if (name.isEmpty()) {
             name = FileUtil.getFilename(uri)
         }
-        var programId = GameMetadata.getProgramId(filePath)
+        var programId = runCatching { GameMetadata.getProgramId(filePath) }.getOrDefault("")
 
-        // If the game's ID field is empty, use the filename without extension.
+        // Имя файла без расширения, но без `substring(0, -1)`.
+        //
+        // Здесь стояло `name.substring(0, name.lastIndexOf("."))`. У файла
+        // без точки - а `main` из распакованного дампа именно такой -
+        // lastIndexOf возвращает -1, и substring(0, -1) бросает
+        // StringIndexOutOfBoundsException прямо в середине обхода: список
+        // обрывался на том файле, до которого дошёл. Это и есть «видит
+        // одну игру», если «main» лежал рядом.
         if (programId.isEmpty()) {
-            programId = name.substring(0, name.lastIndexOf("."))
+            programId = name.substringBeforeLast('.', name).ifBlank { name }
         }
 
         val newGame = Game(
@@ -379,9 +562,9 @@ object GameHelper {
         )
 
         if (addedToLibrary) {
-            val addedTime = preferences.getLong(newGame.keyAddedToLibraryTime, 0L)
+            val addedTime = prefs.getLong(newGame.keyAddedToLibraryTime, 0L)
             if (addedTime == 0L) {
-                preferences.edit()
+                prefs.edit()
                     .putLong(newGame.keyAddedToLibraryTime, System.currentTimeMillis())
                     .apply()
             }

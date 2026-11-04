@@ -61,6 +61,12 @@ object KenjiBridge {
     // Empty string means success everywhere below - a null return from JNI
     // would be indistinguishable from a failed call.
     private external fun nativeLoad(path: String): String
+
+    /** Включить отчёт о падении в файл (обработчики сигналов ставит C++). */
+    private external fun nativeSetCrashLog(path: String)
+
+    /** Отметить шаг, чтобы падение можно было к нему привязать. */
+    private external fun nativeSetStep(step: String)
     private external fun nativeInitialize(dataPath: String): String
     private external fun nativeSymbolCount(): Int
     private external fun nativeIsLoaded(): Boolean
@@ -99,6 +105,124 @@ object KenjiBridge {
     private external fun nativeRunLoop(): String
     private external fun nativePlayStop()
     private external fun nativeWindowOf(surface: android.view.Surface): Long
+
+    /** Каталог данных второго ядра — тот, что передаётся ядру при инициализации. */
+    fun dataDir(context: Context): File =
+        File(context.getExternalFilesDir(null), "kenji")
+
+    /**
+     * Собственный журнал ядра: каталог «Logs» с файлами вида `Ryujinx_*.log`.
+     *
+     * ЗАЧЕМ. Инициализация ядра возвращает отказ, а своего текста об ошибке не
+     * печатает ни в stdout, ни в stderr — .NET-ядро ловит исключение и уходит в
+     * собственный журнал. Там его же слова: какой путь принят, что создано, на
+     * чём остановилось. Это единственный источник причины, который не надо
+     * угадывать по адресам в памяти.
+     */
+    fun coreLogDir(context: Context): File = File(dataDir(context), "Logs")
+
+    /** Самый свежий файл журнала ядра, если он есть. */
+    fun coreLogFile(context: Context): File? = runCatching {
+        coreLogDir(context).listFiles()
+            ?.filter { it.isFile && it.name.endsWith(".log") }
+            ?.maxByOrNull { it.lastModified() }
+    }.getOrNull()
+
+    /**
+     * Каталоги, которые ядро заводит себе само при инициализации.
+     *
+     * ЗАЧЕМ ГОТОВИТЬ ИХ ЗАРАНЕЕ. Ядро создаёт `Logs`, `Games`, `Profiles`,
+     * `Keys` первым делом. Если создание журнала не удалось, оно возвращает
+     * пустой поток, а тот, кто его принимает, падает на null — и инициализация
+     * молча отвечает отказом, не записав ни строки. Именно так выглядит наш
+     * случай: отказ есть, причины нет. Поэтому каталоги создаём сами, до
+     * запуска ядра: тогда отказ будет означать что-то другое, а не отсутствие
+     * каталога.
+     *
+     * @return пары «имя каталога — получилось ли»
+     */
+    fun ensureCoreDirs(context: Context): List<Pair<String, Boolean>> =
+        listOf("Logs", "Games", "Profiles", "Keys").map { name ->
+            val dir = File(dataDir(context), name)
+            val ok = runCatching { if (dir.isDirectory) true else dir.mkdirs() && dir.isDirectory }
+                .getOrDefault(false)
+            name to ok
+        }
+
+    /**
+     * Проверка, что в каталог журнала действительно можно писать.
+     *
+     * Права «на бумаге» и права на деле на внешнем томе расходятся: каталог
+     * создан, а файл в нём не заводится. Ядро об этом молчит, поэтому
+     * проверяем сами — пробным файлом.
+     */
+    fun canWriteCoreLog(context: Context): Boolean = runCatching {
+        val dir = coreLogDir(context)
+        if (!dir.isDirectory) false
+        else {
+            val probe = File(dir, ".write-check")
+            probe.writeText("ok")
+            probe.delete()
+        }
+    }.getOrDefault(false)
+
+    /**
+     * Файл отчёта о падении — рядом с данными второго ядра.
+     *
+     * Путь живёт здесь, а не в [KenjiCrash]: разбор отчёта проверяется тестом
+     * на хосте, и ему нельзя тянуть за собой android.content.Context.
+     */
+    fun crashReportFile(context: Context): File =
+        File(File(context.getExternalFilesDir(null), "kenji"), "kenji-crash.txt")
+
+    /**
+     * Файл, в который мост перенаправляет stdout и stderr процесса `:kenji`.
+     *
+     * Именно там .NET-ядро печатает необработанное исключение перед abort().
+     * Имя обязано совпадать с тем, что строит `ArmStdioCapture` в C++:
+     * `kenji-stdout.txt` рядом с отчётом о падении.
+     */
+    fun stdioFile(context: Context): File =
+        File(crashReportFile(context).parentFile, "kenji-stdout.txt")
+
+    /**
+     * Файл, в который процесс `:kenji` записывает свой PID перед запуском ядра.
+     *
+     * ЗАЧЕМ ЦЕЛЫЙ ФАЙЛ РАДИ ЧИСЛА. Отчёт собирается в ОСНОВНОМ процессе:
+     * служба к этому моменту уже мертва, и спросить её нечего. Раньше отчёт
+     * брал `Process.myPid()` у себя — то есть PID лаунчера, — и фильтр журнала
+     * по этому номеру не находил ни одной строки ядра. В отчёте появлялось
+     * «строки своего PID 8674 система не отдала», хотя падал совсем другой
+     * процесс. PID падающего процесса нужно записать до падения.
+     */
+    fun pidFile(context: Context): File =
+        File(crashReportFile(context).parentFile, "kenji-pid.txt")
+
+    /**
+     * Файл, в который мост записывает JNI-вызовы ядра.
+     *
+     * ЗАЧЕМ. Ядро умирало молча, и вопрос был не в том, что оно ответило, а в
+     * том, ЧТО ОНО СПРОСИЛО у Java и что ему ответили. Обычный виновник —
+     * FindClass, вернувший null: класса нет в приложении, а ядро на null не
+     * проверяет и падает внутри. Имя обязано совпадать с тем, что строит
+     * `TapSetLogPath` в C++: `kenji-jni.txt` рядом с отчётом о падении.
+     */
+    fun jniLogFile(context: Context): File =
+        File(crashReportFile(context).parentFile, "kenji-jni.txt")
+
+    /**
+     * Начать новый отчёт о падении.
+     *
+     * Старый стирается: файл переживает смерть процесса, и без стирания
+     * вчерашнее падение выдавалось бы за сегодняшнее. Вызывается в процессе
+     * `:kenji` перед первым касанием ядра.
+     */
+    fun armCrashReport(context: Context) {
+        ensureBridge()?.let { return }
+        val file = crashReportFile(context)
+        runCatching { file.parentFile?.mkdirs() }
+        runCatching { nativeSetCrashLog(file.absolutePath) }
+    }
 
     data class Status(
         val ok: Boolean,
@@ -157,10 +281,14 @@ object KenjiBridge {
         // Kenji keeps its system files under its own directory, kept separate
         // from Eden's so neither can corrupt the other's state. Games, keys
         // and firmware are shared; internal caches are not.
-        val dataDir = File(context.getExternalFilesDir(null), "kenji").apply { mkdirs() }
+        val coreDir = dataDir(context).apply { mkdirs() }
+        // Ядро заводит эти каталоги само, но при неудаче молча отвечает
+        // отказом. Готовим заранее — см. ensureCoreDirs.
+        ensureCoreDirs(context)
 
+        if (bridgeLoaded) runCatching { nativeSetStep("javaInitialize") }
         val err = try {
-            nativeInitialize(dataDir.absolutePath)
+            nativeInitialize(coreDir.absolutePath)
         } catch (e: Throwable) {
             return Status(false, "мост упал при инициализации: ${e.message ?: e.javaClass.simpleName}")
         }
@@ -195,43 +323,79 @@ object KenjiBridge {
         }
     }
 
-    /** Prepare device + graphics. Surface and ROM come next. */
-    fun preparePlay(context: Context): Status {
+    /**
+     * Prepare device + graphics. Surface and ROM come next.
+     *
+     * ЗДЕСЬ БЫЛО ВПИСАНО ЧИСЛАМИ. Настройки второго ядра не влияли ни на что:
+     * `memoryManagerMode = 2`, `useNce = false`, `resScale = 1f` и остальные
+     * значения стояли прямо в коде, а экран ядер показывал переключатели,
+     * которые никуда не доезжали. Из-за этого «два ядра в одном» работали
+     * как два разных приложения: настроил масштаб у Eden — Kenji рисует по
+     * своему.
+     *
+     * Теперь аргументы приходят из [EngineStore.config]: свои значения
+     * второго ядра плюс всё, что не тронуто, взятое у Eden.
+     * `EngineHybrid.seed/merge` решает, что откуда, и это проверяется на
+     * хосте, а не на телефоне.
+     */
+    fun preparePlay(context: Context, effective: String = ""): Status {
         seedKeys(context)
         val started = start(context)
         if (!started.ok) return started
-        // Same knobs as official Kenji on this phone: 4 GiB, Host Unchecked,
-        // NCE off, PPTC on, integrity off.
+
+        // Настройки приходят строкой из главного процесса: SharedPreferences
+        // между процессами не синхронизируются, и :kenji увидел бы свою
+        // копию файла. Пустая строка — читаем локально (проверка ядра).
+        val cfg = if (effective.isBlank()) {
+            EngineStore.config(context)
+        } else {
+            EngineStore.configWith(context, EngineHybrid.decode(effective))
+        }
+
         nativeDeviceInit(
-            memoryManagerMode = 2,
-            useNce = false,
-            memoryConfiguration = 0,
-            systemLanguage = 1,
-            regionCode = 1,
-            vSyncMode = 0,
-            enableDockedMode = false,
-            enablePtc = true,
-            enableLowPowerPtc = false,
-            enableJitCacheEviction = false,
-            enableInternetAccess = false,
-            enableFsIntegrityChecks = false,
-            fsGlobalAccessLogMode = 0,
-            timeZone = "UTC",
-            ignoreMissingServices = false
+            memoryManagerMode = cfg.memoryManagerMode,
+            useNce = cfg.useNce,
+            memoryConfiguration = cfg.memoryConfiguration,
+            systemLanguage = cfg.systemLanguage,
+            regionCode = cfg.regionCode,
+            vSyncMode = cfg.vSyncMode,
+            enableDockedMode = cfg.enableDockedMode,
+            enablePtc = cfg.enablePtc,
+            enableLowPowerPtc = cfg.enableLowPowerPtc,
+            enableJitCacheEviction = cfg.enableJitCacheEviction,
+            enableInternetAccess = cfg.enableInternetAccess,
+            enableFsIntegrityChecks = cfg.enableFsIntegrityChecks,
+            fsGlobalAccessLogMode = cfg.fsGlobalAccessLogMode,
+            timeZone = cfg.timeZone,
+            ignoreMissingServices = cfg.ignoreMissingServices
         ).takeIf { it.isNotEmpty() }?.let { return Status(false, it, started.symbols) }
+
         nativeGraphicsInit(
-            resScale = 1f,
-            maxAnisotropy = 0f,
-            fastGpuTime = true,
-            fast2DCopy = true,
-            enableMacroJit = false,
-            enableMacroHLE = true,
-            enableShaderCache = true,
-            enableTextureRecompression = false,
-            backendThreading = 1
+            resScale = cfg.resScale,
+            maxAnisotropy = cfg.maxAnisotropy,
+            fastGpuTime = cfg.fastGpuTime,
+            fast2DCopy = cfg.fast2DCopy,
+            enableMacroJit = cfg.enableMacroJit,
+            enableMacroHLE = cfg.enableMacroHLE,
+            enableShaderCache = cfg.enableShaderCache,
+            enableTextureRecompression = cfg.enableTextureRecompression,
+            backendThreading = cfg.backendThreading
         ).takeIf { it.isNotEmpty() }?.let { return Status(false, it, started.symbols) }
-        return Status(true, "плеер второго ядра готов", started.symbols)
+
+        lastConfig = EngineHybrid.summary(cfg)
+        return Status(true, "плеер второго ядра готов · " + lastConfig, started.symbols)
     }
+
+    /**
+     * С какими настройками стартовал плеер.
+     *
+     * Показывается в статусе [org.yuzu.yuzu_emu.activities.KenjiPlayerActivity]
+     * и в отчёте: «ядро запустилось» без указания настроек ничего не
+     * доказывает, а именно их раньше и не было.
+     */
+    @Volatile
+    var lastConfig: String = ""
+        private set
 
     fun attachSurface(surface: android.view.Surface, width: Int, height: Int): Status {
         ensureBridge()?.let { return Status(false, it) }

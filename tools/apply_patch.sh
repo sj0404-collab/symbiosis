@@ -53,22 +53,57 @@ echo "eden : $E"
 
 cd "$E"
 
-# --3way needs history, hence the depth-50 clone; the icon is excluded because
-# a binary delete cannot be applied without a full index line.
-# Capture the outcome rather than swallowing it. A shallow clone makes --3way
-# fall back to direct application, which drops files and still exits 0 - the
-# build then succeeds against a half-applied patch, which is worse than failing.
-apply_log=$(git apply --3way --exclude='*ic_launcher_foreground.png' \
-  "$P/upstream_changes.patch" 2>&1 || true)
-printf '%s\n' "$apply_log" | grep -v cleanly || true
+# --3way needs history to fall back to a merge when a hunk's context has
+# drifted; the icon is excluded because a binary delete cannot be applied
+# without a full index line.
+#
+# A "lacks the necessary blob" line is NOT fatal on its own. git only says it
+# cannot 3-way merge that one file and applies it directly instead - which is
+# exactly what happens to the files this project patches twice (a second diff
+# block appended later carries no index line). Treating that message as a hard
+# error failed the build on a patch that applied perfectly.
+#
+# What must stay fatal is a half-applied tree, so the real check is the reverse
+# one below: if every hunk is in the tree, git can undo the whole patch against
+# it. A dropped file or a skipped hunk cannot be reversed and is caught there.
+# The check has to run HERE, before the copy steps start overwriting files the
+# patch itself touched.
+# Headers that disagree with their bodies fail later with "corrupt patch at
+# line N", where N is the end of the hunk rather than the mistake. Check first.
+if command -v python3 >/dev/null 2>&1; then
+  python3 "$SELF_DIR/check_patch_hunks.py" "$P/upstream_changes.patch" >/dev/null || {
+    echo "ERROR: hunk headers in upstream_changes.patch disagree with their bodies:" >&2
+    python3 "$SELF_DIR/check_patch_hunks.py" "$P/upstream_changes.patch" >&2
+    exit 1
+  }
+fi
 
-if printf '%s' "$apply_log" | grep -q "lacks the necessary blob"; then
-  echo "ERROR: shallow checkout. git apply --3way needs full history:" >&2
-  echo "  git clone --branch <tag> https://git.eden-emu.dev/eden-emu/eden.git" >&2
+# A diff line of exactly "++" adds a line whose text is "+". That is never
+# meant: it is what an empty added line turns into when it is written by a
+# script. The result parses as garbage in C++ (settings.h:519 cost a full
+# build round trip) and no compiler sees it until the whole patch has landed.
+if grep -n '^++$' "$P/upstream_changes.patch" | head -5 | grep -q .; then
+  echo "ERROR: upstream_changes.patch has a line '++' (a literal plus instead of a blank line):" >&2
+  grep -n '^++$' "$P/upstream_changes.patch" | head -5 >&2
   exit 1
 fi
-if printf '%s' "$apply_log" | grep -q "patch does not apply"; then
-  echo "ERROR: the patch does not apply to this checkout." >&2
+
+apply_log=$(git apply --3way --exclude='*ic_launcher_foreground.png' \
+  "$P/upstream_changes.patch" 2>&1 || true)
+printf '%s\n' "$apply_log" | grep -v cleanly | grep -v "lacks the necessary blob" \
+  | grep -v "Falling back to direct application" || true
+if printf '%s' "$apply_log" | grep -q "lacks the necessary blob"; then
+  echo "  note: some files applied without a 3-way merge (no preimage blob);"
+  echo "        the reverse check below decides whether that was harmless."
+fi
+
+if git apply --reverse --check --exclude='*ic_launcher_foreground.png' \
+     "$P/upstream_changes.patch" >/dev/null 2>&1; then
+  echo "  ok   every hunk of upstream_changes.patch is in the tree"
+else
+  echo "ERROR: the patch did not apply in full - a file or hunk was dropped:" >&2
+  printf '%s\n' "$apply_log" | tail -20 | sed 's/^/        /' >&2
+  echo "  (a shallow checkout is the usual cause: clone with full history)" >&2
   exit 1
 fi
 if git status --porcelain | grep -qE '^(UU|AA)'; then
@@ -76,6 +111,7 @@ if git status --porcelain | grep -qE '^(UU|AA)'; then
   git status --porcelain | grep -E '^(UU|AA)' >&2
   exit 1
 fi
+
 rm -f "$A/res/drawable/ic_launcher_foreground.png"
 
 # C++ layer
@@ -84,6 +120,22 @@ cp "$P"/symbiosis/*.cpp "$P"/symbiosis/*.h "$E/src/common/symbiosis/"
 
 # Shader
 cp "$P"/shaders/present_retro.frag "$E/src/video_core/host_shaders/"
+
+# OpenSSL для .NET-ядра.
+#
+# Ядро — NativeAOT, и его криптография (.NET System.Security.Cryptography)
+# ищет libssl при первом же обращении. Находит список имён: libssl.so.3,
+# .so.1.1, .so.1.0.2, .so.1.0.0, .so.10 и, последним, просто libssl.so.
+# В Android таких библиотек нет, а в Eden своих не было: сборка падала с
+# «No usable version of libssl was found» и abort(). Оригинальное приложение
+# Kenji кладёт обе рядом с собой — делаем так же.
+#
+# libssl NEEDs libcrypto по имени, поэтому копируются обе и с теми именами,
+# которые ждёт загрузчик.
+mkdir -p "$A/jniLibs/arm64-v8a"
+cp "$P"/libs/arm64-v8a/libssl.so "$A/jniLibs/arm64-v8a/"
+cp "$P"/libs/arm64-v8a/libcrypto.so "$A/jniLibs/arm64-v8a/"
+echo "OpenSSL для ядра: $(ls "$A/jniLibs/arm64-v8a" | tr '\n' ' ')"
 
 # JNI bridge
 cp "$P"/native_symbiosis.cpp "$A/jni/"
@@ -118,11 +170,18 @@ if ! grep -q "symbiosis_kenji" "$CM"; then
   cat >> "$CM" <<'CMAKE'
 
 # ── Kenji-NX bridge ────────────────────────────────────────────────
-add_library(symbiosis_kenji SHARED symbiosis_kenji_bridge.cpp)
+# got_patch.cpp компилируется в каждый мост отдельно: эти цели не линкуются с
+# common, и первая попытка взять функцию оттуда дала на сборке 41516674210
+#   ld.lld: error: undefined symbol: Symbiosis::PatchImport(void const*, char const*, void*)
+add_library(symbiosis_kenji SHARED symbiosis_kenji_bridge.cpp
+    ../../../../../common/symbiosis/got_patch.cpp)
+target_include_directories(symbiosis_kenji PRIVATE ../../../../..)
 target_link_libraries(symbiosis_kenji PRIVATE log dl android)
 
 # The name the core itself looks for.
-add_library(kenjinxjni SHARED symbiosis_kenji_bridge.cpp)
+add_library(kenjinxjni SHARED symbiosis_kenji_bridge.cpp
+    ../../../../../common/symbiosis/got_patch.cpp)
+target_include_directories(kenjinxjni PRIVATE ../../../../..)
 target_link_libraries(kenjinxjni PRIVATE log dl android)
 CMAKE
   echo "  added the Kenji bridge to jni/CMakeLists.txt"
@@ -238,6 +297,51 @@ else:
     print('  ::warning:: KenjiProbeService missing; player activity not added')
 PYKENJI
 
+# Плеер «по частям» и сетевая политика для него.
+#
+# Активность обычная (не :kenji): она показывает видео и не грузит чужой
+# код. Политика сети добавляется атрибутом к <application> — без него
+# локальный поток на 127.0.0.1 на Android 9+ не открывается вовсе.
+python3 - "$MANIFEST" <<'PYPLAYER'
+import re
+import sys
+
+path = sys.argv[1]
+text = open(path, encoding='utf-8').read()
+changed = False
+
+if 'SourcePlayerActivity' not in text:
+    activity = """
+        <activity
+            android:name="org.yuzu.yuzu_emu.activities.SourcePlayerActivity"
+            android:exported="false"
+            android:theme="@android:style/Theme.Black.NoTitleBar.Fullscreen"
+            android:configChanges="orientation|screenSize|keyboardHidden|screenLayout"
+            android:launchMode="singleTask" />
+"""
+    marker = '</application>'
+    if marker in text:
+        text = text.replace(marker, activity + '    ' + marker, 1)
+        print('  declared SourcePlayerActivity')
+        changed = True
+    else:
+        print('  ::warning:: no </application>; player activity not added')
+
+if 'networkSecurityConfig' not in text:
+    match = re.search(r'<application\b', text)
+    if match:
+        text = (text[:match.end()] +
+                '\n        android:networkSecurityConfig="@xml/network_security_config"' +
+                text[match.end():])
+        print('  linked res/xml/network_security_config to <application>')
+        changed = True
+    else:
+        print('  ::warning:: no <application>; network policy not linked')
+
+if changed:
+    open(path, 'w', encoding='utf-8').write(text)
+PYPLAYER
+
 # Keep the WebView across rotation. Without this MainActivity is destroyed,
 # library.html reloads and every cover is decoded again — that is the lag.
 python3 - "$MANIFEST" <<'PYROT'
@@ -346,6 +450,13 @@ if [ -d "$P/android/navigation" ]; then
   cp "$P"/android/navigation/*.xml "$A/res/navigation/"
 fi
 cp "$P"/android/drawable/*.xml "$A/res/drawable/"
+# xml/ держит сетевую политику: обычный http разрешён ТОЛЬКО для 127.0.0.1,
+# иначе «просмотр по частям» упирается в запрет cleartext на Android 9+.
+if [ -d "$P/android/xml" ]; then
+  mkdir -p "$A/res/xml"
+  cp "$P"/android/xml/*.xml "$A/res/xml/"
+  echo "  copied res/xml: $(ls "$P/android/xml" | tr '\n' ' ')"
+fi
 # Merge, never replace. A wholesale copy silently drops any upstream string the
 # fork's file predates: build #10 failed on "resource string/off not found"
 # because v0.2.1's arrays.xml references strings my master-derived copy lacked.
@@ -417,6 +528,247 @@ open(gp, "w").write("\n".join(lines) + "\n")
 print(f"gradle tuned for {'a large' if big else 'a small'} machine: "
       f"{total_kb // 1024} MB RAM, {cores} cores")
 PYTUNE
+
+# Служба конвертера: распаковка должна переживать уход с экрана и показывать
+# прогресс в шторке. Без объявления в манифесте startForegroundService падает
+# с «Service not declared», поэтому добавление здесь, а не «когда-нибудь».
+python3 - "$MANIFEST" <<'PYCONV'
+import sys
+path = sys.argv[1]
+text = open(path, encoding='utf-8').read()
+if 'ConverterService' in text:
+    print('  manifest already declares the converter service')
+    raise SystemExit(0)
+if 'FOREGROUND_SERVICE_SPECIAL_USE' not in text:
+    permission = '    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />\n'
+    if '<uses-permission' in text:
+        i = text.index('<uses-permission')
+        text = text[:i] + permission + text[i:]
+service = """
+        <!-- Распаковка NSZ/XCZ/NCZ: своя служба, потому что работа длится
+             дольше экрана и должна быть видна в шторке. -->
+        <service
+            android:name="org.yuzu.yuzu_emu.utils.ConverterService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse" />
+"""
+marker = '</application>'
+if marker not in text:
+    print('  ::warning:: no </application>; converter service not added')
+    raise SystemExit(0)
+text = text.replace(marker, service + '    ' + marker, 1)
+open(path, 'w', encoding='utf-8').write(text)
+print('  declared ConverterService (specialUse)')
+PYCONV
+
+# ── zstd: поднять пин ─────────────────────────────────────────────────
+#
+# В v0.2.1 zstd запинен на b8d6101fba (1.5). На ARM64 эта версия повреждает
+# данные при распаковке solid-контейнеров NCZ: внутри ZSTD_decodeSequence
+# включена ветка, которая на aarch64 считается неверно, и декодер сообщает
+# «Data corruption detected» на ЦЕЛОМ файле. Именно это и случилось с
+# «Vault of Power … (0.31 GB).nsz» — файл был исправен.
+#
+# Upstream Eden починил это, подняв пин на 33618c8 — версию zstd, в которой
+# проблемная оптимизация отменена. Без этого шага любая правка ncz.cpp
+# бессмысленна: повреждение возникает до нашего кода.
+CPMFILE="$E/cpmfile.json"
+if [ -f "$CPMFILE" ]; then
+python3 - "$CPMFILE" <<'PYZSTD'
+import collections
+import json
+import sys
+path = sys.argv[1]
+with open(path, encoding='utf-8') as handle:
+    data = json.load(handle, object_pairs_hook=collections.OrderedDict)
+zstd = data.get('zstd')
+if zstd is None:
+    print('  ::warning:: no zstd entry in cpmfile')
+    raise SystemExit(0)
+# Поля ровно в той форме, которую понимает CPMUtil ЭТОЙ версии Eden
+# (v0.2.1). В master Eden поле `version` само служит ссылкой на коммит —
+# там достаточно version+hash. Здесь так нельзя: CPMUtil v0.2.1 ищет TAG,
+# SHA или BRANCH, а на `version` только предупреждает «REPO defined but no
+# TAG, SHA, BRANCH, or URL», уходит на master zstd и падает на скачивании.
+# Это и случилось в прогоне 41327290304 — сборка легла на zstd-populate.
+zstd['sha'] = '33618c8'
+zstd['version'] = '33618c8'
+zstd['min_version'] = '1.5'
+zstd['hash'] = (
+    '2b006c3c110c38bd2f5896b42d36a38931c8eae261f30552f9a9fd04458d218d8f1a'
+    '1425f117fd12af545ed77042e4b2d1a1a9b6286c4d0b9d74ef79f20a8f08'
+)
+data['zstd'] = collections.OrderedDict(sorted(zstd.items()))
+with open(path, 'w', encoding='utf-8') as handle:
+    json.dump(data, handle, indent=4, ensure_ascii=False)
+    handle.write('\n')
+print('  zstd pinned to 33618c8 (ARM64 NCZ fix)')
+PYZSTD
+  if ! grep -q '"33618c8"' "$CPMFILE"; then
+    echo "ERROR: zstd pin not raised — solid NSZ will fail on arm64" >&2
+    exit 1
+  fi
+else
+  echo "  ::warning:: cpmfile.json not found; zstd pin unchanged" >&2
+fi
+
+# Новые .cpp сами в список не попадут: upstream_changes.patch перечисляет
+# файлы common руками, а хунки в нём уже сдвинуты. Поэтому список
+# дополняется здесь, и отдельно проверяется результат: без строки в CMake
+# символы Ncz::* и Aes::* остаются неразрешёнными, и падает не компиляция, а
+# линковка libyuzu-android — через двадцать минут и без указания на причину.
+CMCOMMON="$E/src/common/CMakeLists.txt"
+for extra in symbiosis/ncz.cpp symbiosis/ncz.h symbiosis/aes128.cpp symbiosis/aes128.h symbiosis/zstd_include.h symbiosis/audio_metrics.cpp symbiosis/audio_metrics.h symbiosis/got_patch.cpp symbiosis/got_patch.h; do
+  # Путь был $E/src/$extra, а файлы лежат в src/common/ - предупреждение
+  # печаталось всегда, даже когда всё на месте. Постоянный ложный warn
+  # приучает не читать лог, и настоящая пропажа проходит незамеченной.
+  [ -f "$E/src/common/$extra" ] || echo "  ::warning:: $extra не скопирован" >&2
+done
+if [ -f "$CMCOMMON" ] && ! grep -q "symbiosis/ncz.cpp" "$CMCOMMON"; then
+python3 - "$CMCOMMON" <<'PYNCZ'
+import re
+import sys
+path = sys.argv[1]
+text = open(path, encoding='utf-8').read()
+anchor = '    symbiosis/rom_tools.cpp'
+extra = '    symbiosis/aes128.cpp\n    symbiosis/aes128.h\n    symbiosis/audio_metrics.cpp\n    symbiosis/audio_metrics.h\n    symbiosis/got_patch.cpp\n    symbiosis/got_patch.h\n    symbiosis/ncz.cpp\n    symbiosis/ncz.h\n    symbiosis/zstd_include.h\n'
+if anchor in text:
+    text = text.replace(anchor, extra + anchor, 1)
+else:
+    idx = text.find('symbiosis/')
+    if idx < 0:
+        print('  ::warning:: no symbiosis sources in common CMakeLists')
+        raise SystemExit(0)
+    line_start = text.rfind('\n', 0, idx) + 1
+    text = text[:line_start] + extra + text[line_start:]
+open(path, 'w', encoding='utf-8').write(text)
+print('  added ncz/aes128 sources to common CMakeLists')
+PYNCZ
+
+# Строка в CMakeLists.txt должна быть ровно одна; повторный запуск скрипта на
+# неочищенном дереве не должен добавлять файлы дважды.
+dups=$(grep -c "symbiosis/ncz.cpp" "$CMCOMMON")
+if [ "$dups" != "1" ]; then
+  echo "ERROR: symbiosis/ncz.cpp встречается в common CMakeLists $dups раз" >&2
+  exit 1
+fi
+fi
+
+
+# ── Звук: частота вывода и настоящие замеры ───────────────────────────
+#
+# Правки в oboe_sink.cpp сделаны здесь, а не в upstream_changes.patch: файл
+# меняется и нами, и апстримом, а хунки в patche уже сдвинуты — правка «по
+# номерам строк» ломается от любого соседнего изменения. Здесь вместо этого
+# замены по точному тексту, и КАЖДАЯ проверяется: если фрагмент не найден,
+# скрипт падает с внятной причиной, а не собирает молча старое поведение.
+OBOE="$E/src/audio_core/sink/oboe_sink.cpp"
+if [ -f "$OBOE" ]; then
+python3 - "$OBOE" <<'PYAUDIO'
+import sys
+
+path = sys.argv[1]
+text = open(path, encoding='utf-8').read()
+original = text
+
+def must_replace(old, new, what):
+    global text
+    if new in text:
+        return                      # уже применено
+    if old not in text:
+        raise SystemExit('ERROR: oboe_sink.cpp: не найден фрагмент — ' + what)
+    text = text.replace(old, new, 1)
+
+# 1. Заголовок с замерами.
+must_replace('#include "common/settings.h"',
+             '#include "common/settings.h"\n#include "common/symbiosis/audio_metrics.h"',
+             'включение common/settings.h')
+
+# 2. Функция частоты — рядом с функцией буфера.
+must_replace("""u32 SymbiosisAudioBufferFrames() {""",
+"""/**
+ * Частота, с которой открывать поток.
+ *
+ * 0 значит «решит драйвер». У части телефонов железо работает на 44.1 кГц, и
+ * жёсткие 48 кГц заставляют драйвер пересчитывать каждый кадр; на слабом
+ * процессоре пересчёт не успевает и слышен как хрип в музыке.
+ */
+u32 SymbiosisSampleRate() {
+    const u32 rate = Settings::values.symbiosis_audio_rate.GetValue();
+    // Oboe понимает 0 как «частота не задана» и открывает поток на той, что
+    // даёт сам телефон. Это не то же самое, что подставить 48000: на
+    // 44,1-кГц железе драйвер тогда обязан пересчитывать каждый кадр, а
+    // именно пересчёт и слышен как хрип в музыке.
+    if (rate < 8000 || rate > 96000) {
+        return 0;
+    }
+    return rate;
+}
+
+// Частота, по которой считаются кадры буфера: если поток открывается «как
+// решит драйвер», за неимением лучшего берём родную частоту игры.
+u32 SymbiosisEffectiveRate() {
+    const u32 rate = SymbiosisSampleRate();
+    return rate == 0 ? static_cast<u32>(TargetSampleRate) : rate;
+}
+
+u32 SymbiosisAudioBufferFrames() {""",
+             'функция SymbiosisAudioBufferFrames')
+
+# 3. Просить выбранную частоту вместо жёстких 48 кГц.
+must_replace('->setSampleRate(TargetSampleRate)',
+             '->setSampleRate(SymbiosisSampleRate())',
+             'setSampleRate(TargetSampleRate)')
+
+# 4. Замеры при открытии потока: фактические цифры вместо предположений.
+must_replace("""        LOG_INFO(Audio_Sink, "Opened Oboe {} stream with {} channels sample rate {} capacity {}",
+                 stream_backend, device_channels, sample_rate, buffer_capacity);
+
+        return true;""",
+"""        LOG_INFO(Audio_Sink, "Opened Oboe {} stream with {} channels sample rate {} capacity {}",
+                 stream_backend, device_channels, sample_rate, buffer_capacity);
+
+        // Замеры для панели: что попросили, что получили и сколько кадров
+        // в буфере НА САМОМ ДЕЛЕ. Без этого «буфер 30 мс» — только слово.
+        Symbiosis::AudioReport report;
+        report.requested_rate = SymbiosisSampleRate();
+        report.device_rate = static_cast<unsigned int>(sample_rate);
+        report.channels = static_cast<unsigned int>(device_channels);
+        report.buffer_frames = static_cast<unsigned int>(m_stream->getBufferSizeInFrames());
+        report.capacity_frames = static_cast<unsigned int>(buffer_capacity);
+        report.frames_per_burst = static_cast<unsigned int>(m_stream->getFramesPerBurst());
+        report.backend = stream_backend;
+        Symbiosis::SetAudioStreamInfo(report);
+
+        return true;""",
+             'SetStreamProperties: логирование открытия')
+
+# 5. Замеры на каждом вызове драйвера. Свой обработчик не добавляется — он
+#    уже есть в этом классе; цифры снимаются внутри существующего.
+must_replace("""    oboe::DataCallbackResult onAudioReady(oboe::AudioStream*, void* audio_data,
+                                          s32 num_buffer_frames) override {
+        const size_t num_channels = this->GetDeviceChannels();""",
+"""    oboe::DataCallbackResult onAudioReady(oboe::AudioStream* stream, void* audio_data,
+                                          s32 num_buffer_frames) override {
+        // Замеры: каждое опустошение буфера — это слышимый щелчок. Число берём
+        // у драйвера (getXRunCount), а не считаем на слух.
+        Symbiosis::NoteAudioCallback();
+        if (stream != nullptr) {
+            const auto xruns = stream->getXRunCount();
+            if (xruns.error() == oboe::Result::OK) {
+                Symbiosis::SetAudioXruns(static_cast<unsigned long long>(xruns.value()));
+            }
+        }
+        const size_t num_channels = this->GetDeviceChannels();""",
+             'onAudioReady')
+
+if text != original:
+    open(path, 'w', encoding='utf-8').write(text)
+print('  audio: частота вывода и замеры включены')
+PYAUDIO
+else
+  echo "  ::warning:: oboe_sink.cpp не найден — звук без замеров" >&2
+fi
 
 changed=$(git status --porcelain | wc -l)
 echo "PATCH_APPLIED files=$changed"

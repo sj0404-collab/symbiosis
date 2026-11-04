@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+SPDX-FileCopyrightText: Copyright 2026 Eden Symbiosis Project
+SPDX-License-Identifier: GPL-3.0-or-later
+
+Разрешение обычного http ТОЛЬКО для своего адреса.
+
+Зачем: «просмотр по частям» работает через маленький сервер внутри
+приложения (SourceRangeServer) на 127.0.0.1 — он переливает байты источника
+и добавляет заголовки, которые плеер поставить не может. Начиная с Android 9
+обычный http запрещён целиком, и локальный поток молча не открывался.
+
+Остальной интернет остаётся только https: это послабление для одной петли,
+а не для всего.
+-->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="false" />
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="false">127.0.0.1</domain>
+        <domain includeSubdomains="false">localhost</domain>
+    </domain-config>
+</network-security-config>

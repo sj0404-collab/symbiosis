@@ -6,16 +6,30 @@
     android:id="@+id/option_card"
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
-    android:layout_marginBottom="16dp"
-    android:layout_marginHorizontal="8dp"
+    android:layout_marginBottom="10dp"
+    android:layout_marginHorizontal="0dp"
     android:background="@android:color/transparent"
     android:clickable="true"
     android:focusable="true"
-    app:cardCornerRadius="16dp"
+    app:cardCornerRadius="20dp"
     app:cardBackgroundColor="@android:color/transparent"
     app:cardElevation="0dp"
     app:strokeColor="?attr/colorOutline"
     app:strokeWidth="1dp">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal">
+
+        <!-- Цвет пункта. Ставится в HomeSettingAdapter из SymbiosisTheme:
+             шесть одинаковых карточек заставляют читать каждую. -->
+        <View
+            android:id="@+id/option_accent"
+            android:layout_width="4dp"
+            android:layout_height="match_parent"
+            android:layout_marginVertical="10dp"
+            android:background="?attr/colorPrimary" />
 
     <LinearLayout
         android:id="@+id/option_layout"
@@ -27,7 +41,7 @@
             android:id="@+id/option_icon"
             android:layout_width="24dp"
             android:layout_height="24dp"
-            android:layout_marginStart="24dp"
+            android:layout_marginStart="16dp"
             android:layout_gravity="center_vertical"
             app:tint="?attr/colorPrimary" />
 
@@ -78,6 +92,8 @@
                 tools:text="/tree/primary:Games" />
 
         </LinearLayout>
+
+    </LinearLayout>
 
     </LinearLayout>
 

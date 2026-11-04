@@ -97,7 +97,11 @@ jobs:
       - name: Install NDK, CMake and glslang
         run: |
           sdkmanager --install "ndk;28.2.13676358" "cmake;3.31.6" "build-tools;35.0.0" "platforms;android-36"
-          sudo apt-get update -qq && sudo apt-get install -y glslang-tools
+          sudo apt-get update -qq
+          # libzstd-dev — не для сборки APK, а для теста распаковки NSZ: без
+          # него tools/run_tests.sh отказывается работать, потому что «NSZ не
+          # распаковывается» уже один раз доехало до пользователя.
+          sudo apt-get install -y glslang-tools libzstd-dev
 
       - name: Cache Gradle
         uses: actions/cache@v4
@@ -179,6 +183,14 @@ jobs:
           # is twenty-three minutes into the build - after the entire native
           # tree has compiled. That cost one full run for KenjiProbeService.
           python3 fork/tools/check_kotlin_refs.py --patch fork/patch
+
+      - name: Check Kotlin braces and comments balance
+        run: |
+          # An unterminated block comment swallows the rest of the file, and the
+          # compiler then reports "Unresolved reference" in an unrelated place.
+          # That cost a full run: a doc comment spelling Logs/*.log opens a
+          # nested comment in Kotlin. This check is instant.
+          python3 fork/tools/check_kotlin_syntax.py fork/patch
 
       - name: Check string references resolve
         # aapt2 reports a missing @string only at resource-link time, roughly
@@ -268,7 +280,26 @@ jobs:
           esac
 
           if [ "$MINIFIED" = 0 ]; then
-            for sym in restoreGameDirs rememberGameDirs hasActionableButton; do
+            # Зачем: лаунчер и руководство - это два новых экрана, и оба
+            # попадают в APK только если apply_patch.sh их скопировал. Файл,
+            # лежащий в patch/, но не в дереве сборки, даёт зелёную сборку с
+            # прежним интерфейсом - ровно это и проверяем.
+            for sym in restoreGameDirs rememberGameDirs hasActionableButton \
+                       NativeLauncherFragment ManualFragment NativeLibraryPresenter \
+                       EnginesFragment EngineHybrid EngineStore \
+                       PluginsFragment PluginEngine PluginStore \
+                       GameFoldersStore GameFolderList ConverterService \
+                       Converter ExitTrace DeviceCompat \
+                       SavesOverview ProgressMarks CloudSync CloudSettings \
+                       WebDavClient WebDavParse SavesFragment CloudFragment \
+                       KernelLog KernelLogFormat KernelLogFragment \
+                       KernelLogArchive ConverterReasons \
+                       SourcesFragment SourceBrowser SourceIndex \
+                       SourceRangeServer SourcePlayerActivity \
+                       TorrentBencode TorrentMeta TorrentPlan TorrentWire \
+                       TorrentTracker TorrentAnnounce TorrentDownload \
+                       MagnetMeta FramePacing FrameMetricsText \
+                       PerformanceFragment RomSniff KenjiCrash QuickPanel UiGuard; do
               if strings classes*.dex | grep -q "$sym"; then echo "  ok   $sym in dex"
               else echo "  MISSING $sym"; fail=1; fi
             done
@@ -276,10 +307,92 @@ jobs:
             echo "  (release build: Kotlin names are minified, skipping that check)"
           fi
 
+          # Гибрид: экран «Два ядра» и строки к нему. Класс может быть в dex,
+          # а строка не доехать — экран тогда покажет пустую подпись. Имена
+          # ресурсов лежат в resources.arsc, а не в res/*.xml: там они уже
+          # числа, поэтому ищем в таблице ресурсов, в обеих кодировках пула.
+          python3 - "$GITHUB_WORKSPACE/$APK" <<'STPY' || fail=1
+          import sys, zipfile
+          z = zipfile.ZipFile(sys.argv[1])
+          arsc = z.read("resources.arsc")
+          for key in ("engine_choice", "launcher_core_kenji", "launcher_properties",
+                      "plugins_title", "plugins_description",
+                      "converter_title", "folders_add",
+                      "cloud_title", "launcher_saves_menu"):
+              if key.encode() in arsc or key.encode("utf-16-le") in arsc:
+                  print("  ok   string %s is in the resource table" % key)
+              else:
+                  print("  MISSING string %s" % key)
+                  sys.exit(1)
+          STPY
+
+          # zstd: пин в дереве сборки. Без него правильный solid-NSZ снова
+          # считается битым на arm64 — и APK выглядит рабочим ровно до
+          # первого тяжёлого сжатого файла.
+          # Путь абсолютный: выше был `cd /tmp/x` для распаковки APK, и
+          # относительный `eden/cpmfile.json` там просто не существует —
+          # проверка падала на здоровой сборке (прогон 41331469358).
+          if grep -q '"33618c8"' "$GITHUB_WORKSPACE/eden/cpmfile.json"; then
+            echo "  ok   zstd pinned to 33618c8 in the build tree"
+          else
+            echo "  MISSING zstd pin (solid NSZ will fail on arm64)"; fail=1
+          fi
+
+          # Отчёт и запись падения: класс может доехать, а строки — нет.
+          # «Что сказало ядро» без файла stderr не покажет ничего, поэтому
+          # проверяются оба имени.
+          for text in "kenji-stdout.txt" "ui-crash.txt" "kenji-pid.txt" \
+                      "kenji-exit.txt" "kenji-jni.txt" "почему-не-открывается.txt" \
+                      "Что сказало ядро перед остановкой" \
+                      "Что записала система о конце процесса" \
+                      "Что ядро спрашивало у Java" \
+                      "Прошлый запуск остановился"; do
+            if grep -qa "$text" /tmp/x/classes*.dex; then
+              echo "  ok   \"$text\" in dex"
+            else
+              echo "  MISSING \"$text\" in dex"; fail=1
+            fi
+          done
+
           NM=$(find "$ANDROID_HOME/ndk" -name llvm-nm | head -1)
           n=$("$NM" -D lib/arm64-v8a/libyuzu-android.so | grep -c NativeSymbiosis || true)
           echo "  JNI symbols exported: $n"
           [ "$n" -ge 50 ] || { echo "  too few JNI symbols"; fail=1; }
+
+          # Ровность кадров. Счётчик живёт в нативной части, но хунки в самом
+          # Eden (perf_stats, sink_stream, vk_pipeline_cache) в APK не попадают:
+          # они в libyuzu-android.so как вызовы, а не как экспорт. Поэтому
+          # проверяем экспорт JNI и то, что экран действительно лёг в dex:
+          # без экрана снимок некому показать.
+          for sym in FrameMetricsText FramePacing; do
+            if [ "$MINIFIED" = 0 ]; then
+              grep -qa "$sym" /tmp/x/classes*.dex \
+                || { echo "  missing Kotlin class: $sym"; fail=1; }
+            fi
+          done
+          # Пакет org.yuzu.yuzu_emu в JNI-имени становится yuzu_1emu (подчёркивание
+          # кодируется как _1). С yuzu_emu проверка не нашла бы символ, который
+          # на месте, и уронила бы сборку после двадцати пяти минут работы.
+          for sym in frameMetrics resetFrameMetrics setRomWorkDir; do
+            "$NM" -D lib/arm64-v8a/libyuzu-android.so \
+              | grep -q "Java_org_yuzu_yuzu_1emu_utils_NativeSymbiosis_$sym" \
+              || { echo "  missing JNI export: $sym"; fail=1; }
+          done
+
+          # Отчёт о падении второго ядра: и символ включения, и сам обработчик.
+          # Отчёт о падении самого приложения: экспорт в libyuzu-android.so.
+          # Без него диалог «Прошлый запуск остановился» не получит ничего.
+          for sym in armMainCrashLog setMainStep; do
+            "$NM" -D lib/arm64-v8a/libyuzu-android.so \
+              | grep -q "Java_org_yuzu_yuzu_1emu_utils_NativeSymbiosis_$sym" \
+              || { echo "  missing JNI export: $sym"; fail=1; }
+          done
+
+          for sym in nativeSetCrashLog nativeSetStep; do
+            "$NM" -D lib/arm64-v8a/libsymbiosis_kenji.so \
+              | grep -q "Java_org_yuzu_yuzu_1emu_utils_KenjiBridge_$sym" \
+              || { echo "  missing JNI export in the bridge: $sym"; fail=1; }
+          done
 
           # The Kenji bridge, in both names. The core dlopen()s libkenjinxjni
           # and calls debug_break from inside deviceInitialize, so a missing

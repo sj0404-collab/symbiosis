@@ -52,26 +52,27 @@ class GameIconFetcher(
      * Теперь ни одного `!!` на всём пути, а любой отказ - это заглушка.
      */
     override suspend fun fetch(): FetchResult {
+        // Обложки нет — это отказ, а не «серая картинка вместо обложки».
+        //
+        // Раньше здесь возвращался DrawableResult с default_icon, то есть
+        // УСПЕШНЫЙ результат. Coil клал его в кэш по пути файла, а экран
+        // считал загрузку удачной и показывал картинку вместо монограммы.
+        // Итог: у файлов без иконки квадрат с заглушкой, а после смены
+        // ключей — та же заглушка из кэша, сколько ни пересканируй.
+        if (GameIconUtils.isKnownWithoutIcon(game.path)) {
+            throw IllegalStateException("у этого файла нет обложки")
+        }
         val bitmap = decodeGameIcon(game.path)
-            ?: return DrawableResult(
-                drawable = fallbackDrawable(),
-                isSampled = false,
-                dataSource = DataSource.DISK
-            )
+            ?: run {
+                GameIconUtils.markWithoutIcon(game.path)
+                throw IllegalStateException("обложка не читается: нет ключей или файл битый")
+            }
         return DrawableResult(
             drawable = bitmap.toDrawable(options.context.resources),
             isSampled = false,
             dataSource = DataSource.DISK
         )
     }
-
-    /** Стандартная иконка. Последний рубеж: сюда приходят все отказы. */
-    private fun fallbackDrawable(): android.graphics.drawable.Drawable =
-        ResourcesCompat.getDrawable(
-            options.context.resources,
-            R.drawable.default_icon,
-            null
-        ) ?: android.graphics.drawable.ColorDrawable(android.graphics.Color.TRANSPARENT)
 
     private fun decodeGameIcon(uri: String): Bitmap? = runCatching {
         // getIcon читает и расшифровывает ROM. На битом файле нативный
@@ -128,6 +129,43 @@ class GameIconKeyer : Keyer<Game> {
 }
 
 object GameIconUtils {
+    /**
+     * Запросы, которые ещё выполняются, по ячейке.
+     *
+     * ПОЧЕМУ БЕЗ ЭТОГО ОБЛОЖКИ «СЪЕЗЖАЛИ»
+     *
+     *   Плитка переиспользуется: одна и та же ImageView показывает сначала
+     *   одну игру, потом другую. Coil рисует картинку в ImageView сам, как
+     *   только она готова. Запрос прошлой игры при этом никто не отменял, и
+     *   он приходил позже нового — прямо поверх уже показанной обложки
+     *   соседа. Проверка метки в колбэке от этого не спасает: картинка к
+     *   тому моменту уже нарисована, колбэк лишь управляет видимостью.
+     *
+     *   Поэтому перед новым запросом старый отменяется. Слабая карта — чтобы
+     *   не держать ссылки на ушедшие ячейки.
+     */
+    private val inflight = java.util.WeakHashMap<ImageView, coil.request.Disposable>()
+
+    /**
+     * Файлы, у которых обложки нет.
+     *
+     * Иначе каждый повторный показ плитки заново читал и расшифровывал ROM —
+     * на списке из сотни homebrew это заметно. Записи сбрасываются в
+     * [clearCache]: после смены ключей обложка может появиться.
+     */
+    private val withoutIcon = java.util.Collections.newSetFromMap(
+        java.util.concurrent.ConcurrentHashMap<String, Boolean>()
+    )
+
+    internal fun isKnownWithoutIcon(path: String): Boolean = path in withoutIcon
+    internal fun markWithoutIcon(path: String) { withoutIcon.add(path) }
+
+    /** Прекратить загрузку в эту ячейку и убрать картинку. */
+    fun cancel(imageView: ImageView) {
+        inflight.remove(imageView)?.dispose()
+        imageView.setImageDrawable(null)
+    }
+
     private val imageLoader = ImageLoader.Builder(YuzuApplication.appContext)
         .components {
             add(GameIconKeyer())
@@ -159,18 +197,48 @@ object GameIconUtils {
      *   чистятся оба.
      */
     fun clearCache() {
+        withoutIcon.clear()
         runCatching { imageLoader.memoryCache?.clear() }
             .onFailure { android.util.Log.e("Symbiosis", "не удалось очистить кэш иконок", it) }
     }
 
-    fun loadGameIcon(game: Game, imageView: ImageView) {
+    fun loadGameIcon(
+        game: Game,
+        imageView: ImageView,
+        onResult: ((Boolean) -> Unit)? = null
+    ) {
+        // Ошибка не должна подменять обложку серой заглушкой поверх
+        // монограммы: у большинства файлов иконки нет вовсе, и «есть буква»
+        // читается лучше, чем «есть серая картинка». Поэтому при отказе
+        // картинка просто прячется, а монограмма остаётся.
+        // Прошлый запрос на эту же ячейку отменяется: иначе его ответ
+        // придёт позже нового и нарисует чужую обложку (см. inflight).
+        inflight.remove(imageView)?.dispose()
         val request = ImageRequest.Builder(YuzuApplication.appContext)
             .data(game)
             .target(imageView)
-            .error(R.drawable.default_icon)
+            .listener(
+                onSuccess = { _, _ -> onResult?.invoke(true) },
+                onError = { _, _ -> onResult?.invoke(false) }
+            )
             .build()
-        imageLoader.enqueue(request)
+        inflight[imageView] = imageLoader.enqueue(request)
     }
+
+    /**
+     * Есть ли у этой игры обложка — без загрузки в ImageView.
+     *
+     * Нужно там, где решается вид строки (показывать картинку или букву), а
+     * не рисуется сама картинка.
+     */
+    suspend fun hasCover(game: Game): Boolean = runCatching {
+        val drawable = imageLoader.execute(
+            ImageRequest.Builder(YuzuApplication.appContext)
+                .data(game)
+                .build()
+        ).drawable
+        drawable != null
+    }.getOrDefault(false)
 
     /**
      * Обложка как Bitmap. Второе место с тем же `!!`.

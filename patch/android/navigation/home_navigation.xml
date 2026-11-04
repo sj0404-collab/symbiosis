@@ -3,7 +3,7 @@
     xmlns:app="http://schemas.android.com/apk/res-auto"
     xmlns:tools="http://schemas.android.com/tools"
     android:id="@+id/home_navigation"
-    app:startDestination="@id/livePanelFragment">
+    app:startDestination="@id/nativeLauncherFragment">
 
     <fragment
         android:id="@+id/gamesFragment"
@@ -100,6 +100,26 @@
         android:name="org.yuzu.yuzu_emu.fragments.InstallableFragment"
         android:label="InstallableFragment" />
     <!-- Symbiosis screens -->
+    <!--
+    Стартовый экран - нативная библиотека. Раньше им был WebView с панелью,
+    и именно из-за этого нельзя было понять, где что находится: половина
+    интерфейса жила в HTML, половина - в Kotlin.
+    -->
+    <fragment
+        android:id="@+id/nativeLauncherFragment"
+        android:name="org.yuzu.yuzu_emu.fragments.NativeLauncherFragment"
+        android:label="NativeLauncherFragment" />
+    <action
+        android:id="@+id/action_global_nativeLauncherFragment"
+        app:destination="@id/nativeLauncherFragment"
+        app:launchSingleTop="true" />
+    <fragment
+        android:id="@+id/manualFragment"
+        android:name="org.yuzu.yuzu_emu.fragments.ManualFragment"
+        android:label="ManualFragment" />
+    <action
+        android:id="@+id/action_global_manualFragment"
+        app:destination="@id/manualFragment" />
     <fragment
         android:id="@+id/fpsTuningFragment"
         android:name="org.yuzu.yuzu_emu.fragments.FpsTuningFragment"
@@ -133,6 +153,67 @@
     <action
         android:id="@+id/action_global_enginesFragment"
         app:destination="@id/enginesFragment" />
+    <fragment
+        android:id="@+id/pluginsFragment"
+        android:name="org.yuzu.yuzu_emu.fragments.PluginsFragment"
+        android:label="PluginsFragment" />
+    <action
+        android:id="@+id/action_global_pluginsFragment"
+        app:destination="@id/pluginsFragment" />
+    <!--
+        Сейвы одной игры и облако. Сейвы принимают путь игры аргументом:
+        экран открывается и с плитки библиотеки, и из свойств игры, а
+        тащить туда целый Parcelable ради двух строк незачем.
+    -->
+    <fragment
+        android:id="@+id/savesFragment"
+        android:name="org.yuzu.yuzu_emu.fragments.SavesFragment"
+        android:label="SavesFragment">
+        <argument
+            android:name="path"
+            app:argType="string"
+            android:defaultValue="" />
+        <argument
+            android:name="title"
+            app:argType="string"
+            android:defaultValue="" />
+    </fragment>
+    <action
+        android:id="@+id/action_global_savesFragment"
+        app:destination="@id/savesFragment" />
+    <fragment
+        android:id="@+id/cloudFragment"
+        android:name="org.yuzu.yuzu_emu.fragments.CloudFragment"
+        android:label="CloudFragment" />
+    <action
+        android:id="@+id/action_global_cloudFragment"
+        app:destination="@id/cloudFragment" />
+    <fragment
+        android:id="@+id/kernelLogFragment"
+        android:name="org.yuzu.yuzu_emu.fragments.KernelLogFragment"
+        android:label="KernelLogFragment" />
+    <action
+        android:id="@+id/action_global_kernelLogFragment"
+        app:destination="@id/kernelLogFragment" />
+
+    <!-- Источники: ссылка → список файлов → скачать или смотреть по частям. -->
+    <fragment
+        android:id="@+id/sourcesFragment"
+        android:name="org.yuzu.yuzu_emu.fragments.SourcesFragment"
+        android:label="SourcesFragment" />
+    <action
+        android:id="@+id/action_global_sourcesFragment"
+        app:destination="@id/sourcesFragment" />
+
+    <!-- Ровность кадров: почему прыгает картинка и почему рвётся звук. -->
+    <fragment
+        android:id="@+id/performanceFragment"
+        android:name="org.yuzu.yuzu_emu.fragments.PerformanceFragment"
+        android:label="PerformanceFragment" />
+    <action
+        android:id="@+id/action_global_performanceFragment"
+        app:destination="@id/performanceFragment" />
+
     <fragment
         android:id="@+id/toolsFragment"
         android:name="org.yuzu.yuzu_emu.fragments.ToolsFragment"
@@ -229,7 +310,7 @@
     <action
         android:id="@+id/action_global_perGamePropertiesFragment"
         app:destination="@id/perGamePropertiesFragment"
-        app:popUpTo="@id/livePanelFragment"
+        app:popUpTo="@id/nativeLauncherFragment"
         app:popUpToInclusive="false" />
     <fragment
         android:id="@+id/gameInfoFragment"
