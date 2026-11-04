@@ -1997,3 +1997,13 @@ runLoop
 
 Проверки без телефона: `check_jni_names` — 82 объявления (добавились два),
 `check_kotlin_refs` и `check_kotlin_syntax` — 108 файлов, C++ — чисто.
+
+### 38.1. Сборка
+
+Запуск `41833030057` (коммит `12faa3e`) — **SUCCESS**,
+APK: https://gofile.io/d/XxfmghhX, MD5 `fbf5c6e28db8328e0e33101170d199f8`.
+
+По самому APK: в `libsymbiosis_kenji.so` есть `nativeInputInit`,
+`nativeSetWindowHandle` и `nativeFirmwareVersion`, `libopenal.so` на месте
+(2 320 760 байт). Дефект шага `attachSurface` устранён в исходнике, а не
+замаскирован: ввода в этом вызове больше нет.
