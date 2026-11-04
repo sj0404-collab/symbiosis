@@ -394,38 +394,27 @@ void InstallCrashHandlers() {
 
 } // namespace
 
-// ── JNI-перехват ────────────────────────────────────────────────────
+// ── журнал JNI ──────────────────────────────────────────────────────
 //
 // ЗАЧЕМ. Ядру передаётся JNIEnv, и дальше оно разговаривает с Java само:
-// ищет классы и методы, вызывает их. На устройстве оно умирает сразу после
-// «core loaded and verified», молча — ни текста в stderr, ни строк в журнале.
-// Значит вопрос не в том, что ядро ответило, а в том, ЧТО ОНО СПРОСИЛО и что
-// ему ответили. Обычный виновник — FindClass, вернувший null: нужного класса
-// в приложении нет или он называется иначе, а ядро на null не проверяет и
-// падает внутри.
+// ищет классы и методы, вызывает их. Когда оно умирает сразу после
+// «core loaded and verified», вопрос не в том, что оно ответило, а в том,
+// ЧТО ОНО СПРОСИЛО и что ему ответили. Обычный виновник — FindClass,
+// вернувший null: класса нет в приложении или он называется иначе.
 //
-// КАК. libc и ART перехватить нельзя, но можно дать ядру СВОЮ таблицу JNI:
-// копию настоящей, где часть функций заменена обёртками. Обёртка пишет вызов
-// в файл и передаёт его дальше, в настоящий ART. Ядру передаётся указатель на
-// эту таблицу — для него ничего не меняется.
+// ЧТО ЗДЕСЬ ОСТАЛОСЬ. Раньше здесь подменялась вся таблица функций JNI: ядру
+// отдавался свой JNIEnv с копией таблицы. От этого пришлось отказаться — ART
+// получает не таблицу, а указатель на JNIEnv и по нему находит поток, читая
+// поля сразу за указателем на таблицу. Поддельная структура таких полей не
+// имеет, и первый же вызов через ART кончался SIGSEGV в libart (кадры
+// libart.so+0x309ee8 → javaInitialize+1292 пришли с устройства 04.11 14:02).
 //
-// ПОЧЕМУ ИНДЕКСЫ, А НЕ ИМЕНА ПОЛЕЙ. Имена в jni.h у Android и OpenJDK
-// совпадают не полностью, а порядок функций задан спецификацией JNI и
-// одинаков везде. Индексы посчитаны по каноническому jni.h
-// (offsetof(JNINativeInterface_, FindClass) / sizeof(void*)): FindClass = 6,
-// GetMethodID = 33, NewStringUTF = 167 и так далее.
-//
-// ЧЕГО ЭТО СТОИТ. Один цикл копирования 234 указателей при инициализации и
-// одна строка в файл на каждый интересный вызов. Если что-то пойдёт не так
-// (GetEnv не ответит, таблица не скопируется), ядру уходит настоящий env и
-// поведение остаётся прежним — перехват не может сломать запуск.
+// Теперь ядру уходит настоящий JNIEnv, а журнал заполняет проверка
+// (PrepareJni): те же FindClass и GetStaticMethodID, но выполненные нами до
+// вызова ядра. Формат строк прежний, поэтому отчёт читает его как раньше.
 namespace {
 
-constexpr int kTapSlots = 234;   // все функции JNI 1.6, включая 4 зарезервированные
-void* g_tapTable[kTapSlots] = {nullptr};
-void** g_tapEnv = g_tapTable;    // то, на что будет указывать подменённый JNIEnv
 JavaVM* g_tapVm = nullptr;
-bool g_tapReady = false;
 int g_tapLines = 0;
 constexpr int kTapMaxLines = 800;
 
@@ -471,119 +460,87 @@ JNIEnv* RealJni() {
     return env;
 }
 
-// ── обёртки: пишут вызов и передают его в ART как есть ─────────────
+// ── проверка JNI вместо подмены таблицы ─────────────────────────────
+//
+// ЧТО БЫЛО И ПОЧЕМУ ПРИШЛОСЬ ОТКАЗАТЬСЯ
+//   Раньше ядру отдавался СВОЙ JNIEnv — структура, первое слово которой
+//   указывало на копию таблицы функций ART с обёртками для журнала. Так
+//   нельзя: ART получает не таблицу, а сам указатель на JNIEnv и через него
+//   находит поток — `Thread::ForEnv(reinterpret_cast<JNIEnvExt*>(env))` читает
+//   поля, лежащие сразу за указателем на таблицу. У поддельной структуры этих
+//   полей нет, поэтому первый же вызов через ART (GetJavaVM внутри
+//   Interop.Initialize) брал мусор за указатель на поток:
+//
+//     libart.so+0x309ee8 → libart.so+0x28c608 → … → javaInitialize+1292
+//
+//   Настоящий JNIEnv принадлежит ART, и подделывать его нельзя.
+//
+// ЧТО ВМЕСТО
+//   Ядру отдаётся настоящий JNIEnv, а журнал заполняется проверкой: находим
+//   класс, который ядро ищет по имени, и все методы, которые оно кэширует.
+//   Если чего-то нет, причина называется до вызова ядра, а не после падения
+//   внутри ART.
 
-jclass Tap_FindClass(JNIEnv*, const char* name) {
-    TapLog("FindClass", Printable(name), nullptr);
-    JNIEnv* real = RealJni();
-    return real != nullptr ? real->FindClass(name) : nullptr;
+/** Класс, который ядро ищет через FindClass (LibKenjinx/Android/Interop.cs). */
+constexpr const char* kCoreJavaClass = "org/kenjinx/android/KenjinxNative";
+
+/** Методы, которые ядро кэширует при инициализации: имя и подпись. */
+struct CoreJavaMethod {
+    const char* name;
+    const char* signature;
+};
+
+constexpr CoreJavaMethod kCoreJavaMethods[] = {
+    {"test", "()V"},
+    {"updateUiHandler", "(JJJIIIIJJ)V"},
+    {"frameEnded", "()V"},
+    {"updateProgress", "(JF)V"},
+    {"getSurfacePtr", "()J"},
+    {"getWindowHandle", "()J"},
+};
+
+/** Если в Java ждёт исключение — записать это в журнал и снять его. */
+void DescribeAndClear(JNIEnv* env, const char* what) {
+    if (env == nullptr || !env->ExceptionCheck()) return;
+    TapLog("ИСКЛЮЧЕНИЕ", what, nullptr);
+    env->ExceptionDescribe();
+    env->ExceptionClear();
 }
 
-jmethodID Tap_GetMethodID(JNIEnv*, jclass cls, const char* name, const char* sig) {
-    TapLog("GetMethodID", Printable(name), Printable(sig));
-    JNIEnv* real = RealJni();
-    return real != nullptr ? real->GetMethodID(cls, name, sig) : nullptr;
-}
+/**
+ * Проверить, что ядро найдёт в Java всё, что ищет, и записать ответы.
+ *
+ * Возвращает настоящий JNIEnv: подменять его нельзя (см. выше).
+ */
+JNIEnv* PrepareJni(JNIEnv* real) {
+    if (real == nullptr) return real;
 
-jmethodID Tap_GetStaticMethodID(JNIEnv*, jclass cls, const char* name, const char* sig) {
-    TapLog("GetStaticMethodID", Printable(name), Printable(sig));
-    JNIEnv* real = RealJni();
-    return real != nullptr ? real->GetStaticMethodID(cls, name, sig) : nullptr;
-}
+    if (g_tapVm == nullptr) {
+        const jint got = real->GetJavaVM(&g_tapVm);
+        TapLog("GetJavaVM", got == JNI_OK ? "ok" : "FAIL", nullptr);
+    }
 
-jfieldID Tap_GetFieldID(JNIEnv*, jclass cls, const char* name, const char* sig) {
-    TapLog("GetFieldID", Printable(name), Printable(sig));
-    JNIEnv* real = RealJni();
-    return real != nullptr ? real->GetFieldID(cls, name, sig) : nullptr;
-}
+    jclass cls = real->FindClass(kCoreJavaClass);
+    if (cls == nullptr) {
+        DescribeAndClear(real, "FindClass");
+        TapLog("FindClass НЕ НАЙДЕН", kCoreJavaClass, nullptr);
+        return real;
+    }
+    TapLog("FindClass", kCoreJavaClass, "ok");
 
-jfieldID Tap_GetStaticFieldID(JNIEnv*, jclass cls, const char* name, const char* sig) {
-    TapLog("GetStaticFieldID", Printable(name), Printable(sig));
-    JNIEnv* real = RealJni();
-    return real != nullptr ? real->GetStaticFieldID(cls, name, sig) : nullptr;
-}
+    for (const auto& method : kCoreJavaMethods) {
+        const jmethodID id = real->GetStaticMethodID(cls, method.name, method.signature);
+        if (id == nullptr) {
+            DescribeAndClear(real, "GetStaticMethodID");
+            TapLog("GetStaticMethodID НЕ НАЙДЕН", method.name, method.signature);
+            continue;
+        }
+        TapLog("GetStaticMethodID", method.name, method.signature);
+    }
 
-jclass Tap_GetObjectClass(JNIEnv*, jobject obj) {
-    TapLog("GetObjectClass", nullptr, nullptr);
-    JNIEnv* real = RealJni();
-    return real != nullptr ? real->GetObjectClass(obj) : nullptr;
+    real->DeleteLocalRef(cls);
+    return real;
 }
-
-jstring Tap_NewStringUTF(JNIEnv*, const char* text) {
-    TapLog("NewStringUTF", Printable(text), nullptr);
-    JNIEnv* real = RealJni();
-    return real != nullptr ? real->NewStringUTF(text) : nullptr;
-}
-
-jint Tap_RegisterNatives(JNIEnv*, jclass cls, const JNINativeMethod* methods, jint count) {
-    TapLog("RegisterNatives", nullptr, nullptr);
-    JNIEnv* real = RealJni();
-    return real != nullptr ? real->RegisterNatives(cls, methods, count) : JNI_ERR;
-}
-
-jboolean Tap_ExceptionCheck(JNIEnv*) {
-    JNIEnv* real = RealJni();
-    const jboolean pending = real != nullptr ? real->ExceptionCheck() : JNI_FALSE;
-    if (pending) TapLog("ExceptionCheck -> в очереди ИСКЛЮЧЕНИЕ", nullptr, nullptr);
-    return pending;
-}
-
-void Tap_ExceptionDescribe(JNIEnv*) {
-    TapLog("ExceptionDescribe", nullptr, nullptr);
-    JNIEnv* real = RealJni();
-    if (real != nullptr) real->ExceptionDescribe();
-}
-
-jthrowable Tap_ExceptionOccurred(JNIEnv*) {
-    JNIEnv* real = RealJni();
-    jthrowable thrown = real != nullptr ? real->ExceptionOccurred() : nullptr;
-    if (thrown != nullptr) TapLog("ExceptionOccurred -> ЕСТЬ ИСКЛЮЧЕНИЕ", nullptr, nullptr);
-    return thrown;
-}
-
-jint Tap_ThrowNew(JNIEnv*, jclass cls, const char* message) {
-    TapLog("ThrowNew", Printable(message), nullptr);
-    JNIEnv* real = RealJni();
-    return real != nullptr ? real->ThrowNew(cls, message) : JNI_ERR;
-}
-
-jobject Tap_NewGlobalRef(JNIEnv*, jobject obj) {
-    JNIEnv* real = RealJni();
-    return real != nullptr ? real->NewGlobalRef(obj) : nullptr;
-}
-
-jobject Tap_CallObjectMethod(JNIEnv*, jobject obj, jmethodID mid, ...) {
-    TapLog("CallObjectMethod", nullptr, nullptr);
-    JNIEnv* real = RealJni();
-    if (real == nullptr) return nullptr;
-    va_list args;
-    va_start(args, mid);
-    const jobject result = real->CallObjectMethodV(obj, mid, args);
-    va_end(args);
-    return result;
-}
-
-jobject Tap_CallStaticObjectMethod(JNIEnv*, jclass cls, jmethodID mid, ...) {
-    TapLog("CallStaticObjectMethod", nullptr, nullptr);
-    JNIEnv* real = RealJni();
-    if (real == nullptr) return nullptr;
-    va_list args;
-    va_start(args, mid);
-    const jobject result = real->CallStaticObjectMethodV(cls, mid, args);
-    va_end(args);
-    return result;
-}
-
-void Tap_CallVoidMethod(JNIEnv*, jobject obj, jmethodID mid, ...) {
-    TapLog("CallVoidMethod", nullptr, nullptr);
-    JNIEnv* real = RealJni();
-    if (real == nullptr) return;
-    va_list args;
-    va_start(args, mid);
-    real->CallVoidMethodV(obj, mid, args);
-    va_end(args);
-}
-
 /** Путь к файлу перехвата: рядом с отчётом о падении. */
 void TapSetLogPath(const char* crashPath) {
     if (crashPath == nullptr) return;
@@ -596,45 +553,6 @@ void TapSetLogPath(const char* crashPath) {
     ::strcpy(g_jniLogPath + dir_len, name);
 }
 
-/**
- * Поставить перехват. Возвращает JNIEnv для передачи ядру: свой (прозрачный)
- * при успехе, настоящий — при любой неудаче.
- */
-JNIEnv* InstallJniTap(JNIEnv* real) {
-    if (real == nullptr) return real;
-    if (g_tapVm == nullptr) {
-        real->GetJavaVM(&g_tapVm);
-    }
-    const void* const* source = reinterpret_cast<const void* const*>(real->functions);
-    if (source == nullptr) return real;
-
-    for (int i = 0; i < kTapSlots; ++i) {
-        g_tapTable[i] = const_cast<void*>(source[i]);
-    }
-
-    // Индексы — из канонического jni.h (см. комментарий выше).
-    g_tapTable[6] = reinterpret_cast<void*>(&Tap_FindClass);
-    g_tapTable[33] = reinterpret_cast<void*>(&Tap_GetMethodID);
-    g_tapTable[113] = reinterpret_cast<void*>(&Tap_GetStaticMethodID);
-    g_tapTable[94] = reinterpret_cast<void*>(&Tap_GetFieldID);
-    g_tapTable[144] = reinterpret_cast<void*>(&Tap_GetStaticFieldID);
-    g_tapTable[31] = reinterpret_cast<void*>(&Tap_GetObjectClass);
-    g_tapTable[167] = reinterpret_cast<void*>(&Tap_NewStringUTF);
-    g_tapTable[215] = reinterpret_cast<void*>(&Tap_RegisterNatives);
-    g_tapTable[228] = reinterpret_cast<void*>(&Tap_ExceptionCheck);
-    g_tapTable[16] = reinterpret_cast<void*>(&Tap_ExceptionDescribe);
-    g_tapTable[15] = reinterpret_cast<void*>(&Tap_ExceptionOccurred);
-    g_tapTable[14] = reinterpret_cast<void*>(&Tap_ThrowNew);
-    g_tapTable[21] = reinterpret_cast<void*>(&Tap_NewGlobalRef);
-    g_tapTable[34] = reinterpret_cast<void*>(&Tap_CallObjectMethod);
-    g_tapTable[114] = reinterpret_cast<void*>(&Tap_CallStaticObjectMethod);
-    g_tapTable[61] = reinterpret_cast<void*>(&Tap_CallVoidMethod);
-
-    g_tapReady = true;
-    // JNIEnv в C++ — это структура, первое слово которой — указатель на
-    // таблицу функций. Подсовываем свою таблицу этим словом.
-    return reinterpret_cast<JNIEnv*>(&g_tapEnv);
-}
 
 } // namespace
 
@@ -1129,8 +1047,11 @@ void PreloadOpenSsl() {
         if (slash != std::string::npos) dir = path.substr(0, slash + 1);
     }
 
-    // libcrypto первой: libssl зависит от неё по имени.
-    const char* names[] = {"libcrypto.so", "libssl.so"};
+    // libcrypto первой: libssl зависит от неё по имени. Дальше — ICU: без
+    // него .NET не может ни привести регистр, ни сравнить строки по правилам
+    // языка, а пробы версий (u_strlen_50 … u_strlen_58) в отчёте — это его
+    // попытки найти хоть одну подходящую.
+    const char* names[] = {"libcrypto.so", "libssl.so", "libicuuc.so", "libicui18n.so"};
     for (const char* name : names) {
         void* handle = nullptr;
         std::string used;
@@ -1689,7 +1610,7 @@ Java_org_yuzu_yuzu_1emu_utils_KenjiBridge_nativeInitialize(JNIEnv* env, jobject,
     // made Interop.GetVirtualMachine dereference garbage and killed :kenji.
     // Перехват ставится ровно здесь: до этого вызова ядро JNIEnv не получало,
     // после — получает только от нас.
-    JNIEnv* passedEnv = InstallJniTap(env);
+    JNIEnv* passedEnv = PrepareJni(env);
 
     // Что именно мы передали ядру. Если оно отказывается стартовать, первое,
     // что нужно исключить, — путь: отсутствующий каталог для ядра выглядит как

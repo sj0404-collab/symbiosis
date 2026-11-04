@@ -278,7 +278,7 @@ class KenjiProbeService : Service() {
             }.getOrNull().orEmpty()
             val asked = KenjiCrash.jniLines(jniText)
             if (asked.isNotEmpty()) {
-                body.append("\n\nЧто ядро спрашивало у Java перед остановкой:\n")
+                body.append("\n\nЧто мы проверили в Java за ядро (класс и его методы):\n")
                 asked.forEach { body.append("• ").append(it).append('\n') }
                 body.append("  (если выше есть FindClass на класс, которого нет в приложении,")
                     .append(" причина именно в этом — ядро не проверяет пустой ответ.)")

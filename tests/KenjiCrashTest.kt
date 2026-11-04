@@ -722,6 +722,22 @@ fun main() {
     check("отсутствие libssl названо", sslMissing.palLines.any { it.contains("libssl.so=HET") },
         sslMissing.palLines.toString())
 
+    // Журнал JNI читается по-прежнему: отбор по именам функций JNI.
+    val jniSelftestDump = """
+        GetJavaVM(ok)
+        FindClass(org/kenjinx/android/KenjinxNative, ok)
+        GetStaticMethodID(test, ()V)
+        GetStaticMethodID(updateUiHandler, (JJJIIIIJJ)V)
+        GetStaticMethodID(getSurfacePtr, ()J)
+        ИСКЛЮЧЕНИЕ(GetStaticMethodID)
+        GetStaticMethodID НЕ НАЙДЕН(test2, ()V)
+    """.trimIndent()
+    val jni = KenjiCrash.jniLines(jniSelftestDump)
+    check("журнал JNI: вызовы отобраны", jni.any { it.contains("FindClass") }, jni.toString())
+    check("журнал JNI: ненайденный метод виден", jni.any { it.contains("НЕ НАЙДЕН") }, jni.toString())
+    check("журнал JNI: исключение видно", jni.any { it.contains("ИСКЛЮЧЕНИЕ") }, jni.toString())
+    check("журнал JNI: постороннее отброшено", jni.none { it.contains("GetJavaVM") }, jni.toString())
+
     println()
     println("passed=$passed failed=${failures.size}")
     failures.forEach { println("FAIL  $it") }
