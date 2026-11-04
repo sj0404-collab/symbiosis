@@ -1800,3 +1800,65 @@ SIGABRT, кадры: libc +0x530f4 → libsymbiosis_kenji.so+0x2bbd4 → libkenj
 - в мосте этой сборки: строки `ssl: %s=ok (%s)`, `ssl: %s=HET (%s)`,
   «криптография .NET остановит ядро», `DOTNET_GCRegionRange`;
 - `KenjiCrashTest` — **171/0**.
+
+## 36. Ядро инициализировалось; падение в ART было нашим
+
+Сборка `d6af3ad` → запуск `41822482332` **SUCCESS**,
+APK: https://gofile.io/d/qURKS9AK, MD5 `57068004b875b341081c4da3b4860eb6`.
+
+### 36.1. Что пришло с устройства (14:02)
+
+```
+init-callback: 0 calls=1
+→ mmap(17179873280 = 16.0 ГиБ) = ok        ← настройка кучи сработала
+ssl: libcrypto.so=ok, libssl.so=ok          ← криптография нашлась
+… |N| Application .ctor: System Firmware not installed
+сигнал 11, кадры: libart.so+0x309ee8 → … → javaInitialize+1292
+```
+
+Ядро прошло инициализацию, создало `SwitchDevice`, дошло до
+`Interop.Initialize(...)` и упало **внутри ART**.
+
+### 36.2. Почему — наша ошибка
+
+Кадр `javaInitialize+0x1292` → `Interop.Initialize` → `JniHelper.GetVirtualMachine`
+→ `GetJavaVM` в ART. Разбор по адресу:
+
+```
+0x1a93274: ldr x1, [x19]        ; x19 = наш JNIEnv, x1 = таблица функций
+0x1a9327c: ldr x1, [x1, #0x6d8] ; GetJavaVM из таблицы
+…
+0x1a932ac: blr x3                ; вызов через делегат → в ART
+```
+
+Вызов уходит в ART с указателем `env = &g_tapEnv` — **нашей поддельной
+структурой**, у которой первое слово указывает на копию таблицы функций.
+ART же получает не таблицу, а сам указатель и через него находит поток:
+`Thread::ForEnv(reinterpret_cast<JNIEnvExt*>(env))` читает поля, лежащие
+сразу **за** указателем на таблицу. У нашей структуры этих полей нет —
+читался мусор, отсюда SIGSEGV глубоко внутри libart.
+
+Перехват JNI (`InstallJniTap`) был написан в ранних раундах, когда ядро
+умирало раньше, чем доходило до JNI. Теперь, когда инициализация проходит,
+он и стал причиной.
+
+### 36.3. Что изменено
+
+- ядру отдаётся **настоящий** `JNIEnv`; обёртки `Tap_*`, таблица-двойник и
+  `InstallJniTap` удалены;
+- вместо них `PrepareJni`: до вызова ядра находим
+  `org/kenjinx/android/KenjinxNative` и все шесть методов, которые ядро
+  кэширует (`test`, `updateUiHandler`, `frameEnded`, `updateProgress`,
+  `getSurfacePtr`, `getWindowHandle`), и пишем результат в `kenji-jni.txt`.
+  Ненайденное и исключения называются до падения, а не после;
+- в предзагрузку добавлены `libicuuc.so` и `libicui18n.so`: 64 ненайденных
+  `dlsym` (`u_strlen_50` …) — это пробы версий ICU, без него .NET не умеет
+  работать со строками;
+- формулировка отчёта честная: «Что мы проверили в Java за ядро».
+
+### 36.4. Проверка
+
+- сборка `41822482332` — SUCCESS, набор хоста 59/0, `KenjiCrashTest` **175/0**;
+- в `libsymbiosis_kenji.so` этой сборки: `org/kenjinx/android/KenjinxNative`,
+  «НЕ НАЙДЕН», `libicuuc.so`, `libicui18n.so` — и **нет** `Tap_FindClass`;
+- в APK обе OpenSSL-библиотеки на месте.
