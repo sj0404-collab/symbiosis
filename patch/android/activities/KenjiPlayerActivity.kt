@@ -145,6 +145,7 @@ class KenjiPlayerActivity : Activity(), SurfaceHolder.Callback {
             org.kenjinx.android.KenjinxNative.nativeSurface = nw
             org.kenjinx.android.KenjinxNative.nativeWindow = nw
 
+            runOnUiThread { status.text = "второе ядро · готовлю ядро и прошивку" }
             KenjiBridge.noteStep("1/6 · загрузка ядра")
             val prep = KenjiBridge.preparePlay(appContext, config)
             if (!prep.ok) {
@@ -170,6 +171,7 @@ class KenjiPlayerActivity : Activity(), SurfaceHolder.Callback {
                 return@Thread
             }
 
+            runOnUiThread { status.text = "второе ядро · загружаю игру" }
             KenjiBridge.noteStep("4/6 · игра")
             val load = KenjiBridge.loadGame(fd, KenjiBridge.fileTypeOf(path))
             if (!load.ok) {
@@ -192,6 +194,7 @@ class KenjiPlayerActivity : Activity(), SurfaceHolder.Callback {
             // ничего не говорит о том, с чем именно оно запустилось.
             runOnUiThread {
                 status.text = "второе ядро · играет\n" + prep.message
+                startWatchdog(appContext)
             }
 
             KenjiBridge.noteStep("6/6 · цикл отрисовки")
@@ -200,6 +203,46 @@ class KenjiPlayerActivity : Activity(), SurfaceHolder.Callback {
             runOnUiThread { leave() }
         }, "kenji-loop").also { it.start() }
     }
+
+    /**
+     * Живой счётчик вместо чёрного экрана.
+     *
+     * «Висит без ничего» — это не описание: чёрный экран одинаково выглядит у
+     * работающего ядра, у ядра без прошивки и у цикла, который стоит на
+     * первом кадре. Поэтому пока идёт игра, раз в три секунды обновляем
+     * строку: сколько секунд прошло и что последнее записало само ядро в свой
+     * журнал. Если счётчик идёт — процесс жив, и вопрос уже в кадрах; если
+     * журнал пишет ошибку — она видна на экране, а не в чужом файле.
+     */
+    private fun startWatchdog(appContext: android.content.Context) {
+        val beganAt = android.os.SystemClock.elapsedRealtime()
+        val tick = object : Runnable {
+            override fun run() {
+                if (isFinishing || isDestroyed) return
+                val seconds = (android.os.SystemClock.elapsedRealtime() - beganAt) / 1000
+                val tail = coreLogTail(appContext, 2)
+                status.text = buildString {
+                    append("второе ядро · играет · ").append(seconds).append(" с")
+                    append('\n').append(KenjiBridge.lastConfig)
+                    if (tail.isNotEmpty()) append("\n").append(tail)
+                }
+                status.postDelayed(this, 3000)
+            }
+        }
+        status.removeCallbacks(tick)
+        status.postDelayed(tick, 3000)
+    }
+
+    /** Последние содержательные строки журнала ядра. */
+    private fun coreLogTail(context: android.content.Context, lines: Int): String =
+        runCatching {
+            val file = KenjiBridge.coreLogFile(context) ?: return ""
+            val text = file.readLines()
+                .map { it.trim() }
+                .filter { it.isNotEmpty() }
+                .takeLast(lines)
+            text.joinToString("\n") { it.take(160) }
+        }.getOrDefault("")
 
     /**
      * Выполнить шаг из главного потока и дождаться ответа.

@@ -334,6 +334,60 @@ object KenjiBridge {
     }
 
     /**
+     * Перенести прошивку Eden во второе ядро — один раз, а не каждой игрой.
+     *
+     * ЗАЧЕМ. Прошивка у человека одна. Eden держит её в
+     * `<данные Eden>/nand/system/Contents/registered`, второе ядро ищет свою в
+     * `<данные ядра>/bis/system/Contents/registered` — та же раскладка внутри,
+     * но другой корень. Без переноса ядро пишет «System Firmware not installed»
+     * и коммерческая игра не поднимается: чёрный экран без ошибки.
+     *
+     * Копируем, а не ссылаемся: на /storage/emulated (FUSE) символьные ссылки
+     * запрещены, а жёсткие — тоже. Копия делается ОДИН раз: отпечаток
+     * источника (число файлов и самый свежий mtime) лежит в `.firmware-source`,
+     * и пока источник не изменился, повторного копирования нет.
+     *
+     * @return фраза для отчёта и статуса: что именно произошло с прошивкой
+     */
+    fun seedFirmware(context: Context): String {
+        val root = runCatching { DirectoryInitialization.userDirectory }.getOrNull()
+            ?: return "данные Eden неизвестны — прошивку не перенести"
+        val src = File(File(File(File(root, "nand"), "system"), "Contents"), "registered")
+        if (!src.isDirectory) return "в Eden нет прошивки — второе ядро останется без неё"
+        val files = runCatching { src.listFiles()?.filter { it.isFile } }.getOrNull().orEmpty()
+        if (files.isEmpty()) return "каталог прошивки Eden пуст"
+
+        val dest = File(File(File(dataDir(context), "bis"), "system"), "Contents/registered")
+        if (!dest.isDirectory && !dest.mkdirs()) {
+            return "не удалось создать каталог прошивки второго ядра"
+        }
+        val fingerprint = "${files.size}:${files.maxOf { it.lastModified() }}:${files.sumOf { it.length() }}"
+        val marker = File(dataDir(context), ".firmware-source")
+        val have = runCatching { dest.listFiles()?.count { it.isFile } }.getOrNull() ?: 0
+        if (have >= files.size && marker.isFile &&
+            runCatching { marker.readText().trim() }.getOrDefault("") == fingerprint
+        ) {
+            return "прошивка уже перенесена: ${files.size} файлов"
+        }
+
+        var copied = 0
+        var kept = 0
+        for (file in files) {
+            val to = File(dest, file.name)
+            if (to.isFile && to.length() == file.length()) {
+                kept++
+                continue
+            }
+            runCatching {
+                file.copyTo(to, overwrite = true)
+                copied++
+            }
+        }
+        runCatching { marker.writeText(fingerprint) }
+        return "прошивка Eden перенесена: $copied файлов, уже было $kept, всего ${files.size}"
+    }
+
+    /**
      * Prepare device + graphics. Surface and ROM come next.
      *
      * ЗДЕСЬ БЫЛО ВПИСАНО ЧИСЛАМИ. Настройки второго ядра не влияли ни на что:
@@ -350,6 +404,12 @@ object KenjiBridge {
      */
     fun preparePlay(context: Context, effective: String = ""): Status {
         seedKeys(context)
+        // Прошивка — до старта ядра: ContentManager перечисляет её в
+        // javaInitialize, и то, что скопировано позже, он уже не увидит.
+        val firmware = seedFirmware(context)
+        runCatching {
+            crashReportFile(context).takeIf { it.isFile }?.appendText("прошивка: $firmware\n")
+        }
         val started = start(context)
         if (!started.ok) return started
 
@@ -382,7 +442,11 @@ object KenjiBridge {
         } else {
             "прошивка: $lastFirmware"
         }
-        return Status(true, "плеер второго ядра готов · " + lastConfig + " · " + fwText, started.symbols)
+        return Status(
+            true,
+            "плеер второго ядра готов · " + lastConfig + " · " + fwText + " · " + firmware,
+            started.symbols
+        )
     }
 
     /**
