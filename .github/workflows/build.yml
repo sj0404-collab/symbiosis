@@ -449,10 +449,15 @@ jobs:
           fi
 
           # Порядок вызовов, на котором ядро не работает: deviceInitialize
-          # раньше рендерера. Проверяем по dex, что новый порядок доехал.
-          if unzip -p "$APK" 'classes*.dex' | grep -a -q "плеер второго ядра готов"; then
+          # раньше рендерера. Проверяем по dex, что новая подготовка доехала.
+          # Читаем распакованные classes*.dex: выше уже был cd /tmp/x, и
+          # относительный путь APK здесь уже не открывается.
+          if cat classes*.dex | grep -a -q "плеер второго ядра готов"; then
             echo "  ok   подготовка плеера второго ядра в dex"
           else echo "  MISSING подготовка плеера в dex"; fail=1; fi
+          if cat classes*.dex | grep -a -q "Второе ядро остановилось"; then
+            echo "  ok   отчёт о падении плеера в dex"
+          else echo "  MISSING отчёт о падении плеера в dex"; fail=1; fi
 
           # What the 25 MB budget is actually about.
           python3 - "$GITHUB_WORKSPACE/$APK" <<'SIZEPY' | tee -a "$GITHUB_STEP_SUMMARY"
