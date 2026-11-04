@@ -1791,6 +1791,34 @@ Java_org_yuzu_yuzu_1emu_utils_KenjiBridge_nativeAttachSurface(JNIEnv* env, jobje
 }
 
 /**
+ * Кто из пользователей открыт в ядре — словами самого ядра.
+ *
+ * ЗАЧЕМ. Игры обращаются к сервису учётной записи сразу после запуска. Если у
+ * ядра нет ни профиля, ни открытого пользователя, эти вызовы кончаются
+ * исключением в гостевом потоке, и игра встаёт на чёрном экране. Строка в
+ * отчёте отделяет «нет профиля» от «профиль есть, но не открыт».
+ */
+JNIEXPORT jstring JNICALL
+Java_org_yuzu_yuzu_1emu_utils_KenjiBridge_nativeOpenedUser(JNIEnv* env, jobject) {
+    std::lock_guard<std::mutex> guard(g_lock);
+    if (g_core == nullptr) return env->NewStringUTF("");
+    using Fn = const char* (*)();
+    auto fn = reinterpret_cast<Fn>(dlsym(g_core, "userGetOpenedUser"));
+    if (fn == nullptr) return env->NewStringUTF("");
+    g_inCore = 1;
+    const char* user = fn();
+    g_inCore = 0;
+    const std::string text = (user != nullptr) ? user : "";
+    if (g_crashPath[0] != '\0') {
+        char line[240];
+        const int n = ::snprintf(line, sizeof(line), "user: %s\n",
+                                 text.empty() ? "пользователь не открыт" : text.c_str());
+        if (n > 0) AppendCrashLine(line);
+    }
+    return env->NewStringUTF(text.c_str());
+}
+
+/**
  * Пинок рендереру после того, как поверхность появилась.
  *
  * ПОЧЕМУ ЭТО ОТДЕЛЬНЫЕ ВЫЗОВЫ, А НЕ «САМО ЗАРАБОТАЕТ». Официальное приложение

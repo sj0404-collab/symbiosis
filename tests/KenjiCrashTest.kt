@@ -738,6 +738,27 @@ fun main() {
     check("журнал JNI: исключение видно", jni.any { it.contains("ИСКЛЮЧЕНИЕ") }, jni.toString())
     check("журнал JNI: постороннее отброшено", jni.none { it.contains("GetJavaVM") }, jni.toString())
 
+    // ── исключение гостевого потока ────────────────────────────────────
+    // Отчёт с телефона 04.11 20:04: игра встала на вызове сервиса учётной
+    // записи. Стек .NET ничего не говорит человеку, поэтому у него должна
+    // быть фраза о том, что это внутренняя ошибка ядра.
+    val guest = """
+        00:00:15.538 |E| {Common} Kernel ThreadStart: Unhandled exception in guest thread:
+        System.Reflection.TargetInvocationException: Exception has been thrown by the target of an invocation.
+         ---> System.NullReferenceException: Object reference not set to an instance of an object.
+           at Ryujinx.HLE.HOS.Services.Account.IAccountServiceForApplication.IsUserAccountSwitchLocked(ServiceCtx context)
+           at Ryujinx.HLE.HOS.Services.ServerBase.Process(ServiceCtx context)
+    """.trimIndent()
+    val guestSaid = KenjiCrash.guestFailure(guest)
+    check("гостевое исключение объяснено", guestSaid.isNotEmpty(), guestSaid)
+    check("гостевое исключение: назван сервис",
+        guestSaid.contains("IAccountServiceForApplication"), guestSaid)
+    check("гостевое исключение: названо внутренней ошибкой ядра",
+        guestSaid.contains("самого ядра"), guestSaid)
+    check("гостевое исключение: предложен обход", guestSaid.contains("Eden"), guestSaid)
+    check("обычная строка — не гостевое исключение",
+        KenjiCrash.guestFailure("step=deviceInitialize").isEmpty())
+
     println()
     println("passed=$passed failed=${failures.size}")
     failures.forEach { println("FAIL  $it") }

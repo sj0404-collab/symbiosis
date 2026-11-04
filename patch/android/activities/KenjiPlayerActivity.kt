@@ -183,6 +183,21 @@ class KenjiPlayerActivity : Activity(), SurfaceHolder.Callback {
                 return@Thread
             }
 
+            // Кто открыт в ядре — до ввода и до цикла: если никого, сервис
+            // учётной записи ответит исключением, и игра встанет на чёрном
+            // экране. Тогда это видно сразу, а не через минуту гадания.
+            // Не останавливаем запуск: пустой пользователь — сильное
+            // подозрение, но не доказательство, а блокировать игру из-за
+            // подозрения нельзя. Пишем в отчёт и в строку статуса.
+            val user = KenjiBridge.openedUser()
+            runCatching {
+                KenjiReport.watch(
+                    appContext,
+                    if (user.isEmpty()) "пользователь ядра: не открыт"
+                    else "пользователь ядра: $user"
+                )
+            }
+
             // Ввод — после игры, как в официальном Kenji (GameHost.start):
             // ядро передаёт EmulationContext в менеджеры ввода, и до
             // загрузки игры его нет. Окно отдаём тем же вызовом, что и оригинал.
@@ -257,6 +272,9 @@ class KenjiPlayerActivity : Activity(), SurfaceHolder.Callback {
                     append("второе ядро · играет · ").append(seconds).append(" с")
                     append('\n').append(KenjiBridge.lastConfig)
                     append('\n').append(verdict)
+                    if (KenjiBridge.lastUser.isEmpty()) {
+                        append("\nпрофиль не открыт — сервис учётной записи может упасть")
+                    }
                     if (rate > 0) append('\n').append("≈ ").append(rate / 3).append(" кадр/с")
                     if (tail.isNotEmpty()) append('\n').append(tail)
                 }

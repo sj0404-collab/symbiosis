@@ -726,6 +726,55 @@ object KenjiCrash {
             .takeLast(limit)
     }
 
+    /**
+     * Исключение в гостевом потоке — словами, без .NET-стека.
+     *
+     * ЗАЧЕМ. «Kernel ThreadStart: Unhandled exception in guest thread:
+     * System.Reflection.TargetInvocationException ---> System.NullReferenceException
+     * at IAccountServiceForApplication.IsUserAccountSwitchLocked» — это не
+     * приговор ядру и не наша ошибка в мосте: эмулятор не смог ответить на
+     * обычный вызов сервиса, игра встала, и на экране остался чёрный кадр.
+     * Такое сообщение человеку нужно перевести.
+     *
+     * Возвращает пустую строку, если исключения гостевого потока нет.
+     */
+    fun guestFailure(text: String): String {
+        if (!text.contains("guest thread", ignoreCase = true)) return ""
+        // Строка стека выглядит как «at <Тип>.<Метод>(…)». Метод пишется
+        // с маленькой буквы, тип — с большой: по этому признаку и берётся имя
+        // сервиса, а не имя метода. В прошлой попытке в фразу попал метод
+        // (IsUserAccountSwitchLocked), и это ничего не говорило о сервисе.
+        val service = Regex("""at ([A-Za-z0-9_.]+)\(""")
+            .findAll(text)
+            .map { it.groupValues[1] }
+            .firstOrNull { it.contains("Services.") }
+            ?.split('.')
+            ?.let { parts ->
+                // В стеке .NET тип и метод пишутся одинаково — с большой
+                // буквы, поэтому «последний компонент» — это метод. Тип ищется
+                // по признаку интерфейса сервиса: имя начинается с «I» и
+                // следующая буква большая. Если такого нет — берётся
+                // предпоследний компонент (класс, а не метод).
+                val afterServices = parts.dropWhile { it != "Services" }.drop(1)
+                afterServices.firstOrNull { part ->
+                    part.length > 2 && part[0] == 'I' && part[1].isUpperCase()
+                } ?: parts.getOrNull(parts.size - 2) ?: parts.last()
+            }
+        val nullRef = text.contains("NullReferenceException")
+        return buildString {
+            append("Игра остановилась на вызове сервиса эмулятора")
+            if (service != null) append(" «").append(service).append("»")
+            append(": ")
+            append(
+                if (nullRef) "ядро не смогло ответить на обычный запрос и вернуло пустоту."
+                else "внутри обработчика возникло исключение."
+            )
+            append(" Это внутренняя ошибка самого ядра (не моста и не файла игры): ")
+            append("на этом вызове игра встаёт, кадры перестают идти. ")
+            append("Обойти можно выбором Eden для этой игры долгим нажатием на плитке.")
+        }
+    }
+
     /** Библиотеки, которые только передают сигнал, а не вызывают его. */
     private val SYSTEM_LIBS = listOf("libc.so", "libc++", "libdl.so", "libm.so", "[vdso]")
 
@@ -735,6 +784,11 @@ object KenjiCrash {
         "javaInitialize" -> "javaInitialize — передача ядру пути к данным и JNI"
         "deviceInitialize" -> "deviceInitialize — настройка устройства"
         "graphicsInitialize" -> "graphicsInitialize — настройка графики"
+        "attachSurface" -> "attachSurface — создание рендерера"
+        "inputInitialize" -> "inputInitialize — ввод (касания и геймпады)"
+        "rendererKick" -> "rendererKick — подготовка вывода кадров"
+        "deviceLoadDescriptor" -> "deviceLoadDescriptor — открытие файла игры"
+        "graphicsRendererRunLoop" -> "цикл отрисовки — игра идёт"
         else -> step
     }
 

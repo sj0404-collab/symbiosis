@@ -329,6 +329,13 @@ class KenjiProbeService : Service() {
                         .append(" закрыто. Тогда единственный источник — буфер крашеи, и он пуст.")
                 }
             }
+
+            // Перевод на человеческий: исключение гостевого потока — это
+            // внутренняя ошибка ядра, и по .NET-стеку это не видно.
+            val guest = KenjiCrash.guestFailure(own + "\n" + exception.joinToString("\n"))
+            if (guest.isNotEmpty()) {
+                body.append("\n\nЧто это значит:\n• ").append(guest).append('\n')
+            }
             return body.toString().trim()
         }
 

@@ -2212,3 +2212,76 @@ APK: https://gofile.io/d/nCPhuoEy, MD5 `f9860d3e3dbd6ca6fb6e9a46f6cc9f1f`.
   своего выбора нет;
 - инструкция («Утилиты» → инструкция → «Два ядра: гибрид») описывает и это, и
   новую папку данных второго ядра.
+
+## 43. Исключение в гостевом потоке: разбор и что сделано
+
+### 43.1. Что было в отчёте с телефона (04.11, 20:04, PID 28267)
+
+```
+00:00:15.538 |E| {Common} Kernel ThreadStart: Unhandled exception in guest thread:
+System.Reflection.TargetInvocationException ---> System.NullReferenceException
+  at IAccountServiceForApplication.IsUserAccountSwitchLocked(ServiceCtx)+0x3c
+  → DynamicInvokeInfo.InvokeWithFewArguments → InstanceMethodInvoker.Invoke
+  → RuntimeMethodInfo.Invoke → IpcService.CallCmifMethod+0x600
+  → ServerBase.Process+0x674 → ServerBase.ServerLoop+0x6f0 → KThread.ThreadStart+0xac
+```
+
+Java-методы найдены все (FindClass ok, шесть `GetStaticMethodID` ok), то есть
+мост ни при чём: исключение пришло изнутри ядра, в его собственном потоке.
+
+### 43.2. Откуда берётся пустая ссылка
+
+По исходнику ядра (`libryujinx_bionic`):
+
+```csharp
+// IAccountServiceForApplication
+public ResultCode IsUserAccountSwitchLocked(ServiceCtx context)
+{
+    return context.Device.Processes.GetProcess(context.ClientProcessId)
+        .ApplicationControlProperties.UserAccountSwitchLock;
+}
+```
+
+- `Processes.GetProcess(pid)` — не «найти во что бы то ни стало»: при промахе он
+  печатает предупреждение и возвращает `ActiveApplication`, а тот **равен `null`**,
+  если ни один процесс ещё не стартовал (`_latestPid == 0`);
+- значит исключение означает одно из двух: процесса игры ещё нет
+  (`LoadApplication` не отметился) или он есть, но `ApplicationControlProperties`
+  пусты. Второе в коде не встречается — `ProcessResult` заполняет их в
+  конструкторе всегда. Остаётся первое: **игра попросила сервис раньше, чем
+  ядро зарегистрировало её процесс**.
+
+Это и объясняет «чёрный экран без кадров»: исключение убивает гостевой поток,
+`frameEnded` не вызывается ни разу, цикл отрисовки стоит.
+
+### 43.3. Что поправлено в запуске
+
+Профиль — единственное, что в этом вызове зависит от данных, а не от гонки:
+
+1. **`KenjiBridge.seedProfile`** копирует профиль Eden (`profiles/*.json`) в
+   `<папка ядра>/Profiles` при первом запуске, если там пусто. Раскладка у двух
+   ядер одна, файлы переносятся как есть. При пустом профиле ядро само заводит
+   «KenPlayer», но это поведение конкретной сборки, а не гарантия.
+2. **`nativeOpenedUser`** (новый JNI-экспорт `userGetOpenedUser`) — ядро само
+   называет открытого пользователя. Строка пишется в наблюдение
+   (`kenji/play-watch.txt`) и в отчёт о падении; если пусто, в окне плеера
+   появляется предупреждение «профиль не открыт — сервис учётной записи может
+   упасть».
+3. **`KenjiCrash.guestFailure`** переводит стек на человеческий: «Игра
+   остановилась на вызове сервиса эмулятора «IAccountServiceForApplication»:
+   ядро не смогло ответить на обычный запрос и вернуло пустоту. Это внутренняя
+   ошибка самого ядра…». Строка попадает в блок «Что это значит» отчёта, а не
+   в лог.
+
+Запуск при пустом профиле **не блокируется**: подозрение — не доказательство,
+и запрещать игру из-за него нельзя.
+
+### 43.4. Проверки
+
+- `KenjiCrashTest` — 180 проверок, 0 провалов (новые: сервис назван типом
+  `IAccountServiceForApplication`, а не методом; фраза «самого ядра»;
+  предложение обхода; обычная строка не считается гостевым исключением);
+- `KenjiDataTest` — 23/23;
+- Kotlin: 110 файлов, синтаксис 0 проблем, ссылки 0 проблем;
+- JNI: 84 объявления, 0 проблем (`nativeOpenedUser` совпал с C++-именем);
+- C++: `-fsyntax-only -Wall -Wextra` чисто.

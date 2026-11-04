@@ -107,6 +107,8 @@ object KenjiBridge {
     ): String
     /** Версия прошивки по словам ядра (пусто — не установлена). */
     private external fun nativeFirmwareVersion(): String
+    /** Открытый пользователь ядра (пусто — никого не открыли). */
+    private external fun nativeOpenedUser(): String
     private external fun nativeAttachSurface(surface: android.view.Surface, width: Int, height: Int): String
     /** Инициализация ввода — только после устройства и загрузки игры. */
     private external fun nativeInputInit(width: Int, height: Int): String
@@ -385,6 +387,43 @@ object KenjiBridge {
     }
 
     /**
+     * Перенести профиль пользователя Eden во второе ядро.
+     *
+     * ЗАЧЕМ. У ядра свой `AccountManager`: он читает `<корень>/Profiles` и
+     * заводит пользователя «KenPlayer», если не нашёл никого. Игры спрашивают
+     * сервис учётной записи почти сразу после запуска (`IsUserAccountSwitchLocked`
+     * и соседние методы), и на пустом профиле эти вызовы кончаются
+     * исключением в гостевом потоке: игра встаёт на чёрном экране, а в журнале
+     * остаётся `Unhandled exception in guest thread`.
+     *
+     * Профиль Eden переносится как есть — это те же json-файлы Ryujinx:
+     * раскладка каталога у обоих ядер совпадает.
+     */
+    fun seedProfile(context: Context): String {
+        val coreRoot = dataDir(context)
+        val dest = File(coreRoot, "Profiles").apply { mkdirs() }
+        val already = runCatching { dest.listFiles()?.count { it.isFile } ?: 0 }.getOrDefault(0)
+        if (already > 0) return "профиль уже в папке ядра: $already файлов"
+
+        val root = runCatching { DirectoryInitialization.userDirectory }.getOrNull()
+            ?: return "данные Eden неизвестны — профиль не перенести"
+        // Раскладка может быть в обоих регистрах: «profiles» у Eden и
+        // «Profiles» у ядра. Берём то, что есть.
+        val src = listOf(File(root, "profiles"), File(root, "Profiles"))
+            .firstOrNull { it.isDirectory }
+            ?: return "в Eden нет профиля"
+
+        var copied = 0
+        for (file in runCatching { src.listFiles()?.filter { it.isFile } }.getOrNull().orEmpty()) {
+            runCatching {
+                file.copyTo(File(dest, file.name), overwrite = true)
+                copied++
+            }
+        }
+        return if (copied > 0) "профиль Eden перенесён: $copied файлов" else "профиль Eden пуст"
+    }
+
+    /**
      * Перенести прошивку Eden во второе ядро — один раз, а не каждой игрой.
      *
      * ЗАЧЕМ. Прошивка у человека одна. Eden держит её в
@@ -465,6 +504,7 @@ object KenjiBridge {
         seedKeys(context)
         // Прошивка — до старта ядра: ContentManager перечисляет её в
         // javaInitialize, и то, что скопировано позже, он уже не увидит.
+        val profile = seedProfile(context)
         val firmware = seedFirmware(context)
         runCatching {
             crashReportFile(context).takeIf { it.isFile }?.appendText("прошивка: $firmware\n")
@@ -504,7 +544,8 @@ object KenjiBridge {
         }
         return Status(
             true,
-            "плеер второго ядра готов · " + lastConfig + " · " + fwText + " · " + firmware,
+            "плеер второго ядра готов · " + lastConfig + " · " + fwText + " · " + firmware +
+                " · " + profile,
             started.symbols
         )
     }
@@ -560,6 +601,20 @@ object KenjiBridge {
     }
 
     /**
+     * Открытый пользователь ядра.
+     *
+     * Пустая строка — никого не открыли. Именно в этом состоянии сервис
+     * учётной записи отвечает исключением, и игра встаёт на чёрном экране;
+     * строка нужна, чтобы это было видно до запуска, а не после.
+     */
+    fun openedUser(): String {
+        ensureBridge()?.let { return "" }
+        val user = runCatching { nativeOpenedUser() }.getOrDefault("").trim()
+        lastUser = user
+        return user
+    }
+
+    /**
      * С какими настройками стартовал плеер.
      *
      * Показывается в статусе [org.yuzu.yuzu_emu.activities.KenjiPlayerActivity]
@@ -573,6 +628,11 @@ object KenjiBridge {
     /** Версия прошивки второго ядра, как её называет само ядро. */
     @Volatile
     var lastFirmware: String = ""
+        private set
+
+    /** Открытый пользователь ядра на момент запуска (пусто — никого). */
+    @Volatile
+    var lastUser: String = ""
         private set
 
     /** Настройки, посчитанные в [preparePlay]; их ждёт [deviceInit]. */
