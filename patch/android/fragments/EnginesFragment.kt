@@ -288,9 +288,10 @@ class EnginesFragment : Fragment() {
         // Если выбрана папка самого Eden — это работает (прошивка, ключи, сейвы
         // общие), но ядро будет писать туда же свои журналы и профили. Честно
         // предупреждаем: молчаливая запись в чужое дерево — не сюрприз, а баг.
+        // userDirectory — строка, не File: у String свойства canonicalPath нет.
         val edenRoot = runCatching { org.yuzu.yuzu_emu.utils.DirectoryInitialization.userDirectory }
-            .getOrNull()?.canonicalPath
-        val chosenPath = dataRoot?.canonicalPath
+            .getOrNull()?.let { runCatching { java.io.File(it).canonicalPath }.getOrNull() }
+        val chosenPath = runCatching { dataRoot?.canonicalPath }.getOrNull()
         if (edenRoot != null && chosenPath != null && chosenPath == edenRoot) {
             root.addView(
                 banner(
