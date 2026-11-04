@@ -3,29 +3,81 @@
 
 package org.kenjinx.android
 
+import java.util.concurrent.atomic.AtomicLong
+
 /**
  * Callbacks the Kenji core looks up by this exact class name.
  * Without it javaInitialize / GetSurfacePtr crash or no-op.
  * This is a shim, not Kenji's UI.
+ *
+ * ЗАЧЕМ ЗДЕСЬ СЧЁТЧИКИ. «Игра идёт, но экран чёрный» невозможно отличить от
+ * «ядро стоит на загрузке», пока не видно, доходят ли до нас его собственные
+ * вызовы. Ядро зовёт `frameEnded()` на КАЖДЫЙ показанный кадр (это его
+ * SetSwapBuffersCallback) и `getSurfacePtr()` один раз, когда создаёт
+ * поверхность Vulkan. Значит:
+ *
+ *   кадров 0, окно спрашивали 0  — цикл не дошёл до отрисовки;
+ *   кадров 0, окно спрашивали ≥1 — поверхность создана, но кадры не идут;
+ *   кадров растёт, экран чёрный  — кадры есть, вопрос в выводе на экран.
+ *
+ * Три разных диагноза вместо одного «висит».
  */
 object KenjinxNative {
     @Volatile var nativeSurface: Long = -1
     @Volatile var nativeWindow: Long = -1
 
+    /** Сколько кадров ядро уже отрисовало. Растёт — значит цикл живой. */
+    val frames = AtomicLong(0)
+
+    /** Когда был последний кадр, мс по monotonic-часам. */
+    @Volatile var lastFrameAt: Long = 0
+
+    /** Сколько раз ядро спрашивало указатель на поверхность. */
+    val surfaceAsked = AtomicLong(0)
+
+    /** Сколько раз ядро спрашивало дескриптор окна. */
+    val windowAsked = AtomicLong(0)
+
+    /** Что последним передавал обработчик прогресса загрузки. */
+    @Volatile var lastProgress: Float = -1f
+
     @JvmStatic
     fun test() { /* official no-op */ }
 
+    /**
+     * Кадр показан. Вызывается ядром на каждый swap buffers.
+     *
+     * Тело намеренно короткое: это горячий путь, и любая работа здесь
+     * отнимает кадровое время у самой игры.
+     */
     @JvmStatic
-    fun frameEnded() { /* frame callback */ }
+    fun frameEnded() {
+        frames.incrementAndGet()
+        lastFrameAt = System.nanoTime() / 1_000_000
+    }
+
+    /**
+     * Прогресс загрузки от ядра: `updateProgress(infoPtr, progress)`.
+     *
+     * Не только запоминаем: в официальном приложении это полоса загрузки, и
+     * именно по ней видно, что ядро ещё собирает шейдеры, а не висит.
+     */
+    @JvmStatic
+    fun updateProgress(infoPtr: Long, progress: Float) {
+        lastProgress = progress
+    }
 
     @JvmStatic
-    fun updateProgress(infoPtr: Long, progress: Float) { /* ignore */ }
+    fun getSurfacePtr(): Long {
+        surfaceAsked.incrementAndGet()
+        return nativeSurface
+    }
 
     @JvmStatic
-    fun getSurfacePtr(): Long = nativeSurface
-
-    @JvmStatic
-    fun getWindowHandle(): Long = nativeWindow
+    fun getWindowHandle(): Long {
+        windowAsked.incrementAndGet()
+        return nativeWindow
+    }
 
     @JvmStatic
     fun updateUiHandler(
@@ -39,4 +91,18 @@ object KenjinxNative {
         newSubtitlePointer: Long,
         newInitialTextPointer: Long
     ) { /* software keyboard — ignore */ }
+
+    /** Счётчики одной строкой — для статуса плеера и отчёта. */
+    fun stats(): String =
+        "кадров: ${frames.get()} · окно спрашивали: ${surfaceAsked.get()}/${windowAsked.get()}" +
+            if (lastProgress >= 0f) " · загрузка: ${(lastProgress * 100).toInt()}%" else ""
+
+    /** Сбросить счётчики перед новым запуском. */
+    fun resetStats() {
+        frames.set(0)
+        surfaceAsked.set(0)
+        windowAsked.set(0)
+        lastFrameAt = 0
+        lastProgress = -1f
+    }
 }

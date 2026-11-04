@@ -1791,6 +1791,58 @@ Java_org_yuzu_yuzu_1emu_utils_KenjiBridge_nativeAttachSurface(JNIEnv* env, jobje
 }
 
 /**
+ * Пинок рендереру после того, как поверхность появилась.
+ *
+ * ПОЧЕМУ ЭТО ОТДЕЛЬНЫЕ ВЫЗОВЫ, А НЕ «САМО ЗАРАБОТАЕТ». Официальное приложение
+ * после появления поверхности делает ровно четыре вещи: отдаёт ядру окно,
+ * сообщает поворот экрана, включает растяжение на весь экран и пересоздаёт
+ * цепочку буферов. Без последнего Vulkan может рисовать в старую цепочку,
+ * которой уже нет: цикл идёт, звук есть, кадров на экране нет — ровно то, что
+ * видит человек.
+ *
+ * Все четыре вызова безобидны, если ядро их не знает: dlsym вернёт nullptr.
+ */
+JNIEXPORT void JNICALL
+Java_org_yuzu_yuzu_1emu_utils_KenjiBridge_nativeRendererKick(JNIEnv*, jobject, jint width,
+                                                              jint height, jint rotation) {
+    std::lock_guard<std::mutex> guard(g_lock);
+    if (g_core == nullptr) return;
+    NoteStep("rendererKick");
+
+    // 1. Поворот поверхности так, как это делает официальный Kenji.
+    if (auto fn = reinterpret_cast<void (*)(int)>(dlsym(g_core, "deviceSetSurfaceRotation"))) {
+        g_inCore = 1;
+        fn(static_cast<int>(rotation));
+        g_inCore = 0;
+    }
+    // 2. Размер отрисовки.
+    if (auto fn = reinterpret_cast<void (*)(int, int)>(dlsym(g_core, "graphicsRendererSetSize"))) {
+        g_inCore = 1;
+        fn(width > 0 ? width : 1280, height > 0 ? height : 720);
+        g_inCore = 0;
+    }
+    // 3. Растяжение на весь экран — на телефоне это то, что человек ждёт.
+    if (auto fn = reinterpret_cast<void (*)(bool)>(dlsym(g_core, "graphicsSetFullscreenStretch"))) {
+        g_inCore = 1;
+        fn(true);
+        g_inCore = 0;
+    }
+    // 4. Пересоздать цепочку буферов на актуальной поверхности.
+    if (auto fn = reinterpret_cast<void (*)()>(dlsym(g_core, "deviceRecreateSwapchain"))) {
+        g_inCore = 1;
+        fn();
+        g_inCore = 0;
+    }
+    // 5. Явно разрешить показ: SetPresentEnabled(false) в ядре гасит вывод, и
+    //    после него PresentAllowed остаётся ложным до явного true.
+    if (auto fn = reinterpret_cast<void (*)(bool)>(dlsym(g_core, "graphicsSetPresentEnabled"))) {
+        g_inCore = 1;
+        fn(true);
+        g_inCore = 0;
+    }
+}
+
+/**
  * Ввод — после устройства и после игры.
  *
  * Порядок не наш вкус: `InitializeInput` передаёт `EmulationContext` в

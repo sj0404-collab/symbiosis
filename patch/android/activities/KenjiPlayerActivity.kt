@@ -21,6 +21,7 @@ import android.widget.Toast
 import java.io.File
 import org.yuzu.yuzu_emu.utils.EngineLoader
 import org.yuzu.yuzu_emu.utils.KenjiBridge
+import org.yuzu.yuzu_emu.utils.KenjiPlayService
 import org.yuzu.yuzu_emu.utils.KenjiReport
 
 /**
@@ -60,6 +61,8 @@ class KenjiPlayerActivity : Activity(), SurfaceHolder.Callback {
     private var started = false
     /** Запуск оборвался с названной причиной — она должна остаться в отчёте. */
     private var failed = false
+    /** Кадров на прошлом тике: разница показывает текущую скорость. */
+    private var lastFrames = 0L
     private lateinit var status: TextView
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -140,6 +143,7 @@ class KenjiPlayerActivity : Activity(), SurfaceHolder.Callback {
             }
             KenjiBridge.armCrashReport(appContext)
             KenjiReport.markStart(appContext)
+            org.kenjinx.android.KenjinxNative.resetStats()
 
             val nw = KenjiBridge.nativeWindow(holder.surface)
             org.kenjinx.android.KenjinxNative.nativeSurface = nw
@@ -194,10 +198,25 @@ class KenjiPlayerActivity : Activity(), SurfaceHolder.Callback {
             // ничего не говорит о том, с чем именно оно запустилось.
             runOnUiThread {
                 status.text = "второе ядро · играет\n" + prep.message
+                // Уведомление поднимает приоритет процесса: без него система
+                // выгружает :kenji первой, как только кончается память, и игра
+                // пропадает вместе с плеером.
+                runCatching { KenjiPlayService.start(appContext, title) }
                 startWatchdog(appContext)
             }
 
-            KenjiBridge.noteStep("6/6 · цикл отрисовки")
+            // Пинок рендереру ровно как в официальном приложении: поворот,
+            // размер, растяжение, пересоздание цепочки буферов, разрешение
+            // показа. Без этого Vulkan может рисовать в старую цепочку —
+            // цикл идёт, а на экране ничего.
+            KenjiBridge.noteStep("6/7 · рендерер")
+            val kick = KenjiBridge.rendererKick(w, h, displayRotation())
+            if (!kick.ok) {
+                runOnUiThread { fail(kick.message) }
+                return@Thread
+            }
+
+            KenjiBridge.noteStep("7/7 · цикл отрисовки")
             KenjiBridge.runLoop()
             KenjiBridge.noteStep("цикл завершён")
             runOnUiThread { leave() }
@@ -220,17 +239,57 @@ class KenjiPlayerActivity : Activity(), SurfaceHolder.Callback {
             override fun run() {
                 if (isFinishing || isDestroyed) return
                 val seconds = (android.os.SystemClock.elapsedRealtime() - beganAt) / 1000
-                val tail = coreLogTail(appContext, 3)
+                val frames = org.kenjinx.android.KenjinxNative.frames.get()
+                val rate = frames - lastFrames
+                lastFrames = frames
+                val verdict = when {
+                    frames == 0L && org.kenjinx.android.KenjinxNative.surfaceAsked.get() == 0L ->
+                        "цикл ещё не дошёл до отрисовки"
+                    frames == 0L -> "поверхность создана, кадров нет"
+                    else -> "кадров $frames (+$rate за 3 с)"
+                }
+                val tail = coreLogTail(appContext, 2)
                 status.text = buildString {
                     append("второе ядро · играет · ").append(seconds).append(" с")
                     append('\n').append(KenjiBridge.lastConfig)
-                    if (tail.isNotEmpty()) append("\n").append(tail)
+                    append('\n').append(verdict)
+                    if (rate > 0) append('\n').append("≈ ").append(rate / 3).append(" кадр/с")
+                    if (tail.isNotEmpty()) append('\n').append(tail)
+                }
+                // Тот же текст — в отчёт. Человеку некогда делать скриншот на
+                // чёрном экране, поэтому всё, что видно, записывается само.
+                runCatching {
+                    KenjiReport.watch(appContext, "$seconds с · $verdict")
                 }
                 status.postDelayed(this, 3000)
             }
         }
         status.removeCallbacks(tick)
         status.postDelayed(tick, 3000)
+    }
+
+    /**
+     * Поворот экрана в градусах — ядру нужно именно число.
+     *
+     * Официальное приложение передаёт его тем же вызовом при каждом появлении
+     * поверхности: от него зависит преобразование буфера, а значит и то, в
+     * какой ориентации кадр попадёт на экран.
+     */
+    private fun displayRotation(): Int {
+        val rotation = runCatching {
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R) {
+                display?.rotation
+            } else {
+                @Suppress("DEPRECATION")
+                windowManager.defaultDisplay.rotation
+            }
+        }.getOrNull() ?: 0
+        return when (rotation) {
+            android.view.Surface.ROTATION_90 -> 90
+            android.view.Surface.ROTATION_180 -> 180
+            android.view.Surface.ROTATION_270 -> 270
+            else -> 0
+        }
     }
 
     /**
@@ -295,6 +354,7 @@ class KenjiPlayerActivity : Activity(), SurfaceHolder.Callback {
     }
 
     override fun onDestroy() {
+        runCatching { KenjiPlayService.stop(applicationContext) }
         // Метка «вышли штатно» — до unload: если процесс умрёт ниже, отчёт
         // о падении должен остаться, а не превратиться в чистый выход.
         // А после названного отказа метку не меняем: причина должна дойти до

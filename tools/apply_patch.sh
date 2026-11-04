@@ -249,6 +249,56 @@ open(path, 'w', encoding='utf-8').write(text)
 print('  declared KenjiProbeService in :kenji')
 PYEOF
 
+# Уведомление «второе ядро: играет».
+#
+# Процесс :kenji держит ядро и до 4 ГБ гостевой памяти — для системы это
+# первый кандидат на выгрузку. Фоновый сервис поднимает его приоритет, и игра
+# не пропадает вместе с плеером. Разрешения добавляются только если их нет:
+# Eden уже пользуется своим ForegroundService, и дубликат сломал бы сборку.
+python3 - "$MANIFEST" <<'PYFGS'
+import sys
+
+path = sys.argv[1]
+text = open(path, encoding='utf-8').read()
+
+if 'KenjiPlayService' in text:
+    print('  manifest already declares the Kenji play service')
+    raise SystemExit(0)
+
+perms = []
+for perm in ('android.permission.FOREGROUND_SERVICE',
+             'android.permission.FOREGROUND_SERVICE_SPECIAL_USE',
+             'android.permission.POST_NOTIFICATIONS'):
+    if perm not in text:
+        perms.append('    <uses-permission android:name="%s" />' % perm)
+
+service = """
+        <!-- Держит процесс :kenji в приоритете, пока идёт игра. -->
+        <service
+            android:name="org.yuzu.yuzu_emu.utils.KenjiPlayService"
+            android:process=":kenji"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="emulation" />
+        </service>
+"""
+
+marker = '</application>'
+if marker not in text:
+    print('  ::warning:: no </application>; play service not added')
+    raise SystemExit(0)
+
+text = text.replace(marker, service + '    ' + marker, 1)
+if perms:
+    app = '<application'
+    if app in text:
+        text = text.replace(app, '\n'.join(perms) + '\n' + app, 1)
+open(path, 'w', encoding='utf-8').write(text)
+print('  declared KenjiPlayService in :kenji (%d permissions added)' % len(perms))
+PYFGS
+
 # Android 11+ hides other packages unless we declare them. Without this
 # Spaces.official() always looks empty even when Kenji is installed.
 python3 - "$MANIFEST" <<'PYQ'

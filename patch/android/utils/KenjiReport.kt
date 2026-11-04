@@ -68,6 +68,36 @@ object KenjiReport {
     }
 
     /**
+     * Файл наблюдения за идущей игрой.
+     *
+     * ЗАЧЕМ ОТДЕЛЬНЫЙ ФАЙЛ. Снимок экрана сделать некогда: игра закрывается
+     * или висит, а человек не успевает нажать. Поэтому раз в три секунды
+     * плеер пишет сюда, что видно: сколько идёт, растут ли кадры, спрашивало
+     * ли ядро окно. После падения эти строки попадают в причину — их не надо
+     * ни фотографировать, ни переписывать.
+     */
+    fun watchFile(context: Context): File =
+        File(KenjiBridge.crashReportFile(context).parentFile, "play-watch.txt")
+
+    /** Записать строку наблюдения. Держим только последние 12. */
+    fun watch(context: Context, line: String) {
+        runCatching {
+            val file = watchFile(context)
+            val old = if (file.isFile) file.readLines() else emptyList()
+            val text = (old + "$stamp() · $line").takeLast(12).joinToString("\n")
+            file.writeText(text + "\n")
+        }
+    }
+
+    /** Хвост наблюдения — для причины падения. */
+    fun watchTail(context: Context, lines: Int = 3): String =
+        runCatching {
+            watchFile(context).takeIf { it.isFile }
+                ?.readLines()?.filter { it.isNotBlank() }?.takeLast(lines)
+                ?.joinToString("\n")
+        }.getOrDefault("").orEmpty()
+
+    /**
      * Причина прошлого запуска, если он не закончился штатно.
      *
      * Метка гасится ДО показа: `onResume` у фрагментов вызывается не один раз,
@@ -82,6 +112,7 @@ object KenjiReport {
 
         val report = runCatching { KenjiProbeService.crashMessage(context) }
             .getOrNull().orEmpty().trim()
+        val watch = watchTail(context)
         val body = if (report.isEmpty()) {
             "Ядро остановилось до первой записи: ни шага, ни сигнала, ни журнала.\n" +
                 "Это значит, что процесс завершился до того, как мост успел что-то записать. " +
@@ -89,7 +120,12 @@ object KenjiReport {
         } else {
             report
         }
-        return "${text}\n\n$body"
+        return buildString {
+            append(text).append("\n\n").append(body)
+            if (watch.isNotEmpty()) {
+                append("\n\nЧто было видно на экране перед остановкой:\n").append(watch)
+            }
+        }
     }
 
     /** Показать причину прошлого падения, если она есть. Тихо, если нет. */

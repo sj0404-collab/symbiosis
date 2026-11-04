@@ -110,6 +110,8 @@ object KenjiBridge {
     private external fun nativeAttachSurface(surface: android.view.Surface, width: Int, height: Int): String
     /** Инициализация ввода — только после устройства и загрузки игры. */
     private external fun nativeInputInit(width: Int, height: Int): String
+    /** Поворот, размер, растяжение и пересоздание цепочки буферов. */
+    private external fun nativeRendererKick(width: Int, height: Int, rotation: Int): String
     private external fun nativeSetWindowHandle(handle: Long)
     private external fun nativeLoadGame(fd: Int, type: Int): String
     private external fun nativeRunLoop(): String
@@ -607,6 +609,20 @@ object KenjiBridge {
         val err = runCatching { nativeInputInit(width, height) }
             .getOrElse { return Status(false, it.message ?: "ввод") }
         return if (err.isEmpty()) Status(true, "ввод поднят") else Status(false, err)
+    }
+
+    /**
+     * Пинок рендереру после появления поверхности.
+     *
+     * Официальное приложение после SurfaceView делает поворот, размер,
+     * растяжение и пересоздание цепочки буферов. Без пересоздания Vulkan может
+     * рисовать в старую цепочку: цикл идёт, а на экране ничего.
+     */
+    fun rendererKick(width: Int, height: Int, rotation: Int): Status {
+        ensureBridge()?.let { return Status(false, it) }
+        val err = runCatching { nativeRendererKick(width, height, rotation) }
+            .getOrElse { return Status(false, it.message ?: "рендерер") }
+        return if (err.isEmpty()) Status(true, "рендерер готов") else Status(false, err)
     }
 
     /** Отдать ядру окно Android — по нему оно считает поворот и размер. */
