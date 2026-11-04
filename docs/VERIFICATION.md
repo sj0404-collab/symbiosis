@@ -1750,3 +1750,53 @@ Microsoft: на 64-битной системе по умолчанию резе�
 - `KenjiCrashTest` — **168/0**; в dex и мосте этой сборки есть все новые
   строки (`DOTNET_GCRegionRange`, `400000000`, «настройка прочитана»,
   «настройка не прочитана», «не хватило адресного пространства»).
+
+## 35. Ядро инициализировалось. Дальше — криптография .NET
+
+Сборка `a8446f4` → запуск `41815485762` **SUCCESS**,
+APK: https://gofile.io/d/tTJpINM6, MD5 `797924a565dfdb30bc35e174e0d67434`.
+
+### 35.1. Что пришло с устройства (13:35)
+
+```
+init-callback: original=0 calls=1
+00:00:00.087 |N| Application Initialize: Using base path: …/files/kenji
+00:00:00.090 |E| .NET TP Worker No usable version of libssl was found
+SIGABRT, кадры: libc +0x530f4 → libsymbiosis_kenji.so+0x2bbd4 → libkenji.so+0x17b0874 → …
+```
+
+`init-callback=0` — **инициализация ядра прошла**: настройка кучи (§34)
+сработала, журнал ядра появился, каталог данных принят. Через 3 мс рабочий
+поток .NET сказал, что нет `libssl`, и процесс остановился.
+
+### 35.2. Почему
+
+Криптография .NET (`System.Security.Cryptography`) ищет OpenSSL по списку
+имён. В файле ядра это видно строками: `libssl.so.3`, `libssl.so.1.1`,
+`libssl.so.1.0.2`, `libssl.so.1.0.0`, `libssl.so.10`, `libssl.so`, и рядом
+сообщение `No usable version of libssl was found`. Не найдя ни одного, она
+**останавливает процесс** — это её штатное поведение, а не сбой ядра.
+В Android своих `libssl`/`libcrypto` нет, Eden их не носил, а оригинальное
+приложение Kenji кладёт обе рядом с собой.
+
+### 35.3. Что сделано
+
+- `patch/libs/arm64-v8a/libssl.so` (507 408 Б) и `libcrypto.so` (2 367 064 Б) —
+  OpenSSL 1.1.1l для Android arm64 из дерева Kenji-NX; `SONAME libssl.so`,
+  зависимость `libcrypto.so` по имени;
+- `apply_patch.sh` кладёт их в `jniLibs/arm64-v8a`, AGP упаковывает в
+  `lib/arm64-v8a` (сборка с `useLegacyPackaging` — библиотеки распаковываются
+  при установке, `dlopen` находит их по имени);
+- мост загружает обе **до** ядра: сначала по своему каталогу (абсолютный
+  путь), затем по имени; результат — строкой `ssl: libssl.so=ok (путь)` либо
+  `ssl: libssl.so=HET (причина)` с пояснением, что процесс будет остановлен.
+
+### 35.4. Проверка
+
+- сборка `41815485762` — SUCCESS, набор хоста 59/0;
+- в APK: `lib/arm64-v8a/libssl.so` 507 408 Б и `lib/arm64-v8a/libcrypto.so`
+  2 367 064 Б — размеры совпадают с исходными побайтно, ELF aarch64,
+  `SONAME libssl.so`, `NEEDED libcrypto.so`;
+- в мосте этой сборки: строки `ssl: %s=ok (%s)`, `ssl: %s=HET (%s)`,
+  «криптография .NET остановит ядро», `DOTNET_GCRegionRange`;
+- `KenjiCrashTest` — **171/0**.
