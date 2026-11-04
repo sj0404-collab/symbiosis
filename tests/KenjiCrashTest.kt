@@ -606,6 +606,26 @@ fun main() {
     check("в отчёте счётчик загрузчика", argsText.contains("запросов к загрузчику: 3"), argsText)
     check("в отчёте ненайденное", argsText.contains("не найдено: 1"), argsText)
 
+    // Отбор строк по ярлыку: ядро подписывает системе свои сообщения задолго
+    // до того, как заведёт файл журнала, и для отказа это единственный след.
+    val tagLog = """
+        05-01 19:04:11.001  4628  4650 I RyujinxLog: Using base path: /x
+        05-01 19:04:11.002  4628  4650 W RyujinxLog: Custom Data Directory missing
+        05-01 19:04:11.003  4628  4650 I Choreographer: Skipped 42 frames
+        05-01 19:04:11.004  4628  4650 E AndroidRuntime: FATAL EXCEPTION
+        I/RyujinxLog( 4628): brief format line
+    """.trimIndent()
+    val tagged = KenjiCrash.linesByTag(tagLog, "RyujinxLog")
+    check("ярлык: обе строки threadtime и одна brief", tagged.size == 3, tagged.toString())
+    check("ярлык: чужая подпись не попала", tagged.none { it.contains("Choreographer") }, tagged.toString())
+    check("ярлык: текст сохранён", tagged.any { it.contains("Custom Data Directory missing") },
+        tagged.toString())
+    check("ярлык: пустой ввод даёт пусто", KenjiCrash.linesByTag("", "RyujinxLog").isEmpty(), "не пусто")
+    check("ярлык: чужое имя не совпадает", KenjiCrash.linesByTag(tagLog, "Ryujinx").isEmpty(),
+        KenjiCrash.linesByTag(tagLog, "Ryujinx").toString())
+    check("ярлык: предел соблюдён", KenjiCrash.linesByTag(tagLog, "RyujinxLog", limit = 2).size == 2,
+        KenjiCrash.linesByTag(tagLog, "RyujinxLog", limit = 2).toString())
+
     println()
     println("passed=$passed failed=${failures.size}")
     failures.forEach { println("FAIL  $it") }

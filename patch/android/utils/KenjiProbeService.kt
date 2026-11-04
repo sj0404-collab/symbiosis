@@ -198,6 +198,27 @@ class KenjiProbeService : Service() {
                 body.append(". Значит ядро остановилось до того, как открыло журнал.")
             }
 
+            // Ядро подписывает свои сообщения системе ярлыком RyujinxLog ещё до
+            // того, как заведёт файл журнала. Значит отказ, случившийся раньше
+            // файла, назван здесь — и только здесь.
+            if (coreTail.isEmpty()) {
+                val tagName = "RyujinxLog"
+                val byTag = runCatching {
+                    KenjiCrash.linesByTag(
+                        read("logcat", "-b", "main", "-d", "-v", "threadtime", "-t", "3000"),
+                        tagName
+                    )
+                }.getOrNull().orEmpty()
+                if (byTag.isNotEmpty()) {
+                    body.append("\n\nЧто ядро успело сказать системе (ярлык ")
+                        .append(tagName).append("):\n")
+                    byTag.forEach { body.append("• ").append(it).append('\n') }
+                } else {
+                    body.append("\n\nПод ярлыком ").append(tagName)
+                        .append(" система тоже ничего не сохранила.")
+                }
+            }
+
             // Каталоги, которые ядро обязано было создать само. Проверяются они
             // не из любопытства: неудача создания журнала инициализация
             // возвращает как отказ, не записав ни строки.
