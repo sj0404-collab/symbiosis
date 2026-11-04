@@ -680,9 +680,17 @@ object KenjiBridge {
      */
     fun rendererKick(width: Int, height: Int, rotation: Int): Status {
         ensureBridge()?.let { return Status(false, it) }
-        val err = runCatching { nativeRendererKick(width, height, rotation) }
+        // Ответ нативной функции читается как NULLABLE. Причина: JNI связывает
+        // функции по имени и не сверяет тип возврата. Пока в C++ стоял `void`,
+        // Kotlin объявлял `: String`, получал null и падал с
+        // NullPointerException на следующей строке — то есть игра
+        // загружалась, все пять вызовов проходили, а процесс умирал уже
+        // после них (04.11 22:12:49). Строка ниже превращает такую ошибку в
+        // успешный «пинок», а не в падение; сам тип теперь сверяет
+        // tools/check_jni_names.py, и он же поймал это расхождение.
+        val err: String? = runCatching { nativeRendererKick(width, height, rotation) }
             .getOrElse { return Status(false, it.message ?: "рендерер") }
-        return if (err.isEmpty()) Status(true, "рендерер готов") else Status(false, err)
+        return if (err.isNullOrEmpty()) Status(true, "рендерер готов") else Status(false, err)
     }
 
     /** Отдать ядру окно Android — по нему оно считает поворот и размер. */

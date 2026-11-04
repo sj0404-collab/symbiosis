@@ -23,6 +23,7 @@ import org.yuzu.yuzu_emu.utils.EngineLoader
 import org.yuzu.yuzu_emu.utils.KenjiBridge
 import org.yuzu.yuzu_emu.utils.KenjiPlayService
 import org.yuzu.yuzu_emu.utils.KenjiReport
+import org.yuzu.yuzu_emu.utils.UiGuard
 
 /**
  * Second player. Lives in the :kenji process so a fault in Kenji cannot
@@ -63,6 +64,11 @@ class KenjiPlayerActivity : Activity(), SurfaceHolder.Callback {
     private var failed = false
     /** Кадров на прошлом тике: разница показывает текущую скорость. */
     private var lastFrames = 0L
+    /** Размер поверхности — для повторного пинка рендерера из наблюдения. */
+    private var surfaceWidth = 1280
+    private var surfaceHeight = 720
+    /** Повторный пинок уже сделан: делается один раз, а не каждые 3 секунды. */
+    private var kickedLate = false
     private lateinit var status: TextView
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -130,9 +136,16 @@ class KenjiPlayerActivity : Activity(), SurfaceHolder.Callback {
         val config = intent.getStringExtra(EXTRA_CONFIG).orEmpty()
         val w = holder.surfaceFrame.width().coerceAtLeast(128)
         val h = holder.surfaceFrame.height().coerceAtLeast(128)
+        surfaceWidth = w
+        surfaceHeight = h
         val appContext = applicationContext
         started = true
         loopThread = Thread({
+          // Ошибка в коде самого плеера не должна убивать процесс: экран уже
+          // занят игрой, и «Приложение остановлено» без причины — худший из
+          // возможных ответов. Ловим всё и называем причину на экране и в
+          // отчёте; ядро при этом уже загружено, поэтому выходим штатно.
+          try {
             // Отчёт о падении включается ДО первого касания ядра: файл и
             // обработчики сигналов переживут смерть процесса, и в отчёте
             // останется шаг, на котором всё оборвалось. Раньше это делала
@@ -141,6 +154,11 @@ class KenjiPlayerActivity : Activity(), SurfaceHolder.Callback {
             runCatching {
                 KenjiBridge.pidFile(appContext).writeText("${android.os.Process.myPid()}")
             }
+            // Обработчик необработанных исключений Java. Без него любая
+            // ошибка в нашем же коде убивает процесс молча: 04.11 22:12:49
+            // причина ушла вместе с процессом, и её пришлось восстанавливать
+            // по номерам строк из чужого журнала.
+            runCatching { UiGuard.install(appContext) }
             KenjiBridge.armCrashReport(appContext)
             KenjiReport.markStart(appContext)
             org.kenjinx.android.KenjinxNative.resetStats()
@@ -239,6 +257,11 @@ class KenjiPlayerActivity : Activity(), SurfaceHolder.Callback {
             KenjiBridge.runLoop()
             KenjiBridge.noteStep("цикл завершён")
             runOnUiThread { leave() }
+          } catch (t: Throwable) {
+            runOnUiThread {
+                fail("внутренняя ошибка плеера: " + (t.message ?: t.javaClass.simpleName))
+            }
+          }
         }, "kenji-loop").also { it.start() }
     }
 
@@ -266,6 +289,26 @@ class KenjiPlayerActivity : Activity(), SurfaceHolder.Callback {
                         "цикл ещё не дошёл до отрисовки"
                     frames == 0L -> "поверхность создана, кадров нет"
                     else -> "кадров $frames (+$rate за 3 с)"
+                }
+                // Второй пинок рендерера.
+                //
+                // Первый делается сразу после появления поверхности, и в
+                // журнале ядра он виден так: «deviceRecreateSwapchain:
+                // Renderer.Window == null» — цепочку буферов пересоздавать
+                // было ещё не на чем. Если через шесть секунд кадров нет,
+                // повторяем: к этому времени рендерер уже создан, и это
+                // ровно то же действие, что делает официальное приложение
+                // при повороте экрана.
+                if (!kickedLate && frames == 0L && seconds >= 6) {
+                    kickedLate = true
+                    runCatching {
+                        val again = KenjiBridge.rendererKick(
+                            surfaceWidth, surfaceHeight, displayRotation())
+                        KenjiReport.watch(
+                            appContext,
+                            "повторный пинок рендерера: " + if (again.ok) "сделан" else again.message
+                        )
+                    }
                 }
                 val tail = coreLogTail(appContext, 2)
                 status.text = buildString {

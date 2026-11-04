@@ -1828,38 +1828,61 @@ Java_org_yuzu_yuzu_1emu_utils_KenjiBridge_nativeOpenedUser(JNIEnv* env, jobject)
  * которой уже нет: цикл идёт, звук есть, кадров на экране нет — ровно то, что
  * видит человек.
  *
- * Все четыре вызова безобидны, если ядро их не знает: dlsym вернёт nullptr.
+ * Вызовы безобидны, если ядро их не знает: dlsym вернёт nullptr, а имя
+ * пропавшего символа попадёт в отчёт — молча пропускать нельзя, иначе
+ * «пинок сделан» ничем не отличается от «пинок не сделан».
+ *
+ * ВОЗВРАЩАЕТ строку, а не void. JNI связывает функции по имени и не сверяет
+ * тип: `void` в C++ при объявлении `: String` в Kotlin даёт `null` в регистре
+ * возврата, и Kotlin падает с NullPointerException на следующей же строке —
+ * внутри нашего кода, а не на месте ошибки. Ровно это стоило сборки от
+ * 04.11 22:12:49: игра загрузилась, все пять вызовов прошли, а процесс умер
+ * уже после них. Типы сверяет tools/check_jni_names.py.
  */
-JNIEXPORT void JNICALL
-Java_org_yuzu_yuzu_1emu_utils_KenjiBridge_nativeRendererKick(JNIEnv*, jobject, jint width,
+JNIEXPORT jstring JNICALL
+Java_org_yuzu_yuzu_1emu_utils_KenjiBridge_nativeRendererKick(JNIEnv* env, jobject, jint width,
                                                               jint height, jint rotation) {
     std::lock_guard<std::mutex> guard(g_lock);
-    if (g_core == nullptr) return;
     NoteStep("rendererKick");
+    if (g_core == nullptr) return env->NewStringUTF("ядро не загружено");
+
+    std::string missing;
+    auto note = [&missing](const char* name) {
+        if (!missing.empty()) missing += ", ";
+        missing += name;
+    };
 
     // 1. Поворот поверхности так, как это делает официальный Kenji.
     if (auto fn = reinterpret_cast<void (*)(int)>(dlsym(g_core, "deviceSetSurfaceRotation"))) {
         g_inCore = 1;
         fn(static_cast<int>(rotation));
         g_inCore = 0;
+    } else {
+        note("deviceSetSurfaceRotation");
     }
     // 2. Размер отрисовки.
     if (auto fn = reinterpret_cast<void (*)(int, int)>(dlsym(g_core, "graphicsRendererSetSize"))) {
         g_inCore = 1;
         fn(width > 0 ? width : 1280, height > 0 ? height : 720);
         g_inCore = 0;
+    } else {
+        note("graphicsRendererSetSize");
     }
     // 3. Растяжение на весь экран — на телефоне это то, что человек ждёт.
     if (auto fn = reinterpret_cast<void (*)(bool)>(dlsym(g_core, "graphicsSetFullscreenStretch"))) {
         g_inCore = 1;
         fn(true);
         g_inCore = 0;
+    } else {
+        note("graphicsSetFullscreenStretch");
     }
     // 4. Пересоздать цепочку буферов на актуальной поверхности.
     if (auto fn = reinterpret_cast<void (*)()>(dlsym(g_core, "deviceRecreateSwapchain"))) {
         g_inCore = 1;
         fn();
         g_inCore = 0;
+    } else {
+        note("deviceRecreateSwapchain");
     }
     // 5. Явно разрешить показ: SetPresentEnabled(false) в ядре гасит вывод, и
     //    после него PresentAllowed остаётся ложным до явного true.
@@ -1867,7 +1890,12 @@ Java_org_yuzu_yuzu_1emu_utils_KenjiBridge_nativeRendererKick(JNIEnv*, jobject, j
         g_inCore = 1;
         fn(true);
         g_inCore = 0;
+    } else {
+        note("graphicsSetPresentEnabled");
     }
+
+    if (missing.empty()) return env->NewStringUTF("");
+    return env->NewStringUTF(("ядро не знает: " + missing).c_str());
 }
 
 /**

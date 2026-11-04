@@ -2315,3 +2315,72 @@ APK: https://gofile.io/d/qVKm0538, MD5 `6d0df66b8aee15ab752c2d080b64874c`
 вопрос: доходит ли игра до кадра. Ответ на него даст файл
 `kenji/play-watch.txt` (там строка «пользователь ядра: …» и вердикт счётчика
 кадров) — его достаточно прислать текстом, снимок экрана не нужен.
+
+## 44. Падение 04.11 22:12:49 — наша ошибка типа в мосту (найдено, исправлено)
+
+### 44.1. Что было на самом деле
+
+Игра **загрузилась**: в журнале ядра
+
+```
+00:00:03.113 |I| Loader Start: Application Loaded: Teenage Mutant Ninja Turtles: Shredder's Revenge v1.0.9 [0100fe701475a000]
+00:00:03.113 |I| Loader Start: Process identity: Application pid=109 program=0100fe701475a000 …
+```
+
+и все пять вызовов пина рендерера прошли (`deviceSetSurfaceRotation`,
+`graphicsRendererSetSize 720x1532`, `graphicsSetFullscreenStretch(True)`,
+`deviceRecreateSwapchain`, `graphicsSetPresentEnabled(True)`).
+Умер процесс уже **после** них, в Kotlin:
+
+```
+I ExceptionHandle: at org.yuzu.yuzu_emu.utils.KenjiBridge.rendererKick(KenjiBridge.kt:685)
+I ExceptionHandle: at org.yuzu.yuzu_emu.activities.KenjiPlayerActivity.surfaceCreated$lambda$19(KenjiPlayerActivity.kt:232)
+```
+
+Строка 232 — это `val kick = KenjiBridge.rendererKick(w, h, displayRotation())`,
+строка 685 — `return if (err.isEmpty()) …`.
+
+Причина: в C++ функция была объявлена `JNIEXPORT void JNICALL`, а в Kotlin —
+`external fun nativeRendererKick(...): String`. JNI связывает функции по имени
+и **не сверяет тип возврата**. Kotlin получил в регистре возврата `null`,
+объявил его как `String` и упал с `NullPointerException` на `err.isEmpty()`.
+Это ошибка, добавленная в раунде 20 вместе с самим пином.
+
+Отсюда же и «отчёта о падении нет»: обычное исключение Java до нативного
+обработчика сигналов не доходит, процесс завершает система.
+
+### 44.2. Исправлено
+
+1. `nativeRendererKick` возвращает `jstring`: пустая строка — все пять вызовов
+   сделаны, иначе «ядро не знает: <символы>». Молча пропустить символ нельзя —
+   «пинок сделан» и «пинок не сделан» должны отличаться.
+2. `KenjiBridge.rendererKick` читает ответ как **nullable** и трактует пустое
+   как успех: даже при будущем расхождении типов это не падение.
+3. `tools/check_jni_names.py` теперь сверяет **типы возврата** (Kotlin ↔ C++):
+   `String↔jstring`, `Int↔jint`, `Unit↔void` и т. д. На первом запуске он и
+   нашёл расхождение: `TYPE MISMATCH: KenjiBridge.nativeRendererKick — Kotlin
+   String, C++ void`. Этот шаг уже есть в CI, то есть такой класс ошибок
+   больше не проходит сборку.
+4. Поток запуска плеера обёрнут в `try/catch`: любая будущая ошибка в нашем
+   коде даёт строку «внутренняя ошибка плеера: …» на экране и в отчёте, а не
+   «Приложение остановлено».
+5. `UiGuard` ставится и в плеере (раньше — только в Eden): необработанное
+   исключение Java пишется в `symbiosis/ui-crash.txt`, а `KenjiProbeService`
+   включает этот файл в отчёт блоком «Необработанная ошибка Java в процессе
+   ядра». Раньше причина уходила вместе с процессом.
+6. Формулировка отчёта «так бывает при нехватке памяти» убрана как
+   необоснованная: в этом случае причина была совсем другой.
+
+### 44.3. Повторный пинок рендерера
+
+Первый пинок приходит, когда рендерера ещё нет — в журнале ядра это видно
+буквально: `deviceRecreateSwapchain: Renderer.Window == null`. Поэтому если
+через 6 секунд кадров ноль, наблюдение повторяет пинок один раз (это то же
+действие, что делает официальное приложение при повороте экрана) и пишет об
+этом строку в `kenji/play-watch.txt`.
+
+### 44.4. Что подтвердилось из прошлого раунда
+
+- «пользователь ядра: 00000000000000010000000000000000» — профиль перенесён и
+  открыт, то есть `seedProfile` и `userGetOpenedUser` работают на устройстве.
+- Игра доходит до `Application Loaded` и получает pid — запуск игры в порядке.

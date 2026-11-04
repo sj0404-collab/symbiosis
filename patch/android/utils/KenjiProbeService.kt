@@ -175,6 +175,26 @@ class KenjiProbeService : Service() {
             }.getOrDefault("")
             val body = StringBuilder(KenjiCrash.format(report, buildStamp = stamp))
 
+            // Необработанное исключение Java из процесса ядра.
+            //
+            // Отчёт моста пишет только нативный обработчик сигналов: обычное
+            // исключение Java до него не доходит, процесс завершает система, и
+            // отчёт честно говорит «причины нет». Но причина есть — её кладёт
+            // в файл обработчик приложения (04.11 22:12:49 так и потерялся
+            // NullPointerException: его не было ни в одном отчёте, и строку
+            // пришлось искать по номерам из чужого журнала).
+            val javaCrash = runCatching {
+                val f = org.yuzu.yuzu_emu.utils.UiGuard.file(context)
+                f.takeIf { it.isFile && it.length() > 0 }?.let { clue ->
+                    val lines = clue.readLines().map { it.trim() }.filter { it.isNotEmpty() }
+                    lines.takeLast(14)
+                }
+            }.getOrNull().orEmpty()
+            if (javaCrash.isNotEmpty()) {
+                body.append("\n\nНеобработанная ошибка Java в процессе ядра:\n")
+                javaCrash.forEach { body.append("• ").append(it.take(200)).append('\n') }
+            }
+
             // Собственный журнал ядра. Отказ инициализации .NET-ядро не печатает
             // ни в stdout, ни в stderr — оно ловит исключение и пишет в свой
             // журнал. Значит причина, если она вообще названа, лежит там.

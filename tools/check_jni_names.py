@@ -20,6 +20,13 @@ WHY THIS EXISTS AS A TEST
     This also catches the reverse: a C++ entry point nobody declares in
     Kotlin, which is dead weight that quietly rots.
 
+    And it compares RETURN TYPES. A C++ entry point that returns `void` while
+    Kotlin declares `: String` links fine, runs fine, and then Kotlin reads the
+    return register, gets null, and throws NullPointerException on the first
+    use - inside our own bridge, at the line after the call, so the stack
+    points at our Kotlin and not at the mismatch. Exactly that cost a build
+    (04.11 22:12:49, rendererKick).
+
 Usage: python3 tools/check_jni_names.py [--patch <dir>]
 Exit code 1 if anything is missing on either side.
 """
@@ -46,8 +53,15 @@ def kotlin_natives(path: pathlib.Path):
     pkg = re.search(r"^package\s+([\w.]+)", text, re.M)
     if not pkg:
         return None
-    methods = re.findall(r"^\s*(?:private\s+|internal\s+)?external\s+fun\s+(\w+)",
-                         text, re.M)
+    # Каждое объявление разбирается отдельно: тип возврата может быть указан,
+    # а может отсутствовать — тогда это Unit, то есть void.
+    methods = []
+    for decl in re.finditer(
+            r"(?:private\s+|internal\s+)?external\s+fun\s+(\w+)\s*\(([^()]*)\)"
+            r"\s*(?::\s*([\w.]+))?",
+            text, re.S):
+        name, _, ret = decl.group(1), decl.group(2), decl.group(3)
+        methods.append((name, ret if ret else "Unit"))
     if not methods:
         return None
     # object/class name that holds them
@@ -65,6 +79,31 @@ def cpp_symbols(paths):
     return found
 
 
+def cpp_returns(paths):
+    """symbol -> return type, from `JNIEXPORT <type> JNICALL <symbol>(`."""
+    types = {}
+    for p in paths:
+        text = p.read_text(encoding="utf-8", errors="replace")
+        for match in re.finditer(r"JNIEXPORT\s+([\w]+)\s+JNICALL\s+(Java_\w+)\s*\(", text):
+            types[match.group(2)] = match.group(1)
+    return types
+
+
+# Какие типы считаются совпадающими. Строка слева — Kotlin, справа — C++.
+RETURN_PAIRS = {
+    "String": {"jstring"},
+    "Int": {"jint"},
+    "Long": {"jlong"},
+    "Boolean": {"jboolean"},
+    "Float": {"jfloat"},
+    "Double": {"jdouble"},
+    "Unit": {"void"},
+    "ByteArray": {"jbyteArray"},
+    "LongArray": {"jlongArray"},
+    "IntArray": {"jintArray"},
+}
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--patch", default=None)
@@ -80,6 +119,7 @@ def main() -> int:
         return 0
 
     declared = cpp_symbols(cpp_files)
+    returns = cpp_returns(cpp_files)
 
     problems = 0
     checked = 0
@@ -90,12 +130,22 @@ def main() -> int:
         if not info:
             continue
         package, cls, methods = info
+        if methods and isinstance(methods[0], str):
+            methods = [(x, "Unit") for x in methods]
         for m in methods:
-            sym = expected_symbol(package, cls, m)
+            sym = expected_symbol(package, cls, m[0])
             expected_all.add(sym)
             checked += 1
             if sym in declared:
-                print(f"ok   {cls}.{m}")
+                _, kotlin_type = m
+                got = returns.get(sym)
+                want = RETURN_PAIRS.get(kotlin_type)
+                if got and want and got not in want:
+                    print(f"TYPE MISMATCH: {cls}.{m[0]} — Kotlin {kotlin_type}, C++ {got}"
+                          f"   (это NPE во время работы, а не отказ сборки)")
+                    problems += 1
+                    continue
+                print(f"ok   {cls}.{m[0]}")
             else:
                 print(f"MISSING in C++: {sym}   (declared in {kt.name})")
                 problems += 1
