@@ -184,10 +184,15 @@ class KenjiProbeService : Service() {
             val coreLog = runCatching { KenjiBridge.coreLogFile(context) }.getOrNull()
             val coreTail = runCatching {
                 coreLog?.takeIf { it.isFile }?.let { file ->
-                    file.readLines()
-                        .map { it.trim() }
-                        .filter { it.isNotEmpty() }
-                        .takeLast(12)
+                    val all = file.readLines().map { it.trim() }.filter { it.isNotEmpty() }
+                    // Начало исключения, а не хвост стека: последние строки
+                    // журнала — это `at ... + 0x6f0`, по ним причину не назвать.
+                    val start = all.indexOfLast { line ->
+                        line.contains("Exception", ignoreCase = true) ||
+                            line.contains("Unhandled", ignoreCase = true)
+                    }
+                    if (start >= 0) all.subList(start, minOf(all.size, start + 12))
+                    else all.takeLast(12)
                 }
             }.getOrNull().orEmpty()
 

@@ -285,6 +285,22 @@ class EnginesFragment : Fragment() {
                 setPadding(0, 0, 0, dp(10))
             }
         )
+        // Если выбрана папка самого Eden — это работает (прошивка, ключи, сейвы
+        // общие), но ядро будет писать туда же свои журналы и профили. Честно
+        // предупреждаем: молчаливая запись в чужое дерево — не сюрприз, а баг.
+        val edenRoot = runCatching { org.yuzu.yuzu_emu.utils.DirectoryInitialization.userDirectory }
+            .getOrNull()?.canonicalPath
+        val chosenPath = dataRoot?.canonicalPath
+        if (edenRoot != null && chosenPath != null && chosenPath == edenRoot) {
+            root.addView(
+                banner(
+                    "Это папка Eden. Ядро возьмёт отсюда прошивку и ключи — переносить " +
+                        "ничего не нужно, — но свои журналы, профили и сейвы будет писать " +
+                        "сюда же. Не запускайте оба ядра одновременно.",
+                    SymbiosisTheme.AMBER
+                )
+            )
+        }
         root.addView(
             outlineButton("Выбрать папку", SymbiosisTheme.CYAN) { showDataDirDialog() }
         )
@@ -371,8 +387,16 @@ class EnginesFragment : Fragment() {
                     } else if (!KenjiData.writable(dir)) {
                         statusLine = "в папку нельзя писать: $path"
                     } else {
-                        KenjiBridge.setDataDir(ctx, path)
-                        statusLine = "папка данных: $path · " + KenjiData.describe(dir)
+                        // Ядру отдаётся корень, а не обязательно та папка,
+                        // которую человек выбрал: он видит прошивку, а не
+                        // «корень дерева». Приводим и говорим, что вышло.
+                        val root = KenjiBridge.setDataDir(ctx, path) ?: dir
+                        val note = if (root.absolutePath != dir.absolutePath) {
+                            "корень: ${root.absolutePath} · " + KenjiData.describe(root)
+                        } else {
+                            KenjiData.describe(root)
+                        }
+                        statusLine = note
                     }
                     render()
                 }

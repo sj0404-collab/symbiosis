@@ -41,6 +41,40 @@ object KenjiData {
     fun defaultRoot(filesDir: File?): File =
         File(filesDir ?: File("/data/local/tmp"), "kenji")
 
+    /**
+     * Привести выбранную папку к корню данных ядра.
+     *
+     * ЧЕЛОВЕК ВЫБИРАЕТ ПАПКУ, КОТОРУЮ ВИДИТ, а видит он чаще всего не корень, а
+     * `.../bis/system/Contents/registered` — то есть ту самую, где лежат файлы
+     * прошивки. Требовать, чтобы он поднялся на три уровня вверх и догадался,
+     * что «корень» — это папка без единого файла внутри, неправильно: экран
+     * после этого честно писал «прошивки нет» про папку, в которой прошивка
+     * лежит.
+     *
+     * Поэтому принимаем любой уровень: `registered`, `Contents`, `system`,
+     * `bis` или сам корень — и поднимаемся до того, внутри которого дерево
+     * ядра становится осмысленным.
+     */
+    fun normalizeRoot(chosen: File): File {
+        var current = chosen
+        repeat(5) {
+            // Уже корень: прошивка или ключи на своём месте.
+            if (hasFirmware(current) || hasKeys(current)) return current
+            val parent = current.parentFile ?: return current
+            // Поднялись на уровень выше и там всё нашлось — значит выбрали
+            // внутреннюю папку дерева.
+            if (hasFirmware(parent) || hasKeys(parent)) return parent
+            val name = current.name.lowercase()
+            if (name != "registered" && name != "contents" &&
+                name != "system" && name != "bis"
+            ) {
+                return current
+            }
+            current = parent
+        }
+        return current
+    }
+
     /** Прошивка: `<корень>/bis/system/Contents/registered`. */
     fun firmwareDir(root: File): File =
         File(File(File(File(root, "bis"), "system"), "Contents"), "registered")

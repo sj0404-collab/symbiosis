@@ -144,11 +144,24 @@ object KenjiBridge {
             .getOrNull()?.takeIf { it.isNotBlank() }?.let { File(it) }
             ?.takeIf { runCatching { it.isDirectory }.getOrDefault(false) }
 
-    /** Задать папку данных ядра. `null` — вернуться к приватной. */
-    fun setDataDir(context: Context, path: String?) {
-        dataPrefs(context).edit().apply {
-            if (path.isNullOrBlank()) remove(KEY_DATA_ROOT) else putString(KEY_DATA_ROOT, path)
-        }.apply()
+    /**
+     * Задать папку данных ядра. `null` — вернуться к приватной.
+     *
+     * Путь приводится к корню: человек видит и выбирает папку с прошивкой
+     * (`.../bis/system/Contents/registered`), а корнем данных для ядра служит
+     * то, внутри чего лежит `bis`. Без приведения экран честно писал
+     * «прошивки нет» про папку, в которой прошивка лежит.
+     *
+     * @return итоговый корень
+     */
+    fun setDataDir(context: Context, path: String?): File? {
+        if (path.isNullOrBlank()) {
+            dataPrefs(context).edit().remove(KEY_DATA_ROOT).apply()
+            return null
+        }
+        val root = runCatching { KenjiData.normalizeRoot(File(path)) }.getOrDefault(File(path))
+        dataPrefs(context).edit().putString(KEY_DATA_ROOT, root.absolutePath).apply()
+        return root
     }
 
     private fun dataPrefs(context: Context) =

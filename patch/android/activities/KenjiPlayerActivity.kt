@@ -220,7 +220,7 @@ class KenjiPlayerActivity : Activity(), SurfaceHolder.Callback {
             override fun run() {
                 if (isFinishing || isDestroyed) return
                 val seconds = (android.os.SystemClock.elapsedRealtime() - beganAt) / 1000
-                val tail = coreLogTail(appContext, 2)
+                val tail = coreLogTail(appContext, 3)
                 status.text = buildString {
                     append("второе ядро · играет · ").append(seconds).append(" с")
                     append('\n').append(KenjiBridge.lastConfig)
@@ -233,15 +233,33 @@ class KenjiPlayerActivity : Activity(), SurfaceHolder.Callback {
         status.postDelayed(tick, 3000)
     }
 
-    /** Последние содержательные строки журнала ядра. */
+    /**
+     * Что ядро сказало последним — с началом исключения, а не хвостом стека.
+     *
+     * ПЕРВЫЙ ОПЫТ БЫЛ НЕУДАЧНЫМ. Показывались последние две строки журнала, а
+     * у исключения последние строки — это `at ... + 0x6f0`, то есть адреса
+     * методов без самой причины. На экране оказался хвост стека, по которому
+     * нельзя ничего решить.
+     *
+     * Теперь ищем последнюю строку с `Exception`/`|E|` и показываем её вместе
+     * со следующими: там написано, ЧТО случилось, а не где.
+     */
     private fun coreLogTail(context: android.content.Context, lines: Int): String =
         runCatching {
             val file = KenjiBridge.coreLogFile(context) ?: return ""
-            val text = file.readLines()
-                .map { it.trim() }
-                .filter { it.isNotEmpty() }
-                .takeLast(lines)
-            text.joinToString("\n") { it.take(160) }
+            val all = file.readLines().map { it.trim() }.filter { it.isNotEmpty() }
+            if (all.isEmpty()) return ""
+            val start = all.indexOfLast { line ->
+                line.contains("Exception", ignoreCase = true) ||
+                    line.contains("|E|") ||
+                    line.contains("Unhandled", ignoreCase = true)
+            }
+            val slice = if (start >= 0) {
+                all.subList(start, minOf(all.size, start + lines))
+            } else {
+                all.takeLast(lines)
+            }
+            slice.joinToString("\n") { it.take(200) }
         }.getOrDefault("")
 
     /**

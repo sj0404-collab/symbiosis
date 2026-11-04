@@ -78,6 +78,35 @@ fun main() {
     check("пустая папка не предложена", found.none { it.name == "Пустая" })
     check("папка без прошивки не предложена", found.none { it.name == "Игры" })
 
+    // ── 4б. выбранная папка приводится к корню ──────────────────────────
+    // Человек выбирает ту папку, которую видит: с файлами прошивки внутри.
+    // Ядру нужен корень, внутри которого лежит bis.
+    val picked = KenjiData.firmwareDir(ready)
+    check(
+        "папка registered приводится к корню данных ядра",
+        KenjiData.normalizeRoot(picked).invariantSeparatorsPath == ready.invariantSeparatorsPath,
+        KenjiData.normalizeRoot(picked).path
+    )
+    check(
+        "папка Contents приводится к корню",
+        KenjiData.normalizeRoot(picked.parentFile!!).invariantSeparatorsPath ==
+            ready.invariantSeparatorsPath
+    )
+    check(
+        "папка system приводится к корню",
+        KenjiData.normalizeRoot(File(picked.parentFile!!.parentFile, "system"))
+            .invariantSeparatorsPath == ready.invariantSeparatorsPath
+    )
+    check(
+        "корень остаётся корнем",
+        KenjiData.normalizeRoot(ready).invariantSeparatorsPath == ready.invariantSeparatorsPath
+    )
+    check(
+        "незнакомая папка не переезжает вверх",
+        KenjiData.normalizeRoot(File(base, "Игры")).invariantSeparatorsPath ==
+            File(base, "Игры").invariantSeparatorsPath
+    )
+
     // ── 5. запись ──────────────────────────────────────────────────────
     check("в свою папку писать можно", KenjiData.writable(File(base, "w")))
     check(
