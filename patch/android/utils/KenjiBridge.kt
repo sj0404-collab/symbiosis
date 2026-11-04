@@ -386,6 +386,14 @@ object KenjiBridge {
      * @return фраза для отчёта и статуса: что именно произошло с прошивкой
      */
     fun seedFirmware(context: Context): String {
+        val coreRoot = dataDir(context)
+        // Главное: если прошивка уже лежит в папке данных ядра — её не трогаем.
+        // Ровно это и значит «без переноса»: папка выбрана, файлы на месте.
+        val have0 = KenjiData.firmwareCount(coreRoot)
+        if (have0 > 0) {
+            return "прошивка уже в папке ядра: $have0 файлов — переноса нет"
+        }
+
         val root = runCatching { DirectoryInitialization.userDirectory }.getOrNull()
             ?: return "данные Eden неизвестны — прошивку не перенести"
         val src = File(File(File(File(root, "nand"), "system"), "Contents"), "registered")
@@ -393,20 +401,13 @@ object KenjiBridge {
         val files = runCatching { src.listFiles()?.filter { it.isFile } }.getOrNull().orEmpty()
         if (files.isEmpty()) return "каталог прошивки Eden пуст"
 
-        val root = dataDir(context)
-        // Главное: если прошивка уже лежит в папке данных ядра — её не трогаем.
-        // Ровно это и значит «без переноса»: папка выбрана, файлы на месте.
-        val have0 = KenjiData.firmwareCount(root)
-        if (have0 > 0) {
-            return "прошивка уже в папке ядра: $have0 файлов — переноса нет"
-        }
-        val dest = KenjiData.firmwareDir(root)
+        val dest = KenjiData.firmwareDir(coreRoot)
         if (!dest.isDirectory && !dest.mkdirs()) {
             return "не удалось создать каталог прошивки второго ядра"
         }
         val fingerprint = "${files.size}:${files.maxOf { it.lastModified() }}:${files.sumOf { it.length() }}"
-        val marker = File(dataDir(context), ".firmware-source")
-        val have = runCatching { dest.listFiles()?.count { it.isFile } }.getOrNull() ?: 0
+        val marker = File(coreRoot, ".firmware-source")
+        val have = runCatching { dest.listFiles()?.count { it.isFile } ?: 0 }.getOrDefault(0)
         if (have >= files.size && marker.isFile &&
             runCatching { marker.readText().trim() }.getOrDefault("") == fingerprint
         ) {
