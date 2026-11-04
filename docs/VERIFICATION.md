@@ -2136,3 +2136,15 @@ APK: https://gofile.io/d/MAxPYkPB, MD5 `574c058c420d63f2e13b695ddc61c459`.
 - Счётчик в плеере и отчёт ищут в журнале **начало** исключения
   (`Exception`/`Unhandled`) и показывают его с следующими строками, а не хвост
   стека.
+
+### 41.2. Сборка
+
+Запуск `41867445295` (коммит `daca155`) — **SUCCESS**,
+APK: https://gofile.io/d/nmRpzBSU, MD5 `b4251ea7794e695abe6e227804453523`.
+
+По APK: в dex есть `bis/system/Contents/registered` и предупреждение «Это папка
+Eden». CI по дороге поймал настоящую ошибку: `DirectoryInitialization.userDirectory`
+— это `String`, а не `File`, и `canonicalPath` у него нет (исправлено).
+
+Тест `KenjiDataTest` теперь 23 проверки, включая приведение выбранной папки
+(`registered`, `Contents`, `system` → корень) — все проходят.
