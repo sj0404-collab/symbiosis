@@ -231,6 +231,21 @@ fun main() {
         println("  note  дерево patch/ рядом не найдено — проверка дрейфа пропущена")
     }
 
+    // ── ключ игры по имени файла ───────────────────────────────────────
+    // Второй ключ нужен, когда путь одной игры приходит записанным иначе.
+    // Ошибка здесь = «переведена на Eden», а запуск снова на Kenji (05.11).
+    val k1 = EngineHybrid.gameKeyByName("/storage/emulated/0/Games/TMNT.nsp")
+    val k2 = EngineHybrid.gameKeyByName(
+        "content://com.android.externalstorage.documents/tree/x/document/TMNT.nsp")
+    eq("то же имя файла по другому пути даёт тот же ключ", k1, k2)
+    check("точный ключ пути при этом отличается",
+        EngineHybrid.gameKey("/storage/emulated/0/Games/TMNT.nsp") !=
+            EngineHybrid.gameKey("content://x/TMNT.nsp"))
+    check("разные файлы дают разные ключи",
+        k1 != EngineHybrid.gameKeyByName("/games/Mario.nsp"))
+    eq("пустой путь — пустой ключ", EngineHybrid.gameKeyByName(""), "")
+    check("ключ короткий и устойчивый", k1.length == 16 && k1.all { it in "0123456789abcdef" })
+
     println()
     println("passed=$passed failed=$failed")
     if (failed > 0) {

@@ -30,6 +30,7 @@ import org.yuzu.yuzu_emu.model.Game
 import org.yuzu.yuzu_emu.model.GamesViewModel
 import org.yuzu.yuzu_emu.utils.Converter
 import org.yuzu.yuzu_emu.utils.ConverterPicker
+import org.yuzu.yuzu_emu.utils.CoreFallback
 import org.yuzu.yuzu_emu.utils.EngineHybrid
 import org.yuzu.yuzu_emu.utils.EngineLoader
 import org.yuzu.yuzu_emu.utils.EngineStore
@@ -448,10 +449,20 @@ class NativeLauncherFragment : Fragment() {
                 }
             }
             .setMessage(
-                getString(
-                    R.string.launcher_core_now,
-                    if (current == EngineHybrid.Core.KENJI) "Kenji-NX" else "Eden"
-                )
+                run {
+                    val now = getString(
+                        R.string.launcher_core_now,
+                        if (current == EngineHybrid.Core.KENJI) "Kenji-NX" else "Eden"
+                    )
+                    // Если за игрой есть записка, человек должен видеть это
+                    // здесь: иначе непонятно, почему она идёт не тем ядром,
+                    // которое он выбрал в прошлый раз.
+                    val why = runCatching { CoreFallback.noteFor(ctx, game.path) }
+                        .getOrDefault("")
+                    if (why.isEmpty()) now
+                    else "$now\n\nПрошлый запуск эта игра не пережила на втором ядре: " +
+                        why.take(160) + "\n\nВыбор Kenji сотрёт эту пометку."
+                }
             )
             .show()
     }
@@ -476,11 +487,32 @@ class NativeLauncherFragment : Fragment() {
         }
     }
 
-    /** Запомнить ядро за игрой и запустить её этим ядром. */
+    /**
+     * Запомнить ядро за игрой и запустить её этим ядром.
+     *
+     * Явный выбор человека сильнее автоматики: если за игрой была записка
+     * «ядро её роняло», она стирается. Иначе вышло бы, что приложение
+     * спорит с владельцем телефона — он просит Kenji, а оно втихую
+     * запускает Eden.
+     */
     private fun runOnCore(game: Game, core: EngineHybrid.Core) {
         val ctx = requireContext().applicationContext
+        val wasMarked = runCatching { CoreFallback.isMarked(ctx, game.path) }.getOrDefault(false)
+        if (wasMarked && core == EngineHybrid.Core.KENJI) {
+            runCatching { CoreFallback.clearFor(ctx, game.path) }
+        }
         runCatching { EngineStore.setCoreFor(ctx, game.path, core) }
         render()
+        if (wasMarked && core == EngineHybrid.Core.KENJI) {
+            // Говорим прямо, что это его решение: иначе следующий отчёт о
+            // падении будет выглядеть как «приложение опять не послушало».
+            Snackbar.make(
+                binding.root,
+                "Запускаю на Kenji-NX по вашему выбору. Прошлый запуск эта игра " +
+                    "уронила — если упадёт снова, вернутся записка и перевод на Eden.",
+                Snackbar.LENGTH_LONG
+            ).show()
+        }
         launchOn(game, core)
     }
 
@@ -532,6 +564,31 @@ class NativeLauncherFragment : Fragment() {
                 "Эта игра пойдёт на ${core.short}: $reason",
                 Snackbar.LENGTH_LONG
             ).show()
+        }
+
+        // Записка «ядро эту игру уже роняло» сильнее сохранённой настройки.
+        //
+        // 05.11 вышло так: игру перевели на Eden, человек запустил её снова на
+        // Kenji (проверить), выбор перезаписался на Kenji — и она снова упала.
+        // Теперь решение принимается при каждом запуске по записке, а не по
+        // одной записи, которую что угодно может перезаписать.
+        if (core == EngineHybrid.Core.KENJI) {
+            val marked = runCatching { CoreFallback.isMarked(appCtx, game.path) }
+                .getOrDefault(false)
+            if (marked) {
+                val why = runCatching { CoreFallback.noteFor(appCtx, game.path) }
+                    .getOrDefault("")
+                runCatching { EngineStore.setCoreFor(appCtx, game.path, EngineHybrid.Core.EDEN) }
+                Snackbar.make(
+                    binding.root,
+                    "Прошлый запуск этой игры второе ядро не пережило" +
+                        (if (why.isNotEmpty()) " (${why.take(90)})" else "") +
+                        " — запускаю на Eden. Вернуть Kenji: долгое нажатие → «Запустить на Kenji-NX».",
+                    Snackbar.LENGTH_LONG
+                ).show()
+                navigateToGame(game)
+                return
+            }
         }
 
         if (core == EngineHybrid.Core.EDEN) {

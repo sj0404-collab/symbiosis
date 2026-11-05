@@ -284,6 +284,22 @@ object EngineHybrid {
         return digest.joinToString("") { "%02x".format(it) }.take(16)
     }
 
+    /**
+     * Ключ игры по имени файла — второй, более грубый.
+     *
+     * Нужен, когда путь одной и той же игры приходит записанным иначе
+     * (другой корень, другой способ открытия папки). Тогда точный ключ не
+     * совпадёт, а имя файла — совпадёт.
+     */
+    fun gameKeyByName(path: String): String {
+        if (path.isEmpty()) return ""
+        val name = path.substringAfterLast('/').substringAfterLast(':').trim().lowercase()
+        if (name.isEmpty()) return ""
+        val md = MessageDigest.getInstance("SHA-256")
+        val digest = md.digest(name.toByteArray(Charsets.UTF_8))
+        return digest.joinToString("") { "%02x".format(it) }.take(16)
+    }
+
     fun memoryLabel(mode: Int): String = when (mode) {
         0 -> "как на хосте"
         1 -> "2 ГБ"

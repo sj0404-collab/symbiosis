@@ -24,6 +24,15 @@ object EngineStore {
     private const val FILE = "symbiosis_engine_hybrid"
     private const val KEY_SCHEMA = "schema"
     private const val KEY_PER_GAME = "game."
+    /**
+     * Тот же выбор, но по имени файла.
+     *
+     * Путь игры приходит из разных мест (библиотека, «недавние», папка через
+     * внешнее хранилище) и может отличаться одной буквой — а ключ считается
+     * от всего пути. Тогда выбор «эта игра идёт на Eden» пропадал бы молча.
+     * Имя файла — второй, более грубый ключ; читается только если точного нет.
+     */
+    private const val KEY_PER_NAME = "gameby."
     private const val KEY_PINNED = "kenji_pin."
 
     private fun prefs(context: Context) =
@@ -114,7 +123,12 @@ object EngineStore {
     /** Ядро, которым запустится эта игра: своё значение важнее общего. */
     fun coreFor(context: Context, path: String): EngineHybrid.Core {
         val key = EngineHybrid.gameKey(path)
-        val perGame = if (key.isEmpty()) null else prefs(context).getString(KEY_PER_GAME + key, null)
+        val p = prefs(context)
+        val perGame = when {
+            key.isEmpty() -> null
+            else -> p.getString(KEY_PER_GAME + key, null)
+                ?: p.getString(KEY_PER_NAME + EngineHybrid.gameKeyByName(path), null)
+        }
         return EngineHybrid.coreFor(globalCore(context).id, perGame)
     }
 
@@ -125,17 +139,32 @@ object EngineStore {
         return EngineHybrid.Core.of(raw)
     }
 
-    fun setCoreFor(context: Context, path: String, core: EngineHybrid.Core) {
+    /**
+     * Запомнить ядро за игрой. Возвращает true, только если запись реально
+     * легла на диск.
+     *
+     * commit(), а не apply(): apply() пишет асинхронно, и если процесс
+     * закроют сразу после (а приложение как раз в этот момент показывает
+     * отчёт о падении), запись может не дойти. Обещать «переведена на Eden»
+     * по несохранённой записи нельзя — уже обещали.
+     */
+    fun setCoreFor(context: Context, path: String, core: EngineHybrid.Core): Boolean {
         val key = EngineHybrid.gameKey(path)
-        if (key.isEmpty()) return
-        prefs(context).edit().putString(KEY_PER_GAME + key, core.id).apply()
+        if (key.isEmpty()) return false
+        val nameKey = EngineHybrid.gameKeyByName(path)
+        val editor = prefs(context).edit().putString(KEY_PER_GAME + key, core.id)
+        if (nameKey.isNotEmpty()) editor.putString(KEY_PER_NAME + nameKey, core.id)
+        return runCatching { editor.commit() }.getOrDefault(false)
     }
 
     /** Убрать выбор ядра у игры: снова действует общее значение. */
     fun clearCoreFor(context: Context, path: String) {
         val key = EngineHybrid.gameKey(path)
         if (key.isEmpty()) return
-        prefs(context).edit().remove(KEY_PER_GAME + key).apply()
+        val editor = prefs(context).edit().remove(KEY_PER_GAME + key)
+        val nameKey = EngineHybrid.gameKeyByName(path)
+        if (nameKey.isNotEmpty()) editor.remove(KEY_PER_NAME + nameKey)
+        editor.apply()
     }
 
     /** Ядро по умолчанию — то, что выбрано на экране ядер. */
