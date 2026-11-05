@@ -173,7 +173,19 @@ class KenjiProbeService : Service() {
                     if (when_ != null) append(", файл отчёта изменён ").append(when_)
                 }
             }.getOrDefault("")
-            val body = StringBuilder(KenjiCrash.format(report, buildStamp = stamp))
+            // «Во время запуска» или «через N секунд после загрузки игры»:
+            // решает журнал ядра, а не наша догадка.
+            val coreTextForTiming = runCatching {
+                KenjiBridge.coreLogFile(context)?.takeIf { it.isFile }?.readText()
+            }.getOrNull().orEmpty()
+            val body = StringBuilder(
+                KenjiCrash.format(
+                    report,
+                    buildStamp = stamp,
+                    ranFor = KenjiCrash.elapsedText(coreTextForTiming),
+                    started = KenjiCrash.gameStarted(coreTextForTiming),
+                )
+            )
 
             // Необработанное исключение Java из процесса ядра.
             //
@@ -306,11 +318,19 @@ class KenjiProbeService : Service() {
                 jniFile?.takeIf { it.isFile }?.readText()
             }.getOrNull().orEmpty()
             val asked = KenjiCrash.jniLines(jniText)
-            if (asked.isNotEmpty()) {
-                body.append("\n\nЧто мы проверили в Java за ядро (класс и его методы):\n")
-                asked.forEach { body.append("• ").append(it).append('\n') }
-                body.append("  (если выше есть FindClass на класс, которого нет в приложении,")
-                    .append(" причина именно в этом — ядро не проверяет пустой ответ.)")
+            // Показываем этот блок, ТОЛЬКО когда что-то не нашлось.
+            //
+            // Раньше он печатался всегда, и в каждом отчёте висел список из
+            // восьми «ok» с припиской «если выше есть FindClass на класс,
+            // которого нет…». Человек читает это как подозрение и ищет
+            // ошибку там, где её нет: мост к падению из ядра отношения не
+            // имеет, в стеке нет ни одного его кадра. Отчёт должен говорить
+            // о причине, а не отчитываться о здоровой части.
+            val jniBroken = asked.any { it.contains("НЕ НАЙДЕН") || it.contains("ИСКЛЮЧЕНИЕ") }
+            if (jniBroken) {
+                body.append("\n\nЧто не нашлось в Java за ядро:\n")
+                asked.filter { it.contains("НЕ НАЙДЕН") || it.contains("ИСКЛЮЧЕНИЕ") }
+                    .forEach { body.append("• ").append(it).append('\n') }
             }
 
             // Второй, независимый источник: снимок, который ведёт система.

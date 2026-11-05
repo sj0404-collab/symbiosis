@@ -764,6 +764,28 @@ fun main() {
        KenjiCrash.guestService(guest), "IAccountServiceForApplication")
     eq("сервис без Services. — пусто", KenjiCrash.guestService("step=deviceInitialize"), "")
 
+    // ── сколько шла игра и успела ли загрузиться ───────────────────────
+    // Отчёт с телефона 05.11 14:22: игра проработала шестнадцать секунд, а
+    // отчёт называл это «во время запуска». Считаем по меткам самого ядра.
+    val coreLog = """
+        00:00:03.113 |I| Loader Start: Application Loaded: TMNT v1.0.9 [0100fe701475a000]
+        00:00:03.113 |I| Loader Start: Process identity: Application pid=109
+        00:00:19.420 |E| {Common} Kernel ThreadStart: Unhandled exception in guest thread
+    """.trimIndent()
+    eq("прошло времени по журналу", KenjiCrash.elapsedText(coreLog), "16 с")
+    check("игра успела загрузиться", KenjiCrash.gameStarted(coreLog))
+    eq("в пустом журнале времени нет", KenjiCrash.elapsedText(""), "")
+    check("без строки загрузки игра не загружалась",
+        !KenjiCrash.gameStarted("00:00:01 |E| TimeZoneBinary system title not found"))
+
+    // Формулировка: падение после загрузки — не «во время запуска».
+    val late = KenjiCrash.format(null, ranFor = "16 с", started = true)
+    check("позднее падение названо поздним", late.contains("через 16 с после загрузки"), late)
+    check("слово «запуск» не приписано позднему падению",
+        !late.contains("во время запуска"), late)
+    val early = KenjiCrash.format(null)
+    check("падение до загрузки — «во время запуска»", early.contains("во время запуска"), early)
+
     println()
     println("passed=$passed failed=${failures.size}")
     failures.forEach { println("FAIL  $it") }
