@@ -25,6 +25,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.yuzu.yuzu_emu.NativeLibrary
 import org.yuzu.yuzu_emu.utils.ExtraKeys
+import org.yuzu.yuzu_emu.utils.GameHelper
 import org.yuzu.yuzu_emu.R
 import org.yuzu.yuzu_emu.YuzuApplication
 import org.yuzu.yuzu_emu.databinding.FragmentKeysFirmwareBinding
@@ -48,6 +49,9 @@ class KeysFirmwareFragment : Fragment() {
 
     /** Отчёт о дополнительных файлах ключей; пересчитывается при входе. */
     private var extraKeysReport: String = ""
+
+    /** Итог сбора ключей из билетов: показывается в отчёте экрана. */
+    private var harvestReport: String = ""
 
     private val keysDir: File?
         get() = DirectoryInitialization.userDirectory?.let { File(it, "keys") }
@@ -115,6 +119,12 @@ class KeysFirmwareFragment : Fragment() {
             getTitleKeys.launch(arrayOf("*/*"))
         }
         binding.buttonAddTitleKey.setOnClickListener { askTitleKey() }
+        // Ключи из билетов библиотеки — по нажатию.
+        //
+        // Человек не должен искать ключ сам: у него телефон, а ключ лежит
+        // внутри его же файлов. Кнопка проходит по библиотеке и вынимает всё,
+        // что можно, а по остальным говорит причину.
+        binding.buttonHarvestKeys.setOnClickListener { harvestKeys(silent = false) }
 
         binding.buttonVerify.setOnClickListener { verify() }
         binding.buttonReloadKeys.setOnClickListener { reloadKeys() }
@@ -125,6 +135,11 @@ class KeysFirmwareFragment : Fragment() {
         // Пришли из диалога библиотеки — сразу поле ввода с готовым
         // идентификатором. Аргумент снимаем, чтобы поворот экрана не открывал
         // диалог второй раз.
+        // Сбор ключей из билетов запускается сам при входе на экран: человек
+        // не должен знать ни про .tik, ни про title.keys. Проходит по файлам
+        // библиотеки, вынимает всё, что можно, и показывает итог в отчёте.
+        harvestKeys(silent = true)
+
         val wanted = arguments?.getString(ARG_TITLE_ID).orEmpty()
         if (wanted.isNotEmpty()) {
             arguments?.remove(ARG_TITLE_ID)
@@ -276,6 +291,34 @@ class KeysFirmwareFragment : Fragment() {
      * Два поля, потому что вставляют по-разному: кто-то строкой
      * «0100… = 32hex», кто-то двумя значениями из блокнота. Разбираем оба.
      */
+    /**
+     * Собрать ключи из билетов библиотеки.
+     *
+     * @param silent без снекбара: при входе на экран сообщать не о чем, итог
+     *   и так в отчёте
+     */
+    private fun harvestKeys(silent: Boolean) {
+        if (!silent) {
+            Snackbar.make(binding.root, R.string.keys_harvest_running, Snackbar.LENGTH_SHORT).show()
+        }
+        viewViewScopeLaunch {
+            val report = withContext(Dispatchers.IO) {
+                runCatching { GameHelper.harvestTicketKeys() }
+                    .getOrElse { "не удалось: " + (it.message ?: "неизвестная причина") }
+            }
+            harvestReport = report
+            refreshStatus()
+            if (!silent) {
+                Snackbar.make(binding.root, R.string.keys_harvest_done, Snackbar.LENGTH_LONG).show()
+            }
+        }
+    }
+
+    /** Запуск в области жизни экрана; после ухода ничего не делает. */
+    private fun viewViewScopeLaunch(block: suspend () -> Unit) {
+        viewLifecycleOwner.lifecycleScope.launch { block() }
+    }
+
     private fun askTitleKey(prefillId: String = "") {
         val context = requireContext()
         val density = resources.displayMetrics.density
@@ -452,6 +495,13 @@ class KeysFirmwareFragment : Fragment() {
 
         if (extraKeysReport.isNotBlank()) {
             sb.append("\n").append(extraKeysReport)
+        }
+
+        // Итог сбора ключей из билетов: по каждой игре — взят ключ или
+        // причина, почему нет. Без этого «ключей нет» остаётся загадкой.
+        if (harvestReport.isNotBlank()) {
+            sb.append("\nключи из файлов игры\n")
+            harvestReport.lineSequence().forEach { sb.append("  ").append(it).append('\n') }
         }
 
         // Anything else the user dropped in, so stray/misnamed files are visible.

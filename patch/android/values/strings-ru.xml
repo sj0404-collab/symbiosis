@@ -1522,6 +1522,9 @@
     <string name="install_title_keys">Установить title.keys</string>
     <string name="add_title_key">Вписать ключ игры</string>
     <string name="keys_add_title_key">Вписать ключ</string>
+    <string name="harvest_title_keys">Достать ключи из файлов игры</string>
+    <string name="keys_harvest_running">Смотрю билеты в файлах…</string>
+    <string name="keys_harvest_done">Готово: итог в отчёте ниже</string>
     <string name="converter_unpacked_not_launching">Распаковано — но ядро файл не открывает</string>
     <string name="converter_done">Готово: %1$d</string>
     <string name="converter_done_with_problems">Распаковка закончилась без результата</string>

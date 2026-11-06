@@ -574,6 +574,103 @@ object GameHelper {
     }
 
     /**
+     * Собрать ключи игр из всех билетов, которые есть в библиотеке.
+     *
+     * ЗАЧЕМ ЦЕЛИКОМ. Человек сказал прямо: «не имею понятия, как достать ключ
+     * с телефона, приложение ведь мобильное». Значит возить его по экранам
+     * нельзя: приложение само проходит по своим файлам, вынимает ключ из
+     * каждого билета, где это возможно, и пишет в title.keys.
+     *
+     * Один и тот же ключ может лежать не в том файле, который не открывается:
+     * у человека есть и сжатый образ, и распакованный, и билет мог уцелеть
+     * только в одном из них. Поэтому сначала собираются все билеты по
+     * идентификатору игры, и ключ берётся из любого рабочего.
+     *
+     * @return отчёт: по каждой игре — взят ключ или почему нет
+     */
+    fun harvestTicketKeys(): String {
+        val keysDir = keysDirNow() ?: return "папка keys не найдена"
+        val prod = runCatching { TicketKey.readProdKeys(keysDir) }.getOrDefault(emptyMap())
+        val known = runCatching { titleKeyLines() }.getOrDefault(emptyList()).toMutableList()
+
+        // Все файлы библиотеки: и открывающиеся, и нет — билет может быть в
+        // любом из них.
+        val paths = LinkedHashSet<String>()
+        runCatching { cachedGameList.forEach { paths.add(it.path) } }
+        runCatching { sidecar.forEach { paths.add(it.path) } }
+        if (paths.isEmpty()) return "в библиотеке нет файлов"
+
+        // Билеты по идентификатору игры: сначала собираем, потом решаем.
+        val tickets = HashMap<String, MutableList<Pair<String, ByteArray>>>()
+        val withoutTicket = LinkedHashSet<String>()
+        for (path in paths) {
+            val probe = runCatching { probeContainer(Uri.parse(path)) }.getOrNull() ?: continue
+            val ticket = probe.ticket
+            if (ticket.isEmpty()) {
+                if (probe.titleId.isNotEmpty()) withoutTicket.add(probe.titleId)
+                continue
+            }
+            val id = probe.titleId.ifEmpty { TicketKey.parse(ticket)?.titleId.orEmpty() }
+            if (id.isEmpty()) continue
+            tickets.getOrPut(id) { mutableListOf() }.add(path to ticket)
+        }
+
+        var added = 0
+        val report = StringBuilder()
+        for ((id, list) in tickets) {
+            if (TitleKeys.has(known, id)) {
+                continue // ключ уже есть — молчим
+            }
+            var done = false
+            var reason = ""
+            for ((path, ticket) in list) {
+                val derived = runCatching { TicketKey.derive(ticket, prod) }.getOrNull()
+                if (derived != null) {
+                    val line = TitleKeys.manualLine(id, derived.key) ?: break
+                    val file = File(keysDir, "title.keys")
+                    val before = runCatching { file.readLines() }.getOrDefault(emptyList())
+                    val after = TitleKeys.upsert(before, line)
+                    file.writeText(after.joinToString("\n", postfix = "\n"))
+                    known.clear()
+                    known.addAll(after)
+                    added++
+                    done = true
+                    report.append(id).append(": ключ взят из билета (").append(
+                        fileNameOf(path)
+                    ).append(")\n")
+                    break
+                }
+                if (reason.isEmpty()) {
+                    reason = runCatching { TicketKey.refusal(ticket, prod) }
+                        .getOrDefault("ключ не выводится")
+                }
+            }
+            if (!done) {
+                report.append(id).append(": ").append(reason.ifBlank { "ключ не выводится" })
+                    .append('\n')
+            }
+        }
+        if (added > 0) runCatching { NativeLibrary.reloadKeys() }
+        for (id in withoutTicket) {
+            if (!TitleKeys.has(known, id) && !tickets.containsKey(id)) {
+                report.append(id).append(": билета внутри нет\n")
+            }
+        }
+        return if (report.isEmpty()) {
+            "добавлять нечего: по всем билетам ключи уже есть"
+        } else {
+            "ключей добавлено: $added\n" + report.toString().trimEnd()
+        }
+    }
+
+    /** Имя файла из пути — для отчёта. */
+    private fun fileNameOf(path: String): String =
+        runCatching { Uri.parse(path).lastPathSegment }.getOrNull()
+            ?.let { Uri.decode(it) }
+            ?.substringAfterLast('/')
+            ?: path.substringAfterLast('/')
+
+    /**
      * Достать ключ игры из билета по требованию — для кнопки в диалоге.
      *
      * Тот же путь, что и в обходе, но здесь человек ждёт ответа, поэтому
@@ -613,32 +710,47 @@ object GameHelper {
     private fun probeContainer(uri: Uri): NspProbe.Result? = runCatching {
         val context = YuzuApplication.appContext
         val name = uri.lastPathSegment ?: uri.toString()
+        // Путь приходит и как content://, и обычной строкой файла: второе
+        // contentResolver не откроет. Обе дороги ведут в один разбор.
+        if (uri.scheme == "file" || uri.scheme.isNullOrEmpty()) {
+            val path = if (uri.scheme == "file") uri.path.orEmpty() else uri.toString()
+            java.io.FileInputStream(java.io.File(path)).use { stream ->
+                return@runCatching NspProbe.probe(bytesOf(stream), name)
+            }
+        }
         context.contentResolver.openFileDescriptor(uri, "r")?.use { pfd ->
             // Поток не закрываем отдельно: дескриптор принадлежит pfd, и
             // двойное закрытие — это лишний повод для исключения на ровном
             // месте, ровно во время обхода.
             val stream = java.io.FileInputStream(pfd.fileDescriptor)
-            run {
-                val channel = stream.channel
-                fun readAt(offset: Long, size: Int): ByteArray {
-                    if (size <= 0) return ByteArray(0)
-                    // Потолок на одно чтение: размеры приходят из самого
-                    // файла, и битый заголовок не должен превращаться в
-                    // попытку выделить гигабайт во время обхода.
-                    val want = if (size > MAX_PROBE_READ) MAX_PROBE_READ else size
-                    val buffer = java.nio.ByteBuffer.allocate(want)
-                    var readTotal = 0
-                    while (readTotal < want) {
-                        val n = channel.read(buffer, offset + readTotal)
-                        if (n <= 0) break
-                        readTotal += n
-                    }
-                    return if (readTotal == 0) ByteArray(0) else buffer.array().copyOf(readTotal)
-                }
-                NspProbe.probe(NspProbe.Bytes { offset, size -> readAt(offset, size) }, name)
-            }
+            NspProbe.probe(bytesOf(stream), name)
         }
     }.getOrNull()
+
+    /**
+     * Чтение по смещению из уже открытого потока.
+     *
+     * Потолок на одно чтение: размеры приходят из самого файла, и битый
+     * заголовок не должен превращаться в попытку выделить гигабайт.
+     */
+    private fun bytesOf(stream: java.io.FileInputStream): NspProbe.Bytes {
+        val channel = stream.channel
+        return NspProbe.Bytes { offset, size ->
+            if (size <= 0) {
+                ByteArray(0)
+            } else {
+                val want = if (size > MAX_PROBE_READ) MAX_PROBE_READ else size
+                val buffer = java.nio.ByteBuffer.allocate(want)
+                var readTotal = 0
+                while (readTotal < want) {
+                    val n = channel.read(buffer, offset + readTotal)
+                    if (n <= 0) break
+                    readTotal += n
+                }
+                if (readTotal == 0) ByteArray(0) else buffer.array().copyOf(readTotal)
+            }
+        }
+    }
 
     /** Строки ключей игр со всех файлов в папке ключей. */
     private fun titleKeyLines(): List<String> {
