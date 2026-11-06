@@ -13,11 +13,38 @@ Kotlin вкладываются, и `Logs/*.log`, написанный в док
 """
 from __future__ import annotations
 
+import re
 import sys
 from pathlib import Path
 
 OPEN = {"{": "}", "(": ")", "[": "]"}
 CLOSE = {v: k for k, v in OPEN.items()}
+
+
+# Объявления функций верхнего уровня файла: так ловится случай, когда при
+# правке рядом появляется вторая `override fun onResume()` — компилятор
+# ругается «Conflicting overloads», а баланс скобок при этом в порядке.
+DECL = re.compile(r"^\s{4}(?:override\s+|private\s+|internal\s+|public\s+)*fun\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(")
+
+
+def duplicate_declarations(text: str) -> list[str]:
+    seen: dict[tuple[str, int], int] = {}
+    out: list[str] = []
+    for number, line in enumerate(text.splitlines(), start=1):
+        match = DECL.match(line)
+        if not match:
+            continue
+        name = match.group(1)
+        # Перегрузки с разными параметрами — законная вещь, поэтому
+        # сравнивается вся строка сигнатуры до конца.
+        key = (line.strip(), 0)
+        if key in seen:
+            out.append(
+                f"{number}: вторая «{name}» с той же сигнатурой (первая на строке {seen[key]})"
+            )
+        else:
+            seen[key] = number
+    return out
 
 
 def problems(path: Path) -> list[str]:
@@ -130,6 +157,10 @@ def main() -> int:
     bad = 0
     for path in files:
         found = problems(path)
+        try:
+            found += duplicate_declarations(path.read_text(encoding="utf-8"))
+        except OSError:
+            pass
         if found:
             bad += 1
             print(f"{path}:")

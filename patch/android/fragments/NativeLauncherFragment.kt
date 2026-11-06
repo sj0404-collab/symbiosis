@@ -205,22 +205,6 @@ class NativeLauncherFragment : Fragment() {
         }
     }
 
-    override fun onResume() {
-        super.onResume()
-        // Первый заход после создания экрана пропускаем: список уже
-        // запрошен во viewModel. Дальше — каждый возврат, но не поверх
-        // идущего обхода.
-        if (!returnedToScreen) {
-            returnedToScreen = true
-            return
-        }
-        if (viewModelStoreOwnerVisible()) {
-            gamesViewModel.reloadGames(false)
-        }
-    }
-
-    private fun viewModelStoreOwnerVisible(): Boolean = isAdded && !isDetached
-
     /**
      * Цвет экрана.
      *
@@ -829,6 +813,16 @@ class NativeLauncherFragment : Fragment() {
     override fun onResume() {
         super.onResume()
         runCatching { KenjiReport.showPendingIfAny(requireContext()) }
+
+        // Удалённые файлы не должны висеть в библиотеке до перезапуска:
+        // возврат на экран — повод перечитать список. Первый заход
+        // пропускаем, список уже запрошен во viewModel; и не запускаем
+        // обход поверх идущего.
+        if (!returnedToScreen) {
+            returnedToScreen = true
+        } else if (isAdded && !isDetached) {
+            gamesViewModel.reloadGames(false)
+        }
     }
 
     override fun onDestroyView() {
