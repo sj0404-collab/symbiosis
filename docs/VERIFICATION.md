@@ -3440,3 +3440,13 @@ Vault of Power: причина названа верно (билет без пр
 
 `TicketKeyTest` 31/0 (добавлены: maxRevision, revisionGap, отказ по ревизии,
 отказ при пустом наборе). `NspProbeTest` 44/0, `TitleKeysTest` 56/0.
+
+### 58.4. Сборка `42252506112` (коммит `d1e6005`)
+
+Шаг «Upload to gofile.io» упал отдельно от сборки (известная поломка шага);
+артефакт целый, залит вручную.
+
+**APK: https://gofile.io/d/oqH1NI2V** — MD5 `68a4ae5f7e1d60552b62ca053681e90e`,
+48 428 942 Б, 46.2 МБ.
+
+Тесты: `TicketKeyTest` 31/0, `NspProbeTest` 44/0, `TitleKeysTest` 56/0.
