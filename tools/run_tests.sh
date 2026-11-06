@@ -228,7 +228,10 @@ if command -v kotlinc >/dev/null 2>&1; then
       # Дополнительные ключи: какая строка — ключ игры, что дописывать в
       # prod.keys/title.keys, чего не перезаписывать. Ошибка здесь снова
       # оставила бы «нет ключа для этой игры» без объяснения.
-      ExtraKeysTest) echo "$HERE/patch/android/utils/ExtraKeys.kt" ;;
+      # ExtraKeys теперь приводит строки прав билета к идентификатору игры —
+      # значит нужен и TitleKeys, иначе тест не собирается.
+      ExtraKeysTest) echo "$HERE/patch/android/utils/ExtraKeys.kt \
+        $HERE/patch/android/utils/TitleKeys.kt" ;;
       # Ровность кадров: почему «60 → 15 → 45 → 5» и когда виноват звук, а не
       # картинка. Чистая арифметика над рядами длительностей кадров.
       FramePacingTest) echo "$HERE/patch/android/utils/FramePacing.kt" ;;
