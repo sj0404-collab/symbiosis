@@ -104,13 +104,21 @@ object ExtraKeys {
      */
     fun isTitleLine(line: String): Boolean {
         if (!line.contains('=')) return false
-        return isHex(keyOf(line), 16)
+        val left = keyOf(line)
+        // Прав может быть 16 знаков (идентификатор игры) или 32 (права
+        // билета — так пишет Ryujinx и так выглядит дамп с консоли). Оба
+        // формата — ключи игр, и оба должны попасть в title.keys, а не в
+        // prod.keys: раньше 32-значные строки уезжали в prod.keys, где ядро
+        // их не ищет.
+        return isHex(left, 16) || isHex(left, 32)
     }
 
     /** Ключ для сравнения: имена — без регистра, идентификаторы — в верхнем. */
     private fun compareKey(line: String): String {
         val key = keyOf(line)
-        return if (isHex(key, 16)) key.uppercase() else key.lowercase()
+        // Идентификаторы игр (16 и 32 знака) сравниваются в верхнем регистре,
+        // имена ключей консоли — в нижнем.
+        return if (isHex(key, 16) || isHex(key, 32)) key.uppercase() else key.lowercase()
     }
 
     /**
@@ -155,8 +163,12 @@ object ExtraKeys {
                 }
                 val key = compareKey(prepared)
                 if (isTitleLine(prepared)) {
-                    if (titleKeys.add(key)) {
-                        title.add(prepared)
+                    // В title.keys пишем идентификатор игры, даже если в
+                    // файле были права билета: ядро ищет ключ по нему.
+                    val canonical = TitleKeys.canonicalKeyLine(prepared) ?: prepared
+                    val canonicalKey = compareKey(canonical)
+                    if (titleKeys.add(canonicalKey)) {
+                        title.add(canonical)
                         ++addedTitle
                     }
                 } else {
@@ -196,12 +208,49 @@ object ExtraKeys {
      */
     fun apply(keysDir: File, reload: () -> Boolean): String {
         if (!keysDir.isDirectory) return ""
-        val names = (keysDir.list() ?: emptyArray()).toList()
-        val extraNames = extraFileNames(names)
-        if (extraNames.isEmpty()) return ""
-
         val prodFile = File(keysDir, "prod.keys")
         val titleFile = File(keysDir, "title.keys")
+
+        // СНАЧАЛА ПРИВЕСТИ title.keys К ВИДУ, КОТОРЫЙ ЧИТАЕТ ЯДРО.
+        //
+        // В файле с консоли слева стоят права билета — 32 знака вида
+        // `0100c2500fc20800000000000000000e`. Ядро ищет ключ по
+        // идентификатору игры (16 знаков) и такие строки не находит вовсе:
+        // ключи лежат, а игра не открывается. 06.11 ровно так и было — шесть
+        // настоящих ключей и ни одного узнанного.
+        //
+        // Это не перезапись «как вздумается»: идентификатор игры — первые
+        // 8 байт прав, и мы лишь дописываем каноническую строку рядом,
+        // оставляя исходную на месте.
+        var normalized = 0
+        val rawTitle = runCatching { titleFile.readLines() }.getOrDefault(emptyList())
+        if (rawTitle.isNotEmpty()) {
+            val canonical = rawTitle.map { line ->
+                val fixed = TitleKeys.canonicalKeyLine(line)
+                if (fixed != null && fixed != line.trim()) {
+                    normalized++
+                    fixed
+                } else {
+                    line
+                }
+            }
+            if (normalized > 0) {
+                runCatching { titleFile.writeText(canonical.joinToString("\n", postfix = "\n")) }
+            }
+        }
+        val normalizedNote = if (normalized > 0) {
+            "title.keys приведён к виду «игра = ключ»: $normalized строк"
+        } else {
+            ""
+        }
+
+        val names = (keysDir.list() ?: emptyArray()).toList()
+        val extraNames = extraFileNames(names)
+        if (extraNames.isEmpty()) {
+            if (normalized > 0) runCatching { reload() }
+            return normalizedNote
+        }
+
         val prodLines = runCatching { prodFile.readLines() }.getOrDefault(emptyList())
         val titleLines = runCatching { titleFile.readLines() }.getOrDefault(emptyList())
 
@@ -211,6 +260,7 @@ object ExtraKeys {
         val plan = plan(prodLines, titleLines, extras)
 
         var out = plan.report()
+        if (normalizedNote.isNotEmpty()) out = normalizedNote + "\n" + out
         if (plan.changed) {
             runCatching {
                 prodFile.writeText(plan.prod.joinToString("\n", postfix = "\n"))

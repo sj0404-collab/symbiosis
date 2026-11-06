@@ -37,6 +37,28 @@ object TitleKeys {
      * конвертеров ставят их молча, и первый идентификатор перестаёт быть
      * шестнадцатеричным.
      */
+    /**
+     * Левая часть строки в виде идентификатора игры.
+     *
+     * В ФАЙЛЕ МОЖЕТ БЫТЬ ДВА ФОРМАТА, и оба настоящие:
+     *
+     *   01004f302847e000 = <32 hex>   — идентификатор игры (формат Eden/yuzu);
+     *   01004f302847e00000000000000000e = <32 hex> — права билета, 16 байт
+     *                                                (формат Ryujinx, из дампа).
+     *
+     * На телефоне 06.11 человек принёс второй: 6 строк по 32 знака слева, и
+     * приложение объявило их негодными — «слева не 16 hex-знаков (32)».
+     * Файл был правильный, разбор нет. Идентификатор игры — это первые
+     * 8 байт прав, то есть первые 16 знаков.
+     */
+    fun titleIdOfLeft(left: String): String? {
+        val clean = left.trim().lowercase()
+        if (clean.length != 16 && clean.length != 32) return null
+        if (!isHex(clean, clean.length)) return null
+        val id = clean.take(16)
+        return if (isPlausible(id)) id else null
+    }
+
     private fun parts(line: String): Pair<String, String>? {
         val clean = line.trim().trimStart('\uFEFF').replace("\u200B", "").trim()
         if (clean.isEmpty() || clean.startsWith("#") || clean.startsWith("//")) return null
@@ -47,10 +69,10 @@ object TitleKeys {
         return left to right
     }
 
-    /** Строка вида `0100… = 32hex` — ключ игры. */
+    /** Строка вида `0100… = 32hex` (игра или права билета) — ключ игры. */
     private fun isKeyLine(line: String): Boolean {
         val (left, right) = parts(line) ?: return false
-        return isHex(left, 16) && isHex(right, 32)
+        return titleIdOfLeft(left) != null && isHex(right, 32)
     }
 
     private fun isHex(text: String, length: Int): Boolean =
@@ -59,9 +81,8 @@ object TitleKeys {
     /** Идентификаторы игр, для которых в этих строках есть ключ. */
     fun ids(lines: List<String>): Set<String> = lines
         .asSequence()
-        .filter { isKeyLine(it) }
-        .mapNotNull { parts(it)?.first?.lowercase() }
-        .filter { isPlausible(it) }
+        .mapNotNull { canonicalKeyLine(it) }
+        .map { it.substringBefore(' ').lowercase() }
         .toSortedSet()
 
     /**
@@ -71,13 +92,22 @@ object TitleKeys {
      * каком его сделал его инструмент, а ядро ждёт ровно `=`. Заодно
      * отбрасываются мусорные и «права нет» (FF) — их нельзя путать с ключом.
      */
+    /**
+     * Привести строку к виду, который читает ядро: `игра = ключ`.
+     *
+     * Права билета превращаются в идентификатор игры (первые 8 байт). Это не
+     * «догадка»: Rights ID устроен как идентификатор плюс служебный хвост, и
+     * ядро ищет ключ именно по идентификатору.
+     */
+    fun canonicalKeyLine(line: String): String? {
+        val (left, right) = parts(line) ?: return null
+        val id = titleIdOfLeft(left) ?: return null
+        if (!isHex(right, 32)) return null
+        return id + " = " + right.lowercase()
+    }
+
     fun keyLines(text: String): List<String> = text.lineSequence()
-        .mapNotNull { raw ->
-            val (left, right) = parts(raw) ?: return@mapNotNull null
-            if (!isHex(left, 16) || !isHex(right, 32)) return@mapNotNull null
-            if (!isPlausible(left.lowercase())) return@mapNotNull null
-            left.lowercase() + " = " + right.lowercase()
-        }
+        .mapNotNull { canonicalKeyLine(it) }
         .toList()
 
     /** Что нашлось в наборе строк: принятые ключи и отвергнутые строки. */
@@ -86,7 +116,9 @@ object TitleKeys {
         /** Строки с разделителем, которые ключом игры не оказались. */
         val rejected: List<String>,
         /** Сколько строк вообще содержит `=` или `:` (для честного счёта). */
-        val withSeparator: Int
+        val withSeparator: Int,
+        /** Сколько из принятых записаны правами билета (32 знака слева). */
+        val rightsForm: Int = 0
     )
 
     /**
@@ -101,19 +133,25 @@ object TitleKeys {
         val accepted = mutableListOf<String>()
         val rejected = mutableListOf<String>()
         var withSeparator = 0
+        var rights = 0
         for (raw in lines) {
             val (left, right) = parts(raw) ?: continue
             withSeparator++
+            val id = titleIdOfLeft(left)
             when {
-                isKeyLine(raw) && isPlausible(left.lowercase()) -> accepted.add(left.lowercase())
-                !isHex(left, 16) ->
-                    rejected.add("«" + left.take(20) + "» — слева не 16 hex-знаков (" + left.length + ")")
+                id != null && isHex(right, 32) -> {
+                    accepted.add(id)
+                    if (left.length == 32) rights++
+                }
                 !isHex(right, 32) ->
-                    rejected.add(left.lowercase() + " — справа не 32 hex-знака (" + right.length + ")")
-                else -> rejected.add(left.lowercase() + " — идентификатор не похож на игру (0100…)")
+                    rejected.add(left.take(20) + " — справа не 32 hex-знака (" + right.length + ")")
+                left.length != 16 && left.length != 32 ->
+                    rejected.add("«" + left.take(20) + "» — слева " + left.length + " знаков, " +
+                        "нужно 16 (игра) или 32 (права билета)")
+                else -> rejected.add(left.take(20) + " — не похоже на идентификатор игры (0100…)")
             }
         }
-        return Survey(accepted.distinct().sorted(), rejected, withSeparator)
+        return Survey(accepted.distinct().sorted(), rejected, withSeparator, rights)
     }
 
     /**
@@ -256,6 +294,10 @@ object TitleKeys {
         // «вписать ключ игры» читается как «по одному на каждую».
         builder.append("ключей игр: ").append(found.ids.size)
         builder.append(" (один файл покрывает все эти игры сразу)\n")
+        if (found.rightsForm > 0) {
+            builder.append("  в файле ").append(found.rightsForm)
+                .append(" строк правами билета (32 знака) — учтены как идентификаторы игр\n")
+        }
         found.ids.take(12).forEach { id ->
             builder.append("  ").append(id).append("  ").append(roleOf(id)).append('\n')
         }

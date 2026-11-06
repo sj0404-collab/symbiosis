@@ -427,6 +427,13 @@ class KeysFirmwareFragment : Fragment() {
             val root = KenjiBridge.dataDir(context)
             sb.append("\nвторое ядро (Kenji)\n")
             sb.append("  папка данных: ").append(root.absolutePath).append('\n')
+            // Второе ядро заводит свою папку заново (она теперь приватная),
+            // и ключей там ещё нет. Передаём их прямо здесь: это две копии по
+            // несколько килобайт, а человек иначе видит «prod.keys: нет» и
+            // думает, что установка не сработала.
+            if (!KenjiData.hasKeys(root)) {
+                runCatching { KenjiBridge.seedKeys(context) }
+            }
             sb.append("  prod.keys: ")
                 .append(if (KenjiData.hasKeys(root)) "есть" else "нет")
                 .append('\n')

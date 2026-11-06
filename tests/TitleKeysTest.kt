@@ -150,7 +150,13 @@ fun main() {
     eq("строк с разделителем три", survey.withSeparator, 3)
     eq("все три объяснены", survey.rejected.size, 3)
     check("короткий ключ назван", survey.rejected.any { it.contains("32") }, survey.rejected.toString())
-    check("левая часть названа", survey.rejected.any { it.contains("16 hex") }, survey.rejected.toString())
+    check("причина названа по правой части",
+        survey.rejected.any { it.contains("справа не 32") }, survey.rejected.toString())
+    // Разбор пробует обе стороны: сначала смотрит, годится ли левая как
+    // идентификатор, и только потом сообщает, что именно не так.
+    check("негодная левая часть тоже названа",
+        survey.rejected.any { it.contains("не похоже на идентификатор") },
+        survey.rejected.toString())
 
     val text = TitleKeys.report(bad)
     check("отчёт не врёт про «нет строк»", !text.contains("ни одного файла"), text)
@@ -167,6 +173,47 @@ fun main() {
     check("вид приведён к «id = key»",
         file.contains("01004f302847e000 = 22222222222222222222222222222222"), file.toString())
     check("FF-строка отброшена", file.none { it.startsWith("ffff") }, file.toString())
+
+    // ── файл с консоли: слева права билета, 32 знака ────────────────────
+    // Ровно это лежит у человека: 6 строк вида
+    //   0100c2500fc20800000000000000000e = <32 hex>
+    // Раньше приложение отвечало «слева не 16 hex-знаков (32)» и считало
+    // файл негодным, хотя все шесть ключей настоящие.
+    val rightsForm = listOf(
+        "0100c2500fc20800000000000000000e = 11111111111111111111111111111111",
+        "0100c2500fc20000000000000000000e = 22222222222222222222222222222222",
+        "010092501eb2c0000000000000000011 = 33333333333333333333333333333333",
+        "ffffffffffffffffffffffffffffffff = 44444444444444444444444444444444",
+    )
+    val rs = TitleKeys.survey(rightsForm)
+    eq("права билета поняты как игры", rs.ids.size, 3)
+    eq("и это отмечено в отчёте", rs.rightsForm, 3)
+    eq("FF-права отброшены", rs.rejected.size, 1)
+    check("идентификатор — первые 16 знаков прав",
+        rs.ids.contains("0100c2500fc20800"), rs.ids.toString())
+    check("обновление не путается с игрой",
+        TitleKeys.report(rightsForm).contains("обновление"), TitleKeys.report(rightsForm))
+
+    // Канонический вид — тот, который читает ядро: «игра = ключ».
+    eq("права приведены к идентификатору",
+        TitleKeys.canonicalKeyLine(rightsForm[0]),
+        "0100c2500fc20800 = 11111111111111111111111111111111")
+    eq("16-значная строка не меняется",
+        TitleKeys.canonicalKeyLine(VAULT), VAULT)
+
+    // ── нормализация файла целиком (как при установке) ──────────────────
+    val keysDir2 = tmpDir()
+    File(keysDir2, "title.keys").writeText(
+        "# ключи\n" + rightsForm.take(3).joinToString("\n") + "\n"
+    )
+    val note = ExtraKeys.apply(keysDir2) { true }
+    check("нормализация отчиталась", note.contains("приведён"), note)
+    val after = File(keysDir2, "title.keys").readText()
+    check("в файле теперь канонический вид",
+        after.contains("0100c2500fc20800 = 11111111111111111111111111111111"), after)
+    check("комментарий сохранён", after.contains("# ключи"), after)
+    eq("ключей видно три", TitleKeys.ids(after.lines()).size, 3)
+    keysDir2.deleteRecursively()
 
     dir.deleteRecursively()
 
