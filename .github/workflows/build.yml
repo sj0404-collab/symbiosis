@@ -576,6 +576,10 @@ jobs:
           MB=$(python3 -c "print(round($SIZE/1048576,1))")
           NAMED="Symbiosis-${GITHUB_RUN_NUMBER}-${MD5:0:8}.apk"
           cp "$APK" "$NAMED"
+          # Постоянное имя готовим файлом, а не «$APK#Symbiosis.apk»: этот
+          # синтаксис gh в прогоне 42262831163 не переименовал, файл лёг как
+          # app-legacy-debug.apk, а прежний Symbiosis.apk остался от сентября.
+          cp "$APK" Symbiosis.apk
 
           gh release view symbiosis-latest >/dev/null 2>&1 || \
             gh release create symbiosis-latest --title "Symbiosis" --notes "Свежая сборка приложения."
@@ -583,7 +587,9 @@ jobs:
           {
             echo "Сборка $GITHUB_RUN_NUMBER, коммит ${GITHUB_SHA:0:7}."
             echo ""
-            echo "- MD5: `$MD5`"
+            # Без обратных кавычек: в bash они значат «выполнить как команду»,
+            # и строка MD5 уезжала в описание пустой.
+            echo "- MD5: $MD5"
             echo "- Размер: $MB МБ"
             echo "- Сборка: https://github.com/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
             echo ""
@@ -592,12 +598,10 @@ jobs:
           } > /tmp/notes.md
 
           # Постоянное имя: ссылка /latest/download/ никогда не меняется.
-          gh release upload symbiosis-latest "$APK#Symbiosis.apk" --clobber
+          gh release upload symbiosis-latest Symbiosis.apk --clobber
           # Копия с номером сборки: предыдущие не затираются.
-          if [ "$GITHUB_REF_NAME" = "main" ] || [ "$GITHUB_REF_NAME" = "fix/library-sees-all-games" ]; then
-            gh release upload symbiosis-latest "$NAMED" --clobber
-          fi
+          gh release upload symbiosis-latest "$NAMED" --clobber
           gh release edit symbiosis-latest --notes-file /tmp/notes.md
           echo "### Релиз обновлён" >> "$GITHUB_STEP_SUMMARY"
           echo "https://github.com/$GITHUB_REPOSITORY/releases/latest/download/Symbiosis.apk" >> "$GITHUB_STEP_SUMMARY"
-          echo "(MD5 `$MD5`, $MB МБ)" >> "$GITHUB_STEP_SUMMARY"
+          echo "(MD5 $MD5, $MB МБ)" >> "$GITHUB_STEP_SUMMARY"
