@@ -97,6 +97,10 @@ class ConverterService : Service() {
         val title = when {
             cancelled -> getString(R.string.converter_stopped)
             done.ok -> getString(R.string.converter_done, done.count)
+            // Распаковали — значит дело сделано; не открывается по другой
+            // причине, и заголовок не имеет права называть это провалом
+            // распаковки.
+            done.unpacked > 0 -> getString(R.string.converter_unpacked_not_launching)
             else -> getString(R.string.converter_done_with_problems)
         }
         // ЧТО БЫЛО НЕ ТАК. Раньше текст брался по одному признаку - «где лежат
@@ -111,7 +115,7 @@ class ConverterService : Service() {
         } else {
             ""
         }
-        val text = ConverterReasons.outcomeText(done.ok, done.message, where)
+        val text = ConverterReasons.outcomeText(done.ok, done.unpacked, done.message, where)
         val builder = baseBuilder().apply {
             setContentTitle(title)
             setContentText(text)

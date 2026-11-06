@@ -56,6 +56,12 @@ class KeysFirmwareFragment : Fragment() {
             uri?.let { installKey(it) }
         }
 
+    /** Выбор файла с ключами игр: `0100… = 32hex`, по строке на игру. */
+    private val getTitleKeys =
+        registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+            uri?.let { installTitleKeys(it) }
+        }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enterTransition = MaterialSharedAxis(MaterialSharedAxis.X, true)
@@ -90,6 +96,11 @@ class KeysFirmwareFragment : Fragment() {
             binding.root.findNavController()
                 .navigate(R.id.action_global_installableFragment)
         }
+
+        binding.buttonInstallTitleKeys.setOnClickListener {
+            getTitleKeys.launch(arrayOf("*/*"))
+        }
+        binding.buttonAddTitleKey.setOnClickListener { askTitleKey() }
 
         binding.buttonVerify.setOnClickListener { verify() }
         binding.buttonReloadKeys.setOnClickListener { reloadKeys() }
@@ -166,6 +177,125 @@ class KeysFirmwareFragment : Fragment() {
                 else -> getString(R.string.keys_install_failed)
             }
             Snackbar.make(binding.root, message, Snackbar.LENGTH_LONG).show()
+            refreshStatus()
+        }
+    }
+
+    /**
+     * Установить ключи игр из выбранного файла.
+     *
+     * Не замена `title.keys`, а дополнение: у каждой игры свой ключ, и файл
+     * от человека почти всегда содержит одну-две строки. Прежние записи
+     * остаются на месте — иначе одна новая игра стёрла бы остальные.
+     */
+    private fun installTitleKeys(uri: Uri) {
+        viewLifecycleOwner.lifecycleScope.launch {
+            val outcome = withContext(Dispatchers.IO) {
+                runCatching {
+                    val dir = keysDir ?: return@runCatching Installed(-1, 0)
+                    dir.mkdirs()
+                    val text = YuzuApplication.appContext.contentResolver
+                        .openInputStream(uri)?.use { it.readBytes().toString(Charsets.UTF_8) }
+                        .orEmpty()
+                    val lines = text.lineSequence().map { it.trim() }
+                        .filter { ExtraKeys.isTitleLine(it) }.toList()
+                    if (lines.isEmpty()) return@runCatching Installed(-2, 0)
+                    // Складываем как дополнительный файл: ядро всё равно
+                    // читает только title.keys, а сведение делает ExtraKeys.
+                    val store = File(dir, "title-keys-${System.currentTimeMillis()}.txt")
+                    store.writeText(lines.joinToString("\n", postfix = "\n"))
+                    val before = TitleKeys.ids(
+                        runCatching { File(dir, "title.keys").readLines() }.getOrDefault(emptyList())
+                    )
+                    ExtraKeys.apply(dir) { NativeLibrary.reloadKeys() }
+                    val after = TitleKeys.ids(TitleKeys.readAll(dir))
+                    Installed(0, after.size - before.size)
+                }.getOrElse { Installed(-1, 0) }
+            }
+            val message = when {
+                outcome.code == -1 -> getString(R.string.keys_install_failed)
+                outcome.code == -2 -> "в файле нет строк вида «0100… = 32hex»"
+                outcome.added > 0 -> "ключей игр добавлено: ${outcome.added}"
+                else -> "новых ключей нет: эти уже установлены"
+            }
+            Snackbar.make(binding.root, message, Snackbar.LENGTH_LONG).show()
+            refreshStatus()
+        }
+    }
+
+    private data class Installed(val code: Int, val added: Int)
+
+    /**
+     * Вписать один ключ игры руками.
+     *
+     * Два поля, потому что вставляют по-разному: кто-то строкой
+     * «0100… = 32hex», кто-то двумя значениями из блокнота. Разбираем оба.
+     */
+    private fun askTitleKey() {
+        val context = requireContext()
+        val density = resources.displayMetrics.density
+        val padding = (20 * density).toInt()
+        val container = android.widget.LinearLayout(context).apply {
+            orientation = android.widget.LinearLayout.VERTICAL
+            setPadding(padding, padding / 2, padding, 0)
+        }
+        val idField = android.widget.EditText(context).apply {
+            hint = "0100… — идентификатор игры"
+            setSingleLine(true)
+            inputType = android.text.InputType.TYPE_CLASS_TEXT
+        }
+        val keyField = android.widget.EditText(context).apply {
+            hint = "ключ игры, 32 hex"
+            setSingleLine(true)
+            inputType = android.text.InputType.TYPE_CLASS_TEXT
+        }
+        container.addView(idField)
+        container.addView(keyField)
+
+        MaterialAlertDialogBuilder(context)
+            .setTitle(R.string.add_title_key)
+            .setView(container)
+            .setPositiveButton(android.R.string.ok) { _, _ ->
+                addTitleKey(idField.text.toString(), keyField.text.toString())
+            }
+            .setNegativeButton(android.R.string.cancel, null)
+            .show()
+    }
+
+    private fun addTitleKey(rawId: String, rawKey: String) {
+        // Вставка одной строкой: «0100… = 32hex» в первое поле.
+        val single = rawId.trim()
+        val (id, key) = if (single.contains('=')) {
+            single.substringBefore('=') to single.substringAfter('=')
+        } else {
+            single to rawKey
+        }
+        val line = TitleKeys.manualLine(id, key)
+        if (line == null) {
+            Snackbar.make(
+                binding.root,
+                "не похоже на ключ игры: нужно 16 hex-знаков идентификатора и 32 — ключа",
+                Snackbar.LENGTH_LONG
+            ).show()
+            return
+        }
+        viewLifecycleOwner.lifecycleScope.launch {
+            val ok = withContext(Dispatchers.IO) {
+                runCatching {
+                    val dir = keysDir ?: return@runCatching false
+                    dir.mkdirs()
+                    val file = File(dir, "title.keys")
+                    val lines = runCatching { file.readLines() }.getOrDefault(emptyList())
+                    file.writeText(TitleKeys.upsert(lines, line).joinToString("\n", postfix = "\n"))
+                    NativeLibrary.reloadKeys()
+                }.getOrDefault(false)
+            }
+            Snackbar.make(
+                binding.root,
+                if (ok) "ключ игры добавлен: " + line.substringBefore(' ')
+                else "ключ записан, но ядро не подтвердило перечитывание — перезапустите игру",
+                Snackbar.LENGTH_LONG
+            ).show()
             refreshStatus()
         }
     }

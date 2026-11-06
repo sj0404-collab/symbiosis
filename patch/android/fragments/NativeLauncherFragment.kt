@@ -16,6 +16,10 @@ import androidx.core.view.isVisible
 import androidx.core.view.updatePadding
 import androidx.fragment.app.Fragment
 import androidx.fragment.app.activityViewModels
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.lifecycleScope
+import androidx.lifecycle.repeatOnLifecycle
+import kotlinx.coroutines.launch
 import androidx.navigation.fragment.findNavController
 import androidx.recyclerview.widget.LinearLayoutManager
 import com.google.android.material.chip.Chip
@@ -162,6 +166,19 @@ class NativeLauncherFragment : Fragment() {
         gamesViewModel.isReloading.collect(viewLifecycleOwner) {
             binding.swipeLauncher.isRefreshing = it
         }
+        // Удалённые файлы не должны висеть в библиотеке до перезапуска.
+        //
+        // Жалоба 06.11: часть файлов уже удалена, а в библиотеке они видны —
+        // и появляются как раз после того, как зайдёшь в «Папки с играми»
+        // (экран папок обновляет список, а плитки остаются от прежнего
+        // построения). Обход дешёвый — это перечисление каталогов, — и
+        // правильнее сделать его при каждом возврате на экран, чем
+        // показывать то, чего нет.
+        viewLifecycleOwner.lifecycleScope.launch {
+            repeatOnLifecycle(Lifecycle.State.RESUMED) {
+                gamesViewModel.reloadGames(false)
+            }
+        }
         gamesViewModel.games.collect(viewLifecycleOwner) {
             games = it
             render()
@@ -236,6 +253,11 @@ class NativeLauncherFragment : Fragment() {
         }
         binding.buttonLauncherConvert.setOnClickListener {
             converter.pick()
+        }
+        // В NSZ Converter рядом с «Выбрать файл» есть «Выбрать папку» —
+        // человек не должен тыкать в каждый сжатый образ по одному.
+        binding.buttonLauncherConvertFolder.setOnClickListener {
+            converter.pickFolder()
         }
         binding.buttonLauncherKeys.setOnClickListener {
             navigate(R.id.action_global_keysFirmwareFragment)
@@ -353,6 +375,15 @@ class NativeLauncherFragment : Fragment() {
         }
 
         val side = runCatching { GameHelper.sidecar }.getOrDefault(emptyList())
+            // Удалённые файлы не показываем вовсе. Список приходит из обхода
+            // и живёт в памяти: файл могли удалить с диска, а запись о нём
+            // осталась — так и появлялись плитки того, чего уже нет.
+            .filter { s ->
+                runCatching {
+                    androidx.documentfile.provider.DocumentFile
+                        .fromSingleUri(requireContext(), Uri.parse(s.path))?.exists() ?: true
+                }.getOrDefault(true)
+            }
             .map { s ->
                 NativeLibraryPresenter.Side(
                     name = s.name,
@@ -360,7 +391,8 @@ class NativeLauncherFragment : Fragment() {
                     title = s.title,
                     reason = s.reason,
                     kind = s.kind,
-                    note = s.note
+                    note = s.note,
+                    role = s.role
                 )
             }
 

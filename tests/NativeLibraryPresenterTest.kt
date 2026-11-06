@@ -196,6 +196,22 @@ fun main() {
         probed.items[0].subtitle)
     eq("и кнопка по разбору", probed.items[1].action, Action.CONVERT)
 
+    // Дополнение — не игра. На телефоне DLC получал ту же подпись, что игра,
+    // и человек читал «игра не открывается» про файл, который игрой не был.
+    val dlc = NativeLibraryPresenter.build(
+        games = emptyList(),
+        side = listOf(
+            NativeLibraryPresenter.Side(
+                "Blade_Chimera_DLC.nsp", "/p/d.nsp", "Blade Chimera",
+                "Это дополнение, а не отдельная игра. Контейнер читается, билета нет.",
+                "unreadable", "", "дополнение"
+            )
+        )
+    )
+    eq("дополнение помечено на плитке", dlc.items[0].note, "дополнение")
+    check("и в тексте сказано, что это не игра",
+        dlc.items[0].subtitle.contains("не отдельная игра"), dlc.items[0].subtitle)
+
     val split = NativeLibraryPresenter.explain("split", "Big", "часть разрезанного образа")
     check("диалог части про целый файл", split.second.contains("целый файл"), split.second)
 

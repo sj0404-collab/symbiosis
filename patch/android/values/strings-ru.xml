@@ -1516,6 +1516,12 @@
     <string name="converter_starting">подготовка…</string>
     <string name="converter_stop">Остановить</string>
     <string name="converter_stopped">Распаковка остановлена</string>
+    <string name="launcher_action_convert_folder">Папка → NSP</string>
+    <string name="launcher_convert_folder_done">В очередь: %1$d сжатых</string>
+    <string name="launcher_convert_folder_empty">В папке нет сжатых образов</string>
+    <string name="install_title_keys">Установить title.keys</string>
+    <string name="add_title_key">Вписать ключ игры</string>
+    <string name="converter_unpacked_not_launching">Распаковано — но ядро файл не открывает</string>
     <string name="converter_done">Готово: %1$d</string>
     <string name="converter_done_with_problems">Распаковка закончилась без результата</string>
     <string name="converter_done_where">Файлы здесь: %1$s</string>

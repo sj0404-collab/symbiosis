@@ -36,6 +36,33 @@ object ConverterReasons {
         return if (where.isBlank()) reason else reason + "\n" + where
     }
 
+    /**
+     * Итог, в котором распаковка удалась, а запуск — нет.
+     *
+     * 06.11 это был самый заметный «фейк»: в журнале конвертера «Конвертация
+     * завершена за 2 с, размер NSP: 307.2 МБ», а в шторке — «Распаковка
+     * закончилась без результата». Оба сообщения были про одно и то же дело,
+     * и оба по-своему верны: файл распакован, но ядро его не открывает
+     * (нет ключа игры). Человек читал второе и решал, что распаковка
+     * провалилась.
+     *
+     * @param unpacked сколько файлов действительно распаковано
+     */
+    fun outcomeText(ok: Boolean, unpacked: Int, message: String, where: String): String {
+        if (ok) return where
+        val reason = message.trim().ifBlank { "распаковка не удалась" }
+        if (unpacked > 0) {
+            val head = if (unpacked == 1) {
+                "Распаковано, но ядро файл не открывает"
+            } else {
+                "Распаковано $unpacked, но ядро их не открывает"
+            }
+            return if (where.isBlank()) head + ": " + reason
+            else head + ": " + reason + "\n" + where
+        }
+        return if (where.isBlank()) reason else reason + "\n" + where
+    }
+
     fun text(error: String): String {
         val e = error.lowercase()
         return when {

@@ -89,6 +89,35 @@ fun main() {
     val missing = TitleKeys.report(all, "0100000000001000")
     check("отчёт честно говорит «НЕТ»", missing.contains("0100000000001000: НЕТ"), missing)
 
+    // ── ручной ввод ключа ───────────────────────────────────────────────
+    // Путать «не тот формат» и «ключ не подошёл» нельзя: починка разная.
+    val manual = TitleKeys.manualLine("01007FC01CF4E000", "00112233445566778899AABBCCDDEEFF")
+    eq("ввод приведён к строке ключа", manual, "01007fc01cf4e000 = 00112233445566778899aabbccddeeff")
+    check("пробелы во вводе не мешают",
+        TitleKeys.manualLine(" 0100 FE70 1475 A000 ", "00112233445566778899aabbccddeeff") != null)
+    check("короткий ключ не принимается",
+        TitleKeys.manualLine("01004f302847e000", "00112233") == null)
+    check("мусорный идентификатор не принимается",
+        TitleKeys.manualLine("ffffffffffffffff", "00112233445566778899aabbccddeeff") == null)
+    check("не hex не принимается",
+        TitleKeys.manualLine("01004f302847e000", "zz112233445566778899aabbccddeeff") == null)
+
+    // ── добавление не стирает чужие ключи ───────────────────────────────
+    // У каждой игры свой ключ: новый файл или строка не должны затирать
+    // остальные — на телефоне в title.keys всего 6 записей, и каждая на счёт.
+    val before = listOf("# keys", VAULT)
+    val added = TitleKeys.upsert(before, manual!!)
+    eq("ключей стало два", TitleKeys.ids(added).size, 2)
+    check("прежний ключ на месте",
+        added.any { it.contains("01004f302847e000", true) })
+    eq("повторный ввод не плодит строки",
+        TitleKeys.upsert(added, manual).count { it.contains("01007fc01cf4e000", true) }, 1)
+    val replaced = TitleKeys.upsert(added, "01007fc01cf4e000 = 99999999999999999999999999999999")
+    eq("новый ключ той же игры заменяет старый",
+        replaced.first { it.contains("01007fc01cf4e000", true) },
+        "01007fc01cf4e000 = 99999999999999999999999999999999")
+    eq("и не добавляет вторую строку", TitleKeys.ids(replaced).size, 2)
+
     dir.deleteRecursively()
 
     println()

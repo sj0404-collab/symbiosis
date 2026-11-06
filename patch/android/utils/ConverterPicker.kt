@@ -5,6 +5,7 @@ package org.yuzu.yuzu_emu.utils
 
 import android.Manifest
 import android.content.pm.PackageManager
+import android.net.Uri
 import android.os.Build
 import androidx.activity.result.ActivityResultLauncher
 import androidx.activity.result.contract.ActivityResultContracts
@@ -57,9 +58,38 @@ class ConverterPicker(
         if (!granted) runCatching { notifications.launch(Manifest.permission.POST_NOTIFICATIONS) }
     }
 
+    /**
+     * Выбрать папку и поставить в очередь все сжатые образы из неё.
+     *
+     * Отдельный результат: у выбора папки и выбора файлов разные контракты,
+     * и один launcher на оба не годится.
+     */
+    private val folderPicker: ActivityResultLauncher<Uri?> =
+        fragment.registerForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
+            if (uri == null) return@registerForActivityResult
+            val context = fragment.requireContext().applicationContext
+            // Разрешение на этот каталог живёт до перезапуска процесса; для
+            // одной распаковки этого достаточно, а держать его постоянно
+            // незачем.
+            runCatching {
+                context.contentResolver.takePersistableUriPermission(
+                    uri,
+                    android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION
+                )
+            }
+            val queued = runCatching { Converter.enqueueFolder(context, uri) }.getOrDefault(0)
+            if (queued > 0) onQueued(queued) else onFailed()
+        }
+
     /** Открыть системный выбор файлов. */
     fun pick() {
         ensureNotifications()
         runCatching { picker.launch(arrayOf("*/*")) }.onFailure { onFailed() }
+    }
+
+    /** Открыть выбор папки: распаковать всё, что внутри. */
+    fun pickFolder() {
+        ensureNotifications()
+        runCatching { folderPicker.launch(null) }.onFailure { onFailed() }
     }
 }

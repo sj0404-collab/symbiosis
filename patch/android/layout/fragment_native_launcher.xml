@@ -89,6 +89,15 @@ test can check without an emulator.
                     android:text="@string/launcher_action_convert" />
 
                 <com.google.android.material.button.MaterialButton
+                    android:id="@+id/button_launcher_convert_folder"
+                    style="@style/Widget.Material3.Button.TonalButton"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginEnd="8dp"
+                    android:minWidth="0dp"
+                    android:text="@string/launcher_action_convert_folder" />
+
+                <com.google.android.material.button.MaterialButton
                     android:id="@+id/button_launcher_keys"
                     style="@style/Widget.Material3.Button.TonalButton"
                     android:layout_width="wrap_content"

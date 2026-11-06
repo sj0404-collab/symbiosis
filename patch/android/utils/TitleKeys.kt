@@ -80,6 +80,37 @@ object TitleKeys {
     }
 
     /**
+     * Строка ключа игры из того, что человек вписал руками.
+     *
+     * @return «0100… = 32hex» или null, если ввод не годится: путать
+     *   «не тот формат» и «ключ не подошёл» нельзя — это разные починки.
+     */
+    fun manualLine(id: String, key: String): String? {
+        val cleanId = id.filterNot { it.isWhitespace() }.lowercase()
+        val cleanKey = key.filterNot { it.isWhitespace() }.lowercase()
+        if (!isPlausible(cleanId)) return null
+        if (cleanKey.length != 32) return null
+        if (!cleanKey.all { it.isDigit() || it in 'a'..'f' }) return null
+        return "$cleanId = $cleanKey"
+    }
+
+    /**
+     * Вставить строку ключа в `title.keys`, заменив прежнюю запись той же игры.
+     *
+     * Ключей игр много, по одному на игру, поэтому добавление — это всегда
+     * правка списка, а не замена файла: иначе одна новая игра стёрла бы все
+     * остальные.
+     */
+    fun upsert(lines: List<String>, line: String): List<String> {
+        val id = ExtraKeys.keyOf(line).lowercase()
+        if (id.isEmpty()) return lines
+        val out = lines.toMutableList()
+        val index = out.indexOfFirst { ExtraKeys.isTitleLine(it) && ExtraKeys.keyOf(it).lowercase() == id }
+        if (index >= 0) out[index] = line else out.add(line)
+        return out
+    }
+
+    /**
      * Что сказать на экране ключей.
      *
      * @param wanted идентификатор игры, на которой человек застрял; пусто —

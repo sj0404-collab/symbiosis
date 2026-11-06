@@ -37,7 +37,9 @@ object Converter {
         val ok: Boolean,
         val count: Int,
         val where: String,
-        val message: String
+        val message: String,
+        /** Сколько файлов распаковано, даже если ядро их потом не открыло. */
+        val unpacked: Int = 0
     )
 
     @Volatile
@@ -175,6 +177,47 @@ object Converter {
         return queueJson()
     }
 
+    /**
+     * Поставить в очередь все сжатые образы из выбранной папки.
+     *
+     * В NSZ Converter это кнопка «Выбрать папку»: человек не хочет тыкать в
+     * каждый файл, когда их десяток. Обход неглубокий — три уровня: раскладка
+     * «папка игры / версия / файл» глубже не встречается, а уходить в
+     * системные каталоги нельзя.
+     *
+     * Берём только то, что LibraryIndex считает сжатым образом: `.nsp`,
+     * `.zip` и прочее распаковывать незачем, а `.ncz` рядом с `.nsz` — часть
+     * того же образа, и второй раз он не нужен.
+     *
+     * @return сколько файлов поставлено в очередь
+     */
+    fun enqueueFolder(context: Context, treeUri: Uri, depth: Int = 3): Int {
+        val names = mutableListOf<Pair<Uri, String>>()
+        fun walk(uri: Uri, level: Int) {
+            if (level <= 0) return
+            val children = runCatching { FileUtil.listFiles(uri) }.getOrDefault(emptyArray())
+            for (child in children) {
+                if (child.isDirectory) {
+                    walk(child.uri, level - 1)
+                    continue
+                }
+                val name = FileUtil.getFilename(child.uri)
+                if (LibraryIndex.classify(name).kind == LibraryIndex.Kind.COMPRESSED &&
+                    name.substringAfterLast('.', "").lowercase() != "ncz"
+                ) {
+                    names.add(child.uri to name)
+                }
+            }
+        }
+        walk(treeUri, depth)
+        if (names.isEmpty()) return 0
+        names.forEach { (uri, name) -> synchronized(pending) { pending.addLast(uri to name) } }
+        stopRequested = false
+        queueNote = "в очереди ${synchronized(pending) { pending.size }} · можно уйти с экрана"
+        if (!busy) ConverterService.start(context)
+        return names.size
+    }
+
     /** Просьба остановиться после текущего файла. */
     fun requestStop() {
         stopRequested = true
@@ -191,6 +234,10 @@ object Converter {
             busy = true
         }
         var okCount = 0
+        // Распаковка и запуск — разные события. Файл может быть распакован
+        // честно и всё равно не открыться (нет ключа игры); в шторке это
+        // раньше выглядело как «распаковка закончилась без результата».
+        var unpackedCount = 0
         var lastError = ""
         var lastWhere = ""
         try {
@@ -212,6 +259,7 @@ object Converter {
                     JSONObject().put("ok", false).put("message", raw)
                 )
                 obj.put("source", item.second)
+                if (obj.optBoolean("unpacked")) unpackedCount++
                 if (obj.optBoolean("ok")) {
                     okCount++
                 } else {
@@ -232,7 +280,7 @@ object Converter {
                 stopRequested -> "остановлено"
                 else -> lastError.ifBlank { "ничего не распаковано" }
             }
-            lastResult = Result(okCount > 0, okCount, lastWhere, lastError)
+            lastResult = Result(okCount > 0, okCount, lastWhere, lastError, unpackedCount)
         } finally {
             busy = false
             currentIndex = 0
@@ -303,6 +351,9 @@ object Converter {
             return@runCatching fail(reasonText(error), name, error)
         }
         val card = probeFile(dest)
+        // Файл распакован — это факт, отдельный от того, откроет ли его ядро.
+        card.put("unpacked", true)
+        card.put("unpackedBytes", dest.length())
         card.put("ok", card.optBoolean("canLaunch"))
         card.put("source", name)
         if (!card.optBoolean("canLaunch")) {

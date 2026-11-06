@@ -2183,6 +2183,12 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
     <string name="converter_starting">preparing…</string>
     <string name="converter_stop">Stop</string>
     <string name="converter_stopped">Unpacking stopped</string>
+    <string name="launcher_action_convert_folder">Folder → NSP</string>
+    <string name="launcher_convert_folder_done">Queued: %1$d compressed</string>
+    <string name="launcher_convert_folder_empty">No compressed images in that folder</string>
+    <string name="install_title_keys">Install title.keys</string>
+    <string name="add_title_key">Add a game key</string>
+    <string name="converter_unpacked_not_launching">Unpacked — but the core cannot open it</string>
     <string name="converter_done">Done: %1$d</string>
     <string name="converter_done_with_problems">Unpacking finished without a result</string>
     <string name="converter_done_where">Files are here: %1$s</string>

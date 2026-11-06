@@ -79,7 +79,9 @@ object GameHelper {
         val reason: String,
         val kind: String,
         /** Короткая пометка на плитке; пусто — взять по виду отказа. */
-        val note: String = ""
+        val note: String = "",
+        /** «дополнение» / «обновление»; пусто — это игра. */
+        val role: String = ""
     )
 
     @Volatile
@@ -461,12 +463,26 @@ object GameHelper {
                         core.isNotBlank() -> core
                         else -> NspProbe.verdict(probe, keys, titleKey)
                     }
-                    val note = when {
+                    val keysNote = when {
                         core.contains("MissingTitlekey") || core.contains("title key") -> "нет ключа игры"
                         probe == null -> ""
                         else -> NspProbe.label(probe, keys, titleKey)
                     }
-                    side.add(Sidecar(filename, filePath, base, why, "unreadable", note))
+                    // Дополнение и обновление — не игра.
+                    //
+                    // На телефоне DLC Blade Chimera стоял в библиотеке как
+                    // игра и получал ту же ошибку, что и игра: человек читал
+                    // «игра не открывается» про файл, который игрой не
+                    // является. Роль известна уже из имени и идентификатора
+                    // (хвост 800 и выше), так что молчать об этом нельзя.
+                    val role = when {
+                        entry.kind == LibraryIndex.Kind.DLC -> "дополнение"
+                        entry.kind == LibraryIndex.Kind.UPDATE -> "обновление"
+                        else -> ""
+                    }
+                    val note = if (keysNote.isNotEmpty()) keysNote else role
+                    val text = if (role.isEmpty()) why else "Это $role, а не отдельная игра. $why"
+                    side.add(Sidecar(filename, filePath, base, text, "unreadable", note, role))
                     return@forEach
                 }
                 when (entry.kind) {

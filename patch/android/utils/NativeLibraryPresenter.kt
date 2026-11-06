@@ -62,7 +62,9 @@ object NativeLibraryPresenter {
         /** `compressed`, `unreadable`, `split`. */
         val kind: String,
         /** Короткая пометка из разбора контейнера; пусто — взять по виду. */
-        val note: String = ""
+        val note: String = "",
+        /** «дополнение» / «обновление»; пусто — это игра. */
+        val role: String = ""
     )
 
     /** Один элемент на экране. */
@@ -139,9 +141,10 @@ object NativeLibraryPresenter {
                 // Пометку даёт разбор контейнера: «нет ключей» на всех
                 // подряд было неправдой, когда ключи стояли.
                 note = s.note.ifBlank {
-                    when (s.kind) {
-                        "compressed" -> "сжатый"
-                        "split" -> "часть"
+                    when {
+                        s.kind == "compressed" -> "сжатый"
+                        s.kind == "split" -> "часть"
+                        s.role.isNotEmpty() -> s.role
                         else -> ""
                     }
                 },
