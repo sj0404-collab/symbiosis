@@ -617,6 +617,27 @@ object GameHelper {
 
         var added = 0
         val report = StringBuilder()
+
+        // Сводка по ключам консоли: без неё «нет titlekek» не читается.
+        val needed = tickets.values.flatten()
+            .mapNotNull { (_, ticket) -> TicketKey.parse(ticket)?.revision }
+            .distinct()
+            .sorted()
+        val maxRevision = TicketKey.maxRevision(prod)
+        if (needed.isNotEmpty() && maxRevision >= 0) {
+            report.append("ключи консоли в prod.keys: до ревизии 0x")
+                .append("%02x".format(maxRevision))
+            val missing = needed.filter { TicketKey.titleKek(prod, it) == null }
+            if (missing.isEmpty()) {
+                report.append(" — для всех билетов хватает\n")
+            } else {
+                report.append(", а билетам нужны: ")
+                report.append(missing.joinToString(", ") { "0x" + "%02x".format(it) })
+                report.append("\n")
+                report.append("  это значит: prod.keys старее игр — обновите его до ")
+                report.append("версии установленной прошивки\n")
+            }
+        }
         for ((id, list) in tickets) {
             if (TitleKeys.has(known, id)) {
                 continue // ключ уже есть — молчим

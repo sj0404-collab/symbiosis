@@ -124,8 +124,10 @@ fun main() {
         TicketKey.refusal(blank, keys))
 
     // ── нет titlekek: говорим, какого не хватает ───────────────────────
+    // Пустой набор ключей — это не «ревизия не та», а «ключей нет вовсе»:
+    // так и говорим, иначе человек ищет несуществующую цифру.
     val noKek = TicketKey.refusal(ticket(block = block), emptyMap())
-    check("назван отсутствующий titlekek", noKek.contains("titlekek_00"), noKek)
+    check("сказано, что ключей нет вовсе", noKek.contains("ни одного titlekek"), noKek)
 
     // ── мусорный «ключ» не должен выдаваться за настоящий ──────────────
     // AES не проверяет данные: при неверном titlekek расшифровка «удаётся».
@@ -143,6 +145,31 @@ fun main() {
         TicketKey.parse(common)?.titleId?.length, 16)
     check("идентификатор пригоден для title.keys",
         TitleKeys.isPlausible(TicketKey.parse(common)!!.titleId))
+
+    // ── ревизии: «ключи старее игры» объясняется словами ───────────────
+    // Ровно это было на телефоне 06.11: игра требует 0x16, в prod.keys до 0x13.
+    val oldKeys = mapOf(
+        "titlekek_00" to titlekek,
+        "titlekek_12" to titlekek,
+        "titlekek_13" to titlekek,
+    )
+    eq("самая свежая ревизия", TicketKey.maxRevision(oldKeys), 0x13)
+    eq("насколько старее", TicketKey.revisionGap(oldKeys, 0x16), 3)
+    eq("хватает — ноль", TicketKey.revisionGap(oldKeys, 0x13), 0)
+
+    val oldTicket = ticket(revision = 0x16, block = block)
+    val oldRefusal = TicketKey.refusal(oldTicket, oldKeys)
+    check("названа нужная ревизия", oldRefusal.contains("0x16"), oldRefusal)
+    check("названа имеющаяся", oldRefusal.contains("0x13"), oldRefusal)
+    check("сказано, что делать", oldRefusal.contains("обновите prod.keys"), oldRefusal)
+    check("не обещано, что прошивка заменит ключи",
+        oldRefusal.contains("прошивк"), oldRefusal)
+
+    // Пустой набор: это не «ревизия», а «нет ключей вовсе».
+    eq("без ключей ревизии нет", TicketKey.maxRevision(emptyMap()), -1)
+    check("и это сказано прямо",
+        TicketKey.refusal(oldTicket, emptyMap()).contains("ни одного titlekek"),
+        TicketKey.refusal(oldTicket, emptyMap()))
 
     println("passed=$passed failed=$failed")
     if (failed > 0) kotlin.system.exitProcess(1)

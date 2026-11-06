@@ -32,6 +32,7 @@ import org.yuzu.yuzu_emu.databinding.FragmentKeysFirmwareBinding
 import org.yuzu.yuzu_emu.utils.DirectoryInitialization
 import org.yuzu.yuzu_emu.utils.KenjiBridge
 import org.yuzu.yuzu_emu.utils.KenjiData
+import org.yuzu.yuzu_emu.utils.TicketKey
 import org.yuzu.yuzu_emu.utils.TitleKeys
 import org.yuzu.yuzu_emu.utils.FileUtil
 import org.yuzu.yuzu_emu.utils.NativeSymbiosis
@@ -485,6 +486,18 @@ class KeysFirmwareFragment : Fragment() {
                     }.getOrDefault(0)
                     sb.append("[ok] ").append(name)
                         .append(": ").append(file.length()).append(" bytes")
+                    // Для prod.keys сразу показываем, до какой ревизии ключи:
+                    // именно этого не хватало, когда игра требовала 0x16,
+                    // а в файле было до 0x13.
+                    if (name == "prod.keys") {
+                        runCatching {
+                            val max = TicketKey.maxRevision(TicketKey.readProdKeys(dir))
+                            if (max >= 0) {
+                                sb.append(" (ключи консоли до ревизии 0x")
+                                    .append("%02x".format(max)).append(')')
+                            }
+                        }
+                    }
                     if (name.endsWith(".keys")) {
                         sb.append(", ").append(lines).append(" key entries")
                     }

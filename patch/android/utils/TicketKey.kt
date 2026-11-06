@@ -115,7 +115,28 @@ object TicketKey {
         )
     }
 
-    /** Почему ключ не достался — словами, а не молчанием. */
+    /** Самая свежая ревизия ключей в наборе; -1, если ревизий нет вовсе. */
+    fun maxRevision(prodKeys: Map<String, ByteArray>): Int {
+        val regex = Regex("^titlekek_([0-9a-f]{2})$")
+        return prodKeys.keys.mapNotNull { regex.find(it)?.groupValues?.get(1)?.toInt(16) }
+            .maxOrNull() ?: -1
+    }
+
+    /** Насколько набор ключей старее нужного: 0 — хватает. */
+    fun revisionGap(prodKeys: Map<String, ByteArray>, needed: Int): Int {
+        val max = maxRevision(prodKeys)
+        if (max < 0) return 0
+        return (needed - max).coerceAtLeast(0)
+    }
+
+    /**
+     * Почему ключ не достался — словами, а не молчанием.
+     *
+     * Отдельно про ревизию: «нет titlekek_16» человеку ничего не говорит, а
+     * на телефоне 06.11 это был единственный настоящий ответ. Поэтому
+     * называем и цифру, и что она значит: ключи консоли старее игры, их надо
+     * обновить до версии установленной прошивки.
+     */
     fun refusal(ticket: ByteArray, prodKeys: Map<String, ByteArray>): String {
         val parsed = parse(ticket) ?: return "билет не разобран: слишком короткий"
         if (parsed.isBlank) {
@@ -126,8 +147,17 @@ object TicketKey {
                 "разобрать его можно только на ней"
         }
         if (titleKek(prodKeys, parsed.revision) == null) {
-            return "в prod.keys нет titlekek_" + "%02x".format(parsed.revision) +
-                " — без него ключ из билета не расшифровать"
+            val needed = "%02x".format(parsed.revision)
+            val max = maxRevision(prodKeys)
+            return if (max < 0) {
+                "в prod.keys нет ни одного titlekek — нужен файл ключей целиком"
+            } else {
+                "игре нужны ключи консоли ревизии 0x$needed, а в ваших prod.keys " +
+                    "самая свежая — 0x" + "%02x".format(max) +
+                    ". Ключи старее игры: обновите prod.keys до версии установленной " +
+                    "прошивки (я установленную прошивку не заменяю — ядро читает ключи " +
+                    "из prod.keys)"
+            }
         }
         return ""
     }
