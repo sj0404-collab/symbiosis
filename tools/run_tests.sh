@@ -216,7 +216,13 @@ if command -v kotlinc >/dev/null 2>&1; then
       # Разбор контейнера без ключей: NSZ под именем NSP, XCI с расширением
       # .nsp, обрезанный файл, билет с идентификатором игры. 05.11 ключи были
       # на месте, а плитки говорили «проверьте ключи» — это была догадка.
-      NspProbeTest) echo "$HERE/patch/android/utils/NspProbe.kt" ;;
+      NspProbeTest) echo "$HERE/patch/android/utils/NspProbe.kt \
+        $HERE/patch/android/utils/TitleKeys.kt \
+        $HERE/patch/android/utils/ExtraKeys.kt" ;;
+      # Ключ игры — не то же, что 204 ключа консоли. Проверяем, что его
+      # наличие определяется по файлам, а не по «keys present: true».
+      TitleKeysTest) echo "$HERE/patch/android/utils/TitleKeys.kt \
+        $HERE/patch/android/utils/ExtraKeys.kt" ;;
       # Дополнительные ключи: какая строка — ключ игры, что дописывать в
       # prod.keys/title.keys, чего не перезаписывать. Ошибка здесь снова
       # оставила бы «нет ключа для этой игры» без объяснения.

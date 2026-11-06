@@ -30,6 +30,7 @@ import org.yuzu.yuzu_emu.databinding.FragmentKeysFirmwareBinding
 import org.yuzu.yuzu_emu.utils.DirectoryInitialization
 import org.yuzu.yuzu_emu.utils.KenjiBridge
 import org.yuzu.yuzu_emu.utils.KenjiData
+import org.yuzu.yuzu_emu.utils.TitleKeys
 import org.yuzu.yuzu_emu.utils.FileUtil
 import org.yuzu.yuzu_emu.utils.NativeSymbiosis
 
@@ -251,6 +252,18 @@ class KeysFirmwareFragment : Fragment() {
         if (others.isNotEmpty()) {
             sb.append("\nother files:\n")
             others.forEach { sb.append("  ").append(it.name).append('\n') }
+        }
+
+        // Ключи игр — отдельная строка отчёта. 06.11 человек видел «204 ключа,
+        // ключи на месте» и не мог понять, почему игра не открылась: 204 —
+        // это ключи консоли, а ключ игры живёт в title.keys, и его там может
+        // не быть вовсе.
+        runCatching {
+            val dir = keysDir
+            sb.append("\nключи игр (title.keys и дополнительные файлы)\n")
+            TitleKeys.report(TitleKeys.readAll(dir)).lineSequence().forEach {
+                sb.append("  ").append(it).append('\n')
+            }
         }
 
         // Второе ядро: у него своя папка данных, и ключи в неё передаются

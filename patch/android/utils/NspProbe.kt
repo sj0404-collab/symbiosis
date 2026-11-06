@@ -133,7 +133,7 @@ object NspProbe {
             }
 
             // "PFS0" — контейнер NSP.
-            head.size >= 0x10 && ascii(head, 0, 4) == "PFS0" -> return probePfs0(bytes, ext)
+            head.size >= 0x10 && ascii(head, 0, 4) == "PFS0" -> return probePfs0(bytes, ext, fileName)
 
             else -> {
                 val what = ascii(head, 0, 4).filter { it.code in 32..126 }
@@ -147,7 +147,7 @@ object NspProbe {
         }
     }
 
-    private fun probePfs0(bytes: Bytes, ext: String): Result {
+    private fun probePfs0(bytes: Bytes, ext: String, fileNameOf: String): Result {
         val header = runCatching { bytes.readAt(0, 0x10) }.getOrDefault(ByteArray(0))
         if (header.size < 0x10) return empty(Container.UNKNOWN, "файл обрезан: нет заголовка", "truncated")
 
@@ -173,6 +173,7 @@ object NspProbe {
         var titleId = ""
         var fromName = ""
         var firstOffset = -1L
+        var firstMagic = ""
 
         for (i in 0 until count) {
             val base = i * PFS0_ENTRY
@@ -180,7 +181,17 @@ object NspProbe {
             val size = u64(table, base + 8)
             val nameOffset = u32(table, base + 0x10)
             val name = cString(names, nameOffset)
-            if (firstOffset < 0) firstOffset = offset
+            if (firstOffset < 0) {
+                firstOffset = offset
+                // Первая часть — то, что ядро откроет первым. Если по
+                // смещению 0x200 там «NCZS», распаковка не состоялась, и
+                // называть файл целым нельзя.
+                val magic = runCatching { bytes.readAt(offset + 0x200L, 4) }
+                    .getOrDefault(ByteArray(0))
+                // Только печатное: нули в заголовке иначе выглядели бы как
+                // «метка есть», и файл объявлялся бы собранным неверно.
+                firstMagic = ascii(magic, 0, 4).filter { it.code in 32..126 }
+            }
             if (name.endsWith(".ncz", ignoreCase = true)) compressed = true
             if (name.endsWith(".tik", ignoreCase = true)) {
                 hasTicket = true
@@ -193,7 +204,11 @@ object NspProbe {
                     // игры, остальные восемь нулевые. В текст идёт только он,
                     // иначе получится 32 символа вместо 16.
                     val candidate = hex(if (rights.size >= 8) rights.copyOfRange(0, 8) else rights)
-                    if (candidate.length == 16 && candidate.any { it != '0' }) titleId = candidate
+                    // Билет без права — обычное дело у дампов из образов
+                    // картриджа: Rights ID там забит FF. Такой
+                    // «идентификатор» нельзя ни показать, ни применить —
+                    // на телефоне в диалоге он вылез как ffffffffffffffff.
+                    if (TitleKeys.isPlausible(candidate)) titleId = candidate
                 }
             }
             // Часть дампов называет NCA идентификатором игры, а не хешем. Но
@@ -202,12 +217,16 @@ object NspProbe {
             // главнее — он один и указывает именно на основную игру.
             if (fromName.isEmpty() && name.endsWith(".nca", ignoreCase = true)) {
                 val stem = name.dropLast(4).lowercase()
-                if (stem.length == 16 && stem.all { it.isDigit() || it in 'a'..'f' }) {
-                    fromName = stem
-                }
+                if (TitleKeys.isPlausible(stem)) fromName = stem
             }
         }
         if (titleId.isEmpty()) titleId = fromName
+        // Последний источник — имя файла: у дампов, названных идентификатором,
+        // это единственное место, где он вообще есть.
+        if (titleId.isEmpty()) {
+            val fromFileName = Regex("(0100[0-9a-fA-F]{12})").find(fileNameOf)?.value?.lowercase()
+            if (fromFileName != null && TitleKeys.isPlausible(fromFileName)) titleId = fromFileName
+        }
 
         if (count > 0 && firstOffset == 0L && names.isEmpty()) {
             return empty(Container.UNKNOWN, "файл обрезан сразу после заголовка", "truncated")
@@ -219,6 +238,10 @@ object NspProbe {
                 "внутри сжатые части (NCZ) — это NSZ, его сначала распаковывают"
             ext == "xci" ->
                 "внутри контейнер NSP, а расширение «.xci»: ядро выбирает загрузчик по расширению"
+            firstMagic == "NCZS" ->
+                "части внутри всё ещё сжаты (NCZS): распаковка не состоялась"
+            firstMagic.isNotEmpty() && !firstMagic.startsWith("NCA") ->
+                "по смещению части лежит не NCA («$firstMagic»): контейнер собран неверно"
             !hasTicket && titleId.isEmpty() ->
                 "в образе нет билета (.tik): нужен ключ этой игры в title.keys"
             else -> ""
@@ -226,6 +249,8 @@ object NspProbe {
         val fault = when {
             compressed || ext == "nsz" -> "compressed"
             ext == "xci" -> "ext-mismatch"
+            firstMagic == "NCZS" -> "compressed"
+            firstMagic.isNotEmpty() && !firstMagic.startsWith("NCA") -> "not-nca"
             !hasTicket && titleId.isEmpty() -> "no-ticket"
             else -> ""
         }
@@ -265,17 +290,22 @@ object NspProbe {
      * Раньше на всех нерaспознанных файлах стояло «нет ключей». На телефоне
      * ключи были на месте (204 записи), поэтому пометка была неправдой.
      */
-    fun label(result: Result, keysPresent: Boolean): String = when {
+    fun label(result: Result, keysPresent: Boolean, titleKeyPresent: Boolean? = null): String = when {
         result.fault == "compressed" || result.compressed -> "сжатый"
         result.fault == "truncated" -> "обрезан"
         result.fault == "empty" -> "пустой файл"
         result.fault == "header" -> "заголовок битый"
         result.fault == "ext-mismatch" -> "другой формат"
         result.fault == "not-image" -> "не образ"
-        result.fault == "no-ticket" -> "нет билета"
-        result.container == Container.UNKNOWN -> ""
+        result.fault == "not-nca" -> "собран неверно"
+        // Пометки «файл в порядке» больше нет: целый контейнер — это ещё не
+        // рабочая игра. 06.11 такое «в порядке» стояло на игре, которую ядро
+        // не открыло из-за отсутствующего ключа.
+        !result.hasTicket -> if (titleKeyPresent == true) "ключ в title.keys" else "нет ключа игры"
+        result.titleId.isEmpty() -> "билет без права"
+        titleKeyPresent == false -> "нет ключа игры"
         !keysPresent -> "нет ключей"
-        else -> "файл в порядке"
+        else -> "ключи на месте"
     }
 
     /**
@@ -285,7 +315,11 @@ object NspProbe {
      * фраза, которую не стыдно показать.
      */
 
-    fun verdict(result: Result, keysPresent: Boolean): String = when {
+    fun verdict(
+        result: Result,
+        keysPresent: Boolean,
+        titleKeyPresent: Boolean? = null
+    ): String = when {
         result.container == Container.UNKNOWN -> result.problem
 
         result.compressed ->
@@ -294,23 +328,48 @@ object NspProbe {
 
         result.problem.isNotEmpty() -> result.problem
 
-        result.titleId.isNotEmpty() ->
-            "Контейнер читается: игра ${result.titleId}, частей ${result.entries}" +
-                (if (result.hasTicket) ", билет внутри есть" else ", билета нет") +
-                ". " + if (keysPresent) {
-                "Ключи на месте — значит ядро отказало не из-за них, и это наш дефект."
-            } else {
-                "Ключей консоли нет — поэтому ядро и не смогло открыть игру."
+        // Дальше контейнер цел — значит вопрос в ключе игры, а не в prod.keys.
+        //
+        // 204 ключа консоли и «core reports keys present: true» ничего не
+        // говорят о конкретной игре: её ключ лежит либо в билете внутри
+        // образа, либо строкой «0100… = 32hex» в title.keys. 06.11 в диалоге
+        // было «дело не в ключах, это наш дефект» — и это была неправда.
+        !result.hasTicket ->
+            summary(result) + ". Билета внутри нет, поэтому ключ может быть только в " +
+                "title.keys" + when (titleKeyPresent) {
+                false -> ": а записи для ${result.titleId} там нет. Добавьте строку " +
+                    "${result.titleId} = <32 hex> или положите файл с ней в keys/extra."
+                true -> ": и он там есть — тогда причина отказа не в ключе."
+                null -> "."
             }
 
+        result.titleId.isEmpty() ->
+            summary(result) + ". Права в билете нет (Rights ID пустой), идентификатор игры " +
+                "из него не выводится — такой файл открывается только ключом из title.keys."
+
+        titleKeyPresent == false ->
+            summary(result) + ". Билет без права: ключ из него не выводится, поэтому нужен " +
+                "ключ игры ${result.titleId} в title.keys — записи для неё там нет. " +
+                if (keysPresent) {
+                    "Ключи консоли установлены, но этого не заменяют."
+                } else {
+                    "Ключей консоли тоже нет."
+                }
+
+        titleKeyPresent == true ->
+            summary(result) + ". Ключ для ${result.titleId} в title.keys есть — значит отказ " +
+                "ядра не про ключи; пришлите, пожалуйста, этот текст, и я возьмусь за чтение."
+
         else ->
-            "Контейнер читается (${result.entries} частей), но идентификатор игры без ключей " +
-                "не достаётся. " + if (keysPresent) {
-                "Ключи на месте, поэтому причина отказа не в них."
-            } else {
-                "Установите prod.keys — без них игра не откроется."
-            }
+            summary(result) + ". Ключ берётся из билета, а если его нет — из title.keys; " +
+                "проверить это можно в разделе «Ключи и прошивка»."
     }
+
+    /** Первая фраза вердикта: что за контейнер и из чего он состоит. */
+    private fun summary(result: Result): String =
+        "Контейнер читается: частей ${result.entries}" +
+            (if (result.titleId.isNotEmpty()) ", игра ${result.titleId}" else "") +
+            (if (result.hasTicket) ", билет внутри есть" else "")
 
     // ── разбор байтов ──────────────────────────────────────────────────
 
@@ -326,6 +385,9 @@ object NspProbe {
     )
 
     private fun ascii(data: ByteArray, offset: Int, length: Int): String {
+        // Пустой или короткий ответ readAt — это «не прочитали», а не «прочли
+        // пустоту»: иначе обрезанный файл назывался бы «собран неверно».
+        if (data.size < offset + length) return ""
         if (offset + length > data.size) return ""
         return String(data, offset, length, Charsets.US_ASCII)
     }

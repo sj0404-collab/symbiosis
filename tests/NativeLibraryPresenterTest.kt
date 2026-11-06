@@ -178,9 +178,10 @@ fun main() {
         side = listOf(
             NativeLibraryPresenter.Side(
                 "Vault_of_Power.nsp", "/p/v.nsp", "Vault of Power",
-                "Контейнер читается: игра 01004f302847e000, частей 4, билет внутри есть. " +
-                    "Ключи на месте — значит ядро отказало не из-за них, и это наш дефект.",
-                "unreadable", "файл в порядке"
+                "Контейнер читается: игра 01004f302847e000, билет внутри есть. Билет без " +
+                    "права: ключ из него не выводится, поэтому нужен ключ игры " +
+                    "01004f302847e000 в title.keys — записи для неё там нет.",
+                "unreadable", "нет ключа игры"
             ),
             NativeLibraryPresenter.Side(
                 "Packed.nsp", "/p/p.nsp", "Packed",
@@ -189,7 +190,10 @@ fun main() {
             )
         )
     )
-    eq("пометка из разбора на плитке", probed.items[0].note, "файл в порядке")
+    eq("пометка из разбора на плитке", probed.items[0].note, "нет ключа игры")
+    check("и в диалоге назван ключ игры, а не prod.keys",
+        probed.items[0].subtitle.contains("01004f302847e000"),
+        probed.items[0].subtitle)
     eq("и кнопка по разбору", probed.items[1].action, Action.CONVERT)
 
     val split = NativeLibraryPresenter.explain("split", "Big", "часть разрезанного образа")

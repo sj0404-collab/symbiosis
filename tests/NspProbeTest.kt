@@ -88,6 +88,13 @@ private fun ticket(titleIdHex: String): ByteArray {
     return t
 }
 
+/** Билет без права: Rights ID забит FF — так бывает у дампов из картриджа. */
+private fun ticketWithoutRights(): ByteArray {
+    val t = ByteArray(0x2B0)
+    for (i in 0 until 16) t[0x2A0 + i] = 0xFF.toByte()
+    return t
+}
+
 private fun xciHeader(): ByteArray {
     val head = ByteArray(0x200)
     System.arraycopy("HEAD".toByteArray(), 0, head, 0x100, 4)
@@ -110,9 +117,19 @@ fun main() {
     eq("это игра, а не обновление", rGood.part, NspProbe.Part.GAME)
     check("билет найден", rGood.hasTicket)
     check("с контейнером всё в порядке", rGood.problem.isEmpty(), rGood.problem)
-    check("вердикт говорит про ключи, а не про «не читается»",
-        NspProbe.verdict(rGood, true).contains("не из-за них"),
-        NspProbe.verdict(rGood, true))
+    // Ключ игры — не то же самое, что 204 ключа консоли. 06.11 библиотека
+    // написала «дело не в ключах, это наш дефект», а во вкладке «Папки» про
+    // тот же файл — «нужен title key». Оба раза человеку было нечем
+    // проверить.
+    check("без записи в title.keys вердикт называет именно её",
+        NspProbe.verdict(rGood, true, false).contains("title.keys"),
+        NspProbe.verdict(rGood, true, false))
+    check("и называет идентификатор игры",
+        NspProbe.verdict(rGood, true, false).contains(tnmt),
+        NspProbe.verdict(rGood, true, false))
+    check("с записью — говорит, что ключ есть",
+        NspProbe.verdict(rGood, true, true).contains("есть"),
+        NspProbe.verdict(rGood, true, true))
 
     // Обновление: хвост идентификатора 800.
     // Обновление: билет на 800, плюс NCA базовой игры рядом — билет должен
@@ -156,6 +173,40 @@ fun main() {
     eq("пустой файл", NspProbe.probe(bytesOf(ByteArray(0)), "x.nsp").container,
         NspProbe.Container.UNKNOWN)
 
+    // ── билет без права ─────────────────────────────────────────────────
+    // Vault of Power на телефоне: билет внутри есть, а Rights ID — FF.
+    // Показывать ffffffffffffffff как идентификатор игры нельзя, поэтому он
+    // берётся из имени файла, где он и лежит.
+    val noRights = buildPfs0(
+        listOf(
+            File("hashed.nca", ByteArray(64)),
+            File("t.tik", ticketWithoutRights()),
+        )
+    )
+    val rNoRights = NspProbe.probe(
+        bytesOf(noRights),
+        "Vault of Power [01004F302847E000][v0] (0.31 GB).nsp"
+    )
+    eq("мусорный Rights ID не выдаётся за игру", rNoRights.titleId, "01004f302847e000")
+    check("и это базовая игра, а не обновление", rNoRights.part == NspProbe.Part.GAME)
+
+    // ── части остались сжатыми ──────────────────────────────────────────
+    // Если конвертер записал NCZ под именем .nca, снаружи это выглядит как
+    // обычный NSP, а ядро не прочитает ни одной части.
+    val stillPacked = buildPfs0(listOf(File("a.nca", ByteArray(0x210).also {
+        System.arraycopy("NCZS".toByteArray(), 0, it, 0x200, 4)
+    })))
+    val rStill = NspProbe.probe(bytesOf(stillPacked), "still-packed.nsp")
+    check("недоделанная распаковка названа", rStill.problem.contains("NCZS"), rStill.problem)
+    eq("пометка — сжатый", NspProbe.label(rStill, true), "сжатый")
+
+    val garbageEntry = buildPfs0(listOf(File("a.nca", ByteArray(0x210).also {
+        System.arraycopy("XXXX".toByteArray(), 0, it, 0x200, 4)
+    })))
+    val rGarbage = NspProbe.probe(bytesOf(garbageEntry), "garbage.nsp")
+    check("часть не NCA — сказано прямо", rGarbage.problem.contains("не NCA"), rGarbage.problem)
+    eq("пометка — собран неверно", NspProbe.label(rGarbage, true), "собран неверно")
+
     // ── NSP без билета ──────────────────────────────────────────────────
     val noTicket = buildPfs0(listOf(File("aaa.nca", ByteArray(16))))
     val rNo = NspProbe.probe(bytesOf(noTicket), "no-ticket.nsp")
@@ -174,9 +225,12 @@ fun main() {
     // Пометка — то, что человек видит до нажатия. Она не имеет права
     // говорить «нет ключей», когда ключи на месте.
     eq("пометка: сжатый", NspProbe.label(rNsz, true), "сжатый")
-    eq("пометка: файл в порядке", NspProbe.label(rGood, true), "файл в порядке")
-    eq("пометка: нет ключей", NspProbe.label(rGood, false), "нет ключей")
-    eq("пометка: нет билета", NspProbe.label(rNo, true), "нет билета")
+    // «Файл в порядке» на плитке больше нет: целый контейнер — не рабочая
+    // игра, и эта пометка была неправдой на живом устройстве.
+    eq("пометка: ключ игры не найден", NspProbe.label(rGood, true, false), "нет ключа игры")
+    eq("пометка: ключ игры есть", NspProbe.label(rGood, true, true), "ключи на месте")
+    eq("пометка: нет ключей консоли", NspProbe.label(rGood, false, null), "нет ключей")
+    eq("пометка: нет билета", NspProbe.label(rNo, true, false), "нет ключа игры")
     eq("пометка: не образ", NspProbe.label(rZip, true), "не образ")
     eq("пометка: обрезан", NspProbe.label(rCut, true), "обрезан")
 

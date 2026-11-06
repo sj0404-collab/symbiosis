@@ -443,12 +443,29 @@ object GameHelper {
                     // причиной.
                     val probe = runCatching { probeContainer(it.uri) }.getOrNull()
                     val keys = keysOkNow()
-                    val why = if (probe == null) {
-                        "ядро не прочитало заголовок · проверьте ключи или распакуйте файл"
-                    } else {
-                        NspProbe.verdict(probe, keys)
+                    val titleKeys = runCatching { titleKeyLines() }.getOrDefault(emptyList())
+                    val titleKey = probe?.takeIf { it.titleId.isNotEmpty() }
+                        ?.let { TitleKeys.has(titleKeys, it.titleId) }
+                    // Контейнер цел — тогда настоящую причину знает само ядро:
+                    // оно читает NCA и говорит MissingTitlekey, когда ключа
+                    // игры нет. Без этого библиотека отвечала «дело не в
+                    // ключах», а во вкладке «Папки» про тот же файл было
+                    // написано «нужен title key» — два разных ответа на один
+                    // вопрос.
+                    val core = if (probe != null && probe.readable) {
+                        runCatching { NativeSymbiosis.romProblem(it.uri.toString()) }
+                            .getOrNull().orEmpty()
+                    } else ""
+                    val why = when {
+                        probe == null -> "ядро не прочитало заголовок · проверьте ключи или распакуйте файл"
+                        core.isNotBlank() -> core
+                        else -> NspProbe.verdict(probe, keys, titleKey)
                     }
-                    val note = if (probe == null) "" else NspProbe.label(probe, keys)
+                    val note = when {
+                        core.contains("MissingTitlekey") || core.contains("title key") -> "нет ключа игры"
+                        probe == null -> ""
+                        else -> NspProbe.label(probe, keys, titleKey)
+                    }
                     side.add(Sidecar(filename, filePath, base, why, "unreadable", note))
                     return@forEach
                 }
@@ -493,6 +510,13 @@ object GameHelper {
             }
         }
     }.getOrNull()
+
+    /** Строки ключей игр со всех файлов в папке ключей. */
+    private fun titleKeyLines(): List<String> {
+        val context = YuzuApplication.appContext
+        val keysDir = DirectoryInitialization.userDirectory?.let { File(it, "keys") }
+        return TitleKeys.readAll(keysDir)
+    }
 
     /** Состояние ключей прямо сейчас — без него вердикт был бы догадкой. */
     private fun keysOkNow(): Boolean =
