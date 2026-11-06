@@ -63,6 +63,19 @@ class KeysFirmwareFragment : Fragment() {
             uri?.let { installTitleKeys(it) }
         }
 
+    /**
+     * Аргумент «какой ключ вписать»: сюда приходит идентификатор игры, когда
+     * человек нажал «Вписать ключ» в диалоге библиотеки. Иначе ему пришлось бы
+     * переписывать шестнадцатеричный идентификатор руками — и ошибиться в нём
+     * легче, чем попасть.
+     */
+    companion object {
+        private const val ARG_TITLE_ID = "titleId"
+
+        fun argsForTitleKey(titleId: String): Bundle =
+            Bundle().apply { putString(ARG_TITLE_ID, titleId) }
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enterTransition = MaterialSharedAxis(MaterialSharedAxis.X, true)
@@ -108,6 +121,15 @@ class KeysFirmwareFragment : Fragment() {
 
         refreshStatus()
         setInsets()
+
+        // Пришли из диалога библиотеки — сразу поле ввода с готовым
+        // идентификатором. Аргумент снимаем, чтобы поворот экрана не открывал
+        // диалог второй раз.
+        val wanted = arguments?.getString(ARG_TITLE_ID).orEmpty()
+        if (wanted.isNotEmpty()) {
+            arguments?.remove(ARG_TITLE_ID)
+            binding.root.post { askTitleKey(wanted) }
+        }
     }
 
     override fun onResume() {
@@ -254,7 +276,7 @@ class KeysFirmwareFragment : Fragment() {
      * Два поля, потому что вставляют по-разному: кто-то строкой
      * «0100… = 32hex», кто-то двумя значениями из блокнота. Разбираем оба.
      */
-    private fun askTitleKey() {
+    private fun askTitleKey(prefillId: String = "") {
         val context = requireContext()
         val density = resources.displayMetrics.density
         val padding = (20 * density).toInt()
@@ -266,6 +288,7 @@ class KeysFirmwareFragment : Fragment() {
             hint = "0100… — идентификатор игры"
             setSingleLine(true)
             inputType = android.text.InputType.TYPE_CLASS_TEXT
+            if (prefillId.isNotEmpty()) setText(prefillId)
         }
         val keyField = android.widget.EditText(context).apply {
             hint = "ключ игры, 32 hex"
@@ -274,6 +297,9 @@ class KeysFirmwareFragment : Fragment() {
         }
         container.addView(idField)
         container.addView(keyField)
+        // Идентификатор уже подставлен — курсор сразу во второе поле, остаётся
+        // вставить ключ.
+        if (prefillId.isNotEmpty()) keyField.requestFocus()
 
         MaterialAlertDialogBuilder(context)
             .setTitle(R.string.add_title_key)
@@ -434,6 +460,11 @@ class KeysFirmwareFragment : Fragment() {
             if (!KenjiData.hasKeys(root)) {
                 runCatching { KenjiBridge.seedKeys(context) }
             }
+            // Прошивку привязываем прямо здесь, но только ссылкой: копия на
+            // триста с лишним мегабайт заставила бы экран замереть.
+            if (!KenjiData.hasFirmware(root)) {
+                runCatching { KenjiBridge.shareFirmware(context) }
+            }
             sb.append("  prod.keys: ")
                 .append(if (KenjiData.hasKeys(root)) "есть" else "нет")
                 .append('\n')
@@ -446,7 +477,9 @@ class KeysFirmwareFragment : Fragment() {
                 linked != null -> sb.append("ссылка на ").append(linked)
                 KenjiData.hasFirmware(root) ->
                     sb.append("копия, ").append(KenjiData.firmwareCount(root)).append(" файлов")
-                else -> sb.append("нет")
+                // Прошивки Eden нет вовсе — тогда второму ядру нечего отдать,
+                // и надо сказать, что делать, а не просто «нет».
+                else -> sb.append("нет (в Eden тоже нет прошивки: установите её на вкладке «Прошивка»)")
             }
             sb.append('\n')
             sb.append("  передать заново: «Перезагрузить ключи»\n")

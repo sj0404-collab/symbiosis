@@ -441,6 +441,36 @@ object KenjiBridge {
         return if (copied > 0) "профиль Eden перенесён: $copied файлов" else "профиль Eden пуст"
     }
 
+    /** Папка прошивки Eden, если данные Eden известны. */
+    private fun edenFirmwareDir(): File? {
+        val root = runCatching { DirectoryInitialization.userDirectory }.getOrNull() ?: return null
+        return File(File(File(File(root, "nand"), "system"), "Contents"), "registered")
+    }
+
+    /**
+     * Отдать прошивку Eden второму ядру **только ссылкой** — без копирования.
+     *
+     * ЗАЧЕМ ОТДЕЛЬНО. Полная передача ([seedFirmware]) умеет и копию, а копия
+     * это триста с лишним мегабайт. Делать её во время построения отчёта
+     * нельзя: экран «Ключи и прошивка» завис бы на минуту. А вот ссылку
+     * поставить — мгновенно, и это ровно то, что человек просил: одна
+     * прошивка на два ядра.
+     *
+     * На телефоне 06.11 отчёт честно писал «прошивка: нет»: привязка шла
+     * только при запуске игры, а до него дело не дошло.
+     *
+     * @return фраза для отчёта; пустая, если прошивки Eden нет вовсе
+     */
+    fun shareFirmware(context: Context): String {
+        val root = edenFirmwareDir() ?: return ""
+        if (!root.isDirectory) return ""
+        val dest = KenjiData.firmwareDir(dataDir(context))
+        val report = linkFirmware(root, dest)
+        bridgeReport = report
+        if (report.startsWith("общая")) freedBytes = freeOldCopies(context, dataDir(context))
+        return report
+    }
+
     /**
      * Перенести прошивку Eden во второе ядро — один раз, а не каждой игрой.
      *
@@ -459,9 +489,7 @@ object KenjiBridge {
      */
     fun seedFirmware(context: Context): String {
         val coreRoot = dataDir(context)
-        val root = runCatching { DirectoryInitialization.userDirectory }.getOrNull()
-            ?: return "данные Eden неизвестны — прошивку не отдать"
-        val src = File(File(File(File(root, "nand"), "system"), "Contents"), "registered")
+        val src = edenFirmwareDir() ?: return "данные Eden неизвестны — прошивку не отдать"
         if (!src.isDirectory) return "в Eden нет прошивки — второе ядро останется без неё"
 
         // СНАЧАЛА ССЫЛКА, А НЕ КОПИЯ.

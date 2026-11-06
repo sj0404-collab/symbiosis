@@ -757,6 +757,29 @@ class NativeLauncherFragment : Fragment() {
             name = item.title,
             reason = item.subtitle
         )
+        // Если причина — отсутствие ключа игры, то идти за ключами в общий
+        // экран мало: там надо ещё понять, что вписывать. Такой диалог сразу
+        // открывает ввод ключа с готовым идентификатором из контейнера.
+        val needsTitleKey = item.note == "нет ключа игры" ||
+            item.subtitle.contains("нужен ключ") ||
+            item.subtitle.contains("title.keys")
+        if (needsTitleKey) {
+            MessageDialogFragment.newInstance(
+                requireActivity(),
+                titleString = title,
+                descriptionString = text,
+                positiveButtonTitleId = R.string.keys_add_title_key,
+                positiveAction = {
+                    findNavController().navigate(
+                        R.id.action_global_keysFirmwareFragment,
+                        KeysFirmwareFragment.argsForTitleKey(titleIdOf(item))
+                    )
+                },
+                showNegativeButton = true,
+                negativeButtonTitleId = android.R.string.cancel
+            ).show(childFragmentManager, MessageDialogFragment.TAG)
+            return
+        }
         MessageDialogFragment.newInstance(
             requireActivity(),
             titleString = title,
@@ -767,6 +790,14 @@ class NativeLauncherFragment : Fragment() {
             negativeButtonTitleId = android.R.string.cancel
         ).show(childFragmentManager, MessageDialogFragment.TAG)
     }
+
+    /** Идентификатор игры из подписи плитки: там он идёт после «·». */
+    private fun titleIdOf(item: NativeLibraryPresenter.Item): String =
+        Regex("[0-9a-fA-F]{16}")
+            .find(item.subtitle)
+            ?.value
+            ?.lowercase()
+            .orEmpty()
 
     private fun explainSplit(item: NativeLibraryPresenter.Item) {
         val (title, text, _) = NativeLibraryPresenter.explain(

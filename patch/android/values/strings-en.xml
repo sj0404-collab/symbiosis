@@ -2135,6 +2135,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
     <string name="launcher_convert_queued">Queued for conversion: %1$d. Keep the app open while it unpacks.</string>
     <string name="launcher_convert_failed">Could not queue the file for conversion</string>
     <string name="launcher_open_keys">Where are the keys</string>
+    <string name="keys_add_title_key">Enter key</string>
     <string name="launcher_launch_failed">The game did not open. The reason is in Tools -> Diagnostics.</string>
     <string name="launcher_nav_failed">The screen did not open: try again</string>
     <string name="launcher_properties_failed">Game properties did not open</string>
