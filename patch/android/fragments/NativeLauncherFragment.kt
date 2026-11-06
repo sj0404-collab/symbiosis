@@ -764,10 +764,30 @@ class NativeLauncherFragment : Fragment() {
             item.subtitle.contains("нужен ключ") ||
             item.subtitle.contains("title.keys")
         if (needsTitleKey) {
+            // Сначала пробуем взять ключ там, где он может лежать, — в билете
+            // внутри самого файла. Это ровно то, о чём человек спросил: «раз
+            // есть билет, значит ключ внутри?» Да, у обычного билета — внутри.
+            val uri = runCatching { Uri.parse(item.path) }.getOrNull()
+            val ticketKey = if (uri != null) {
+                runCatching { GameHelper.ticketKeyFor(uri) }.getOrNull().orEmpty()
+            } else {
+                ""
+            }
+            if (ticketKey.startsWith("ключ игры") && ticketKey.contains("записан в title.keys")) {
+                Snackbar.make(binding.root, ticketKey, Snackbar.LENGTH_LONG).show()
+                gamesViewModel.reloadGames(false)
+                return
+            }
             MessageDialogFragment.newInstance(
                 requireActivity(),
                 titleString = title,
-                descriptionString = text,
+                // Причина из билета дописывается одной строкой: если ключ не
+                // достался, человек должен знать, почему именно, а не гадать.
+                descriptionString = if (ticketKey.isNotEmpty() && !ticketKey.startsWith("ключ игры")) {
+                    text + "\n\nИз билета: " + ticketKey
+                } else {
+                    text
+                },
                 positiveButtonTitleId = R.string.keys_add_title_key,
                 positiveAction = {
                     findNavController().navigate(

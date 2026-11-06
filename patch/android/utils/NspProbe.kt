@@ -70,6 +70,11 @@ object NspProbe {
         val compressed: Boolean,
         val problem: String,
         val fault: String = "",
+        /**
+         * Билет целиком, если он внутри есть. По нему можно достать ключ игры
+         * (см. [TicketKey.derive]) — это ответ на «ключ же лежит в билете».
+         */
+        val ticket: ByteArray = ByteArray(0),
     ) {
         /** Контейнер читается без ключей — значит отказ ядра не про контейнер. */
         val readable: Boolean get() = problem.isEmpty() && container != Container.UNKNOWN
@@ -83,6 +88,15 @@ object NspProbe {
     private const val PFS0_ENTRY = 0x18
     private const val TICKET_RIGHTS_ID = 0x2A0L
     private const val TICKET_RIGHTS_LEN = 16
+
+    /**
+     * Сколько читать из билета.
+     *
+     * Данные билета — 0x2C0 после подписи, подпись до 0x200: больше 0x800
+     * байт не бывает. Потолок нужен, чтобы битый заголовок не заставил читать
+     * мегабайты.
+     */
+    private const val MAX_TICKET_READ = 0x800L
     private const val MAX_ENTRIES = 512
     private const val MAX_NAME = 0x200
 
@@ -190,6 +204,10 @@ object NspProbe {
         var hasTicket = false
         var titleId = ""
         var fromName = ""
+        // Билет целиком: из него можно достать ключ игры, если он обычный.
+        // Раньше читались только 16 байт прав, и на вопрос «ключ же внутри
+        // билета?» ответить было нечем.
+        var ticket: ByteArray = ByteArray(0)
         var firstMagic = ""
         // true — смещения относительные (как в формате), false — абсолютные.
         var relativeToData = true
@@ -235,7 +253,13 @@ object NspProbe {
                     // Rights ID билета — это и есть идентификатор игры. Лежит
                     // открытым текстом: расшифровывать его не нужно.
                     val ticketBase = if (relativeToData) dataStart + offset else offset
-                    val rights = runCatching {
+                    // Читаем билет целиком (подпись + данные): ключ игры лежит
+                    // в нём, и достать его можно только из целого блока.
+                    ticket = runCatching {
+                        bytes.readAt(ticketBase, minOf(size, MAX_TICKET_READ).toInt())
+                    }.getOrDefault(ByteArray(0))
+                    val parsed = TicketKey.parse(ticket)
+                    val rights = parsed?.rightsId ?: runCatching {
                         bytes.readAt(ticketBase + TICKET_RIGHTS_ID, TICKET_RIGHTS_LEN)
                     }.getOrDefault(ByteArray(0))
                     // Rights ID — 16 байт: первые восемь и есть идентификатор
@@ -299,6 +323,7 @@ object NspProbe {
             compressed = compressed || ext == "nsz",
             problem = problem,
             fault = fault,
+            ticket = ticket,
         )
     }
 
@@ -353,7 +378,8 @@ object NspProbe {
     fun verdict(
         result: Result,
         keysPresent: Boolean,
-        titleKeyPresent: Boolean? = null
+        titleKeyPresent: Boolean? = null,
+        ticketNote: String = ""
     ): String = when {
         result.container == Container.UNKNOWN -> result.problem
 
@@ -363,41 +389,39 @@ object NspProbe {
 
         result.problem.isNotEmpty() -> result.problem
 
-        // Дальше контейнер цел — значит вопрос в ключе игры, а не в prod.keys.
+        // Ключ достали из билета прямо сейчас — так и говорим, одной фразой.
+        ticketNote == "ключ взят из билета" ->
+            summary(result) + ". Ключ игры лежал в билете внутри файла — он извлечён " +
+                "и записан в title.keys. Запускайте ещё раз: ядро перечитало ключи."
+
+        // Одна причина, а не список из пяти.
         //
-        // 204 ключа консоли и «core reports keys present: true» ничего не
-        // говорят о конкретной игре: её ключ лежит либо в билете внутри
-        // образа, либо строкой «0100… = 32hex» в title.keys. 06.11 в диалоге
-        // было «дело не в ключах, это наш дефект» — и это была неправда.
+        // 06.11 в диалоге стояла простыня: «внутри нет NCA… вероятно, это
+        // обновление или DLC… каждый NCA по отдельности… дополнительные файлы
+        // ключей… положите prod.keys или title.keys». Это не диагноз, а
+        // четыре разных ответа подряд, и человек не мог понять, что делать.
         !result.hasTicket ->
-            summary(result) + ". Билета внутри нет, поэтому ключ может быть только в " +
-                "title.keys" + when (titleKeyPresent) {
-                false -> ": а записи для ${result.titleId} там нет. Добавьте строку " +
-                    "${result.titleId} = <32 hex> или положите файл с ней в keys/extra."
-                true -> ": и он там есть — тогда причина отказа не в ключе."
-                null -> "."
-            }
-
-        result.titleId.isEmpty() ->
-            summary(result) + ". Права в билете нет (Rights ID пустой), идентификатор игры " +
-                "из него не выводится — такой файл открывается только ключом из title.keys."
-
-        titleKeyPresent == false ->
-            summary(result) + ". Билет без права: ключ из него не выводится, поэтому нужен " +
-                "ключ игры ${result.titleId} в title.keys — записи для неё там нет. " +
-                if (keysPresent) {
-                    "Ключи консоли установлены, но этого не заменяют."
-                } else {
-                    "Ключей консоли тоже нет."
+            summary(result) + ". Билета внутри нет: ключ может быть только в title.keys" +
+                when (titleKeyPresent) {
+                    false -> ", а записи для ${result.titleId} там нет. Впишите ключ этой игры."
+                    true -> " — и он там есть, значит причина отказа не в ключе."
+                    null -> "."
                 }
 
+        result.titleId.isEmpty() ->
+            summary(result) + ". У билета нет прав (Rights ID пустой или FF) — " +
+                "ключ из него не выводится, остаётся title.keys."
+
+        titleKeyPresent == false ->
+            summary(result) + ". " + ticketNote.ifBlank {
+                "Ключа для ${result.titleId} нет ни в билете, ни в title.keys"
+            }
+
         titleKeyPresent == true ->
-            summary(result) + ". Ключ для ${result.titleId} в title.keys есть — значит отказ " +
-                "ядра не про ключи; пришлите, пожалуйста, этот текст, и я возьмусь за чтение."
+            summary(result) + ". Ключ для ${result.titleId} есть — значит отказ ядра не про ключ."
 
         else ->
-            summary(result) + ". Ключ берётся из билета, а если его нет — из title.keys; " +
-                "проверить это можно в разделе «Ключи и прошивка»."
+            summary(result) + ". Ключ берётся из билета, а если его нет — из title.keys."
     }
 
     /** Первая фраза вердикта: что за контейнер и из чего он состоит. */

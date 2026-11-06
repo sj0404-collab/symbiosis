@@ -478,8 +478,42 @@ object GameHelper {
                     val probe = runCatching { probeContainer(it.uri) }.getOrNull()
                     val keys = keysOkNow()
                     val titleKeys = runCatching { titleKeyLines() }.getOrDefault(emptyList())
-                    val titleKey = probe?.takeIf { it.titleId.isNotEmpty() }
+                    var titleKey = probe?.takeIf { it.titleId.isNotEmpty() }
                         ?.let { TitleKeys.has(titleKeys, it.titleId) }
+
+                    // КЛЮЧ ИЗ БИЛЕТА.
+                    //
+                    // Человек спросил прямо: «раз в контейнере есть билет,
+                    // значит ключ должен быть в нём?» — да, у обычного
+                    // (common) билета ключ лежит внутри, зашифрованный
+                    // titlekek, а titlekek_XX у него в prod.keys есть. Значит
+                    // ключ можно достать на месте и записать в title.keys — и
+                    // файл после этого открывается.
+                    //
+                    // Делается только когда билет есть, ключа нет, и
+                    // расшифровка действительно дала правдоподобный ключ. Это
+                    // чистая арифметика над байтами: ядро не вызывается.
+                    var ticketNote = ""
+                    val ticket = probe?.ticket
+                    if (titleKey == false && ticket != null && ticket.isNotEmpty()) {
+                        val keysMap = runCatching { TicketKey.readProdKeys(keysDirNow()) }
+                            .getOrDefault(emptyMap())
+                        val derived = runCatching { TicketKey.derive(ticket, keysMap) }.getOrNull()
+                        if (derived != null) {
+                            val written = runCatching {
+                                appendTitleKey(probe.titleId, derived.key)
+                            }.getOrDefault(false)
+                            if (written) {
+                                titleKey = true
+                                ticketNote = "ключ взят из билета"
+                                runCatching { NativeLibrary.reloadKeys() }
+                            }
+                        } else {
+                            // Не вышло — говорим почему, а не молчим.
+                            ticketNote = runCatching { TicketKey.refusal(ticket, keysMap) }
+                                .getOrDefault("")
+                        }
+                    }
                     // Причину называем сами, по байтам контейнера.
                     //
                     // Здесь был вызов NativeSymbiosis.romProblem на каждый
@@ -497,7 +531,7 @@ object GameHelper {
                     val why = if (probe == null) {
                         "ядро не прочитало заголовок · проверьте ключи или распакуйте файл"
                     } else {
-                        NspProbe.verdict(probe, keys, titleKey)
+                        NspProbe.verdict(probe, keys, titleKey, ticketNote)
                     }
                     val keysNote = if (probe == null) "" else NspProbe.label(probe, keys, titleKey)
                     // Дополнение и обновление — не игра.
@@ -536,6 +570,36 @@ object GameHelper {
                 }
                 games.add(game)
             }
+        }
+    }
+
+    /**
+     * Достать ключ игры из билета по требованию — для кнопки в диалоге.
+     *
+     * Тот же путь, что и в обходе, но здесь человек ждёт ответа, поэтому
+     * возвращается фраза: что вышло и почему.
+     */
+    fun ticketKeyFor(uri: Uri): String {
+        val probe = runCatching { probeContainer(uri) }.getOrNull()
+            ?: return "файл не прочитан"
+        val ticket = probe.ticket
+        if (ticket.isEmpty()) {
+            return "билета внутри нет: ключ может быть только в title.keys"
+        }
+        val keysMap = runCatching { TicketKey.readProdKeys(keysDirNow()) }.getOrDefault(emptyMap())
+        val derived = runCatching { TicketKey.derive(ticket, keysMap) }.getOrNull()
+        if (derived == null) {
+            val reason = runCatching { TicketKey.refusal(ticket, keysMap) }.getOrDefault("")
+            return reason.ifBlank { "ключ из билета не выводится" }
+        }
+        val id = probe.titleId.ifEmpty { TicketKey.parse(ticket)?.titleId.orEmpty() }
+        val written = runCatching { appendTitleKey(id, derived.key) }.getOrDefault(false)
+        runCatching { NativeLibrary.reloadKeys() }
+        return if (written) {
+            "ключ игры $id взят из билета и записан в title.keys — запускайте"
+        } else {
+            "ключ из билета получен, но записать в title.keys не удалось: " +
+                "проверьте, что папка keys доступна"
         }
     }
 
@@ -581,6 +645,30 @@ object GameHelper {
         val context = YuzuApplication.appContext
         val keysDir = DirectoryInitialization.userDirectory?.let { File(it, "keys") }
         return TitleKeys.readAll(keysDir)
+    }
+
+    /** Папка ключей: `<данные Eden>/keys`. */
+    private fun keysDirNow(): File? =
+        DirectoryInitialization.userDirectory?.let { File(it, "keys") }
+
+    /**
+     * Дописать ключ игры в `title.keys`.
+     *
+     * Только для ключа, который сам пришёл из билета: человек его не вводил, и
+     * терять его нельзя — иначе обход придётся повторять каждым запуском.
+     *
+     * @return true, если строка действительно появилась в файле
+     */
+    private fun appendTitleKey(titleId: String, key: String): Boolean {
+        val dir = keysDirNow() ?: return false
+        if (!dir.isDirectory) return false
+        val file = File(dir, "title.keys")
+        val line = TitleKeys.manualLine(titleId, key) ?: return false
+        val before = runCatching { file.readLines() }.getOrDefault(emptyList())
+        if (TitleKeys.has(before, titleId)) return true
+        val after = TitleKeys.upsert(before, line)
+        file.writeText(after.joinToString("\n", postfix = "\n"))
+        return TitleKeys.has(after, titleId)
     }
 
     /** Состояние ключей прямо сейчас — без него вердикт был бы догадкой. */

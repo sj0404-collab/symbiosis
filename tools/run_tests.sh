@@ -217,6 +217,7 @@ if command -v kotlinc >/dev/null 2>&1; then
       # .nsp, обрезанный файл, билет с идентификатором игры. 05.11 ключи были
       # на месте, а плитки говорили «проверьте ключи» — это была догадка.
       NspProbeTest) echo "$HERE/patch/android/utils/NspProbe.kt \
+        $HERE/patch/android/utils/TicketKey.kt \
         $HERE/patch/android/utils/TitleKeys.kt \
         $HERE/patch/android/utils/ExtraKeys.kt" ;;
       # Ключ игры — не то же, что 204 ключа консоли. Проверяем, что его
@@ -232,6 +233,10 @@ if command -v kotlinc >/dev/null 2>&1; then
       # значит нужен и TitleKeys, иначе тест не собирается.
       ExtraKeysTest) echo "$HERE/patch/android/utils/ExtraKeys.kt \
         $HERE/patch/android/utils/TitleKeys.kt" ;;
+      # Ключ из билета: разметка тикета и AES — без ядра и без сети.
+      TicketKeyTest) echo "$HERE/patch/android/utils/TicketKey.kt \
+        $HERE/patch/android/utils/TitleKeys.kt \
+        $HERE/patch/android/utils/ExtraKeys.kt" ;;
       # Ровность кадров: почему «60 → 15 → 45 → 5» и когда виноват звук, а не
       # картинка. Чистая арифметика над рядами длительностей кадров.
       FramePacingTest) echo "$HERE/patch/android/utils/FramePacing.kt" ;;

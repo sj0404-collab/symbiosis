@@ -548,39 +548,33 @@ Java_org_yuzu_yuzu_1emu_utils_NativeSymbiosis_diagnoseRom(JNIEnv* env, jobject,
             // читается. Оглавление при этом целое - потому что оно в открытом
             // виде.
             //
-            // Поэтому перечисляем, что известно о каждом NCA: путь, тип
-            // содержимого по открытому оглавлению (в NCA это 0x21) и статус
-            // разбора. Статус - это и есть ответ: MissingTitlekey, а не
-            // «неизвестно почему».
-            why += "  Каждый NCA по отдельности: ";
-            bool any = false;
+            // Ответ ядра: одно состояние и один вывод, а не перечень.
+            //
+            // ОДНА ПРИЧИНА, А НЕ ПЯТЬ.
+            //
+            // 06.11 диалог показал склейку: «внутри нет NCA… вероятно, это
+            // обновление или DLC… каждый NCA по отдельности… дополнительные
+            // файлы ключей… положите prod.keys или title.keys». Человек не мог
+            // понять, что делать: это четыре разных ответа подряд.
+            //
+            // Теперь берём первый NCA с отказом и называем его состояние и
+            // наличие ключа. Остальные не перечисляем: причина у них та же.
+            std::string detail;
             try {
-                // NSP строим сами: OpenContainerAsNsp есть только внутри
-                // loader.cpp, в анонимном namespace. Для XCI снаружи
-                // понадобился бы разбор раздела secure, поэтому там список
-                // остаётся прежним, а подробности даёт сам контейнер.
                 std::shared_ptr<FileSys::NSP> nsp;
                 if (file_type == Loader::FileType::NSP) {
                     nsp = std::make_shared<FileSys::NSP>(file, 0, 0);
                 }
                 if (nsp != nullptr && nsp->GetStatus() == Loader::ResultStatus::Success) {
-                    const auto ncas = nsp->GetNCAsCollapsed();
-                    for (const auto& nca : ncas) {
+                    for (const auto& nca : nsp->GetNCAsCollapsed()) {
                         if (nca == nullptr) {
                             continue;
                         }
-                        any = true;
                         const auto status = nca->GetStatus();
-                        why += nca->GetName();
-                        why += " [тип ";
-                        why += std::to_string(static_cast<int>(nca->GetType()));
-                        why += ", ";
-                        why += Loader::GetResultStatusString(status);
-
-                        // Rights id и наличие title key — то, чего не хватает
-                        // для расшифровки. Без этой пары «MissingTitlekey»
-                        // ничего не говорит: непонятно, какого ключа нет и
-                        // есть ли он вообще в загруженных файлах.
+                        if (status == Loader::ResultStatus::Success) {
+                            continue;
+                        }
+                        detail = Loader::GetResultStatusString(status);
                         const auto rights = nca->GetRightsId();
                         if (rights != FileSys::RightsId{}) {
                             std::string rid;
@@ -593,27 +587,21 @@ Java_org_yuzu_yuzu_1emu_utils_NativeSymbiosis_diagnoseRom(JNIEnv* env, jobject,
                             std::memcpy(rid_u128.data(), rights.data(), rights.size());
                             const bool has_title_key = Core::Crypto::KeyManager::Instance().HasKey(
                                 Core::Crypto::S128KeyType::Titlekey, rid_u128[1], rid_u128[0]);
-                            why += ", rights ";
-                            why += rid;
-                            why += has_title_key ? ", title key ЕСТЬ" : ", title key НЕТ";
+                            detail += has_title_key
+                                ? " (ключ игры для " + rid + " есть — дело не в нём)"
+                                : " (нужен ключ игры для " + rid + ")";
                         }
-                        why += "] ";
+                        break;
                     }
                 }
             } catch (...) {
-                why += "разобрать список NCA не удалось. ";
+                detail = "разобрать список NCA не удалось";
             }
-            if (!any) {
-                why += "ядро не смогло прочитать из контейнера ни одного NCA.";
+            if (detail.empty()) {
+                detail = "ни один NCA не открылся";
             }
-            why += "  Дополнительные файлы ключей (любые *.keys и *.txt в папке keys и в";
-            why += " keys/extra) подхватываются автоматически - так можно доложить";
-            why += " title key для одной игры, не трогая prod.keys.";
-            why += "  Если у NCA стоит MissingTitlekey - нужен title key этой игры:";
-            why += " в контейнере его нет, а ключом подписи (header key) содержимое";
-            why += " не открывается, потому что оно дополнительно зашифровано";
-            why += " тикетом. Положите в папку keys полный prod.keys (с title keys)";
-            why += " или title.keys с ключом для 01004F302847E000.";
+            why += detail;
+            why += ".";
             return Common::Android::ToJString(env, "not_bootable|" + why);
         }
         return Common::Android::ToJString(env, "ok|файл читается");

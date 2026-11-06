@@ -301,14 +301,32 @@ class KeysFirmwareFragment : Fragment() {
         // вставить ключ.
         if (prefillId.isNotEmpty()) keyField.requestFocus()
 
-        MaterialAlertDialogBuilder(context)
+        val dialog = MaterialAlertDialogBuilder(context)
             .setTitle(R.string.add_title_key)
             .setView(container)
-            .setPositiveButton(android.R.string.ok) { _, _ ->
-                addTitleKey(idField.text.toString(), keyField.text.toString())
-            }
+            .setPositiveButton(android.R.string.ok, null)
             .setNegativeButton(android.R.string.cancel, null)
-            .show()
+            .create()
+        dialog.show()
+        // Проверку вешаем после показа: диалог с ошибкой не должен
+        // закрываться, иначе вставленный ключ теряется и вводить заново.
+        dialog.getButton(android.app.AlertDialog.BUTTON_POSITIVE)?.setOnClickListener {
+            val rawId = idField.text.toString()
+            val rawKey = keyField.text.toString()
+            val single = rawId.trim()
+            val (id, key) = if (single.contains('=')) {
+                single.substringBefore('=') to single.substringAfter('=')
+            } else {
+                single to rawKey
+            }
+            if (TitleKeys.manualLine(id, key) == null) {
+                addTitleKey(rawId, rawKey) // покажет причину внизу экрана
+                keyField.requestFocus()
+                return@setOnClickListener
+            }
+            dialog.dismiss()
+            addTitleKey(rawId, rawKey)
+        }
     }
 
     private fun addTitleKey(rawId: String, rawKey: String) {
@@ -321,11 +339,21 @@ class KeysFirmwareFragment : Fragment() {
         }
         val line = TitleKeys.manualLine(id, key)
         if (line == null) {
-            Snackbar.make(
-                binding.root,
-                "не похоже на ключ игры: нужно 16 hex-знаков идентификатора и 32 — ключа",
-                Snackbar.LENGTH_LONG
-            ).show()
+            // Отказ по делу: если идентификатор верный и подставлен сам, то
+            // человеку нечего было вводить в первое поле — ему нужен только
+            // ключ. Сообщение «нужно 16 hex-знаков идентификатора и 32 ключа»
+            // в этот момент читается как «ты всё сделал не так».
+            val message = when {
+                TitleKeys.isPlausible(id.trim().lowercase()) && key.isBlank() ->
+                    "идентификатор игры верный — осталось вставить ключ: 32 hex-символа"
+                TitleKeys.isPlausible(id.trim().lowercase()) ->
+                    "ключ не подошёл: нужно 32 hex-символа, а вставлено " +
+                        key.trim().length
+                else ->
+                    "идентификатор игры — 16 hex-символов (0100…). Его можно " +
+                        "не вводить: он подставляется сам из файла"
+            }
+            Snackbar.make(binding.root, message, Snackbar.LENGTH_LONG).show()
             return
         }
         viewLifecycleOwner.lifecycleScope.launch {
