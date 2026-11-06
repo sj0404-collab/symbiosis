@@ -3,6 +3,8 @@
 
 package org.yuzu.yuzu_emu.utils
 
+import java.util.Locale
+
 /**
  * Отчёт о падении второго ядра: разбор файла, который пишет мост.
  *
@@ -844,6 +846,110 @@ object KenjiCrash {
             append("Обойти можно выбором Eden для этой игры долгим нажатием на плитке.")
         }
     }
+
+    /**
+     * Паника гостя — `SvcBreak` в журнале ядра.
+     *
+     * ЧТО ЭТО ЗА СТРОКА. В журнале второго ядра 06.11 было:
+     *
+     * ```
+     * SvcBreak reason=0x0 pid=109 titleId=0x01004F302847E000
+     *          name=Vault of Power tid=28 pc=0x139553C0
+     * ```
+     *
+     * `svcBreak` — системный вызов, которым **сам гость** (игра) просит
+     * завершить процесс. `reason=0x0` — это `BreakReason_Panic` по заголовкам
+     * libnx и Switchbrew: игра не смогла продолжить и вызвала аварийный
+     * останов (`nn::os::Abort`), а не ядро отказалось её открыть. Ядро к этому
+     * моменту уже загрузило игру и обслуживало её вызовы — иначе в журнале не
+     * было бы `Application Loaded` и `SendSyncRequest() = Success`.
+     *
+     * ПОЧЕМУ ЭТО ВАЖНО. До этой правки наш разбор знал только .NET-исключения
+     * (`Unhandled exception in guest thread`). Паника гостя в этот признак не
+     * попадает, поэтому плеер молча ждал своих тридцати секунд и писал «не
+     * отдало ни одного кадра», хотя в журнале прямым текстом стоял приговор.
+     *
+     * Пустая строка — если паники в журнале нет.
+     */
+    fun guestPanic(text: String): String {
+        val line = text.lineSequence().lastOrNull { it.contains("SvcBreak", ignoreCase = true) }
+            ?: return ""
+        val reason = value(line, "reason")
+        val tid = value(line, "tid")
+        val pc = value(line, "pc")
+        // Время берём из метки САМОЙ строки паники, а не из промежутка между
+        // первой и последней строкой журнала: «через 10 с» — это сколько
+        // прошло между двумя событиями, а человеку нужно «на 15.7 с от
+        // старта», то есть место паники на шкале.
+        val whenText = stampSeconds(line)
+            ?.let { "на " + String.format(Locale.ROOT, "%.1f", it) + " с от старта" }
+            ?: elapsedText(line).let { span -> if (span.isEmpty()) "" else "через " + span + " после старта" }
+        val reasonText = when (reason?.lowercase(Locale.ROOT)) {
+            "0x0", "0", null -> "паника: игра сама вызвала аварийный останов"
+            "0x1", "1" -> "сработала проверка-утверждение внутри игры"
+            "0x2", "2" -> "игра попросила останов сама (пользовательский break)"
+            "0x7", "7" -> "необработанное исключение C++ внутри игры"
+            else -> "причина в номере $reason"
+        }
+        return buildString {
+            append("игра остановила себя изнутри: svcBreak, ").append(reasonText)
+            if (whenText.isNotEmpty()) append(", ").append(whenText)
+            if (tid != null) append(", поток ").append(tid)
+            if (pc != null) append(", адрес ").append(pc)
+            append(". Это не отказ ядра: игру оно уже загрузило и отвечало на её " +
+                "запросы — остановку запросила сама игра. Ключи и прошивка тут ни " +
+                "при чём: без них ядро не дошло бы до этого места.")
+        }
+    }
+
+    /**
+     * Строки журнала вокруг паники — то, чем ядро объясняло её само.
+     *
+     * Шум (`SleepThread`, `WaitSynchronization`, `SendSyncRequest`) отбрасывается:
+     * в нём нет причины, а места на экране мало. Пустой список — если вокруг
+     * паники только обычная работа ядра: показывать её как «причину» нельзя.
+     */
+    fun panicContext(text: String, before: Int = 6, after: Int = 3): List<String> {
+        val all = text.lines()
+        val at = all.indexOfLast { it.contains("SvcBreak", ignoreCase = true) }
+        if (at < 0) return emptyList()
+        val head = all.subList((at - 40).coerceAtLeast(0), at)
+        val tail = all.subList((at + 1).coerceAtMost(all.size), (at + 41).coerceAtMost(all.size))
+        val picked = head.filter { !isNoise(it) }.takeLast(before) +
+            tail.filter { !isNoise(it) }.take(after)
+        return picked.map { it.trim().take(160) }.filter { it.isNotEmpty() }
+    }
+
+    /** Строка журнала, в которой нет причины, а только обычная работа. */
+    private fun isNoise(line: String): Boolean {
+        val text = line.trim()
+        if (text.isEmpty()) return true
+        return NOISE.any { text.contains(it) }
+    }
+
+    private val NOISE = listOf(
+        "SleepThread", "WaitSynchronization", "SendSyncRequest", "GetThreadId",
+        "SetThreadPriority", "WaitProcessWideKeyAtomic", "GetProcessId",
+        "svcGetSystemTick", "SetMemoryAttribute"
+    )
+
+    /** Метка времени строки журнала в секундах от начала: `00:00:15.725` → 15.725. */
+    private fun stampSeconds(line: String): Double? = Regex("""(\d{2}):(\d{2}):(\d{2})\.(\d{3})""")
+        .find(line)
+        ?.let { m ->
+            m.groupValues[1].toInt() * 3600 +
+                m.groupValues[2].toInt() * 60 +
+                m.groupValues[3].toInt() +
+                m.groupValues[4].toInt() / 1000.0
+        }
+
+    /** Значение вида `ключ=значение` в строке журнала. */
+    private fun value(line: String, key: String): String? =
+        Regex("""\b""" + Regex.escape(key) + """=([^\s,]+)""")
+            .find(line)
+            ?.groupValues
+            ?.get(1)
+            ?.takeIf { it.isNotEmpty() }
 
     /** Библиотеки, которые только передают сигнал, а не вызывают его. */
     private val SYSTEM_LIBS = listOf("libc.so", "libc++", "libdl.so", "libm.so", "[vdso]")

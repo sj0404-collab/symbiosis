@@ -448,9 +448,26 @@ class KenjiPlayerActivity : Activity(), SurfaceHolder.Callback {
                 if (read <= 0) "" else String(buffer, 0, read)
             }
         }.getOrDefault("")
-        if (!fresh.contains("Unhandled exception in guest thread")) return
+        // ДВЕ РАЗНЫЕ ОСТАНОВКИ, И РАНЬШЕ МЫ ВИДЕЛИ ТОЛЬКО ОДНУ.
+        //
+        //  1. Ядро уронило гостевой поток: в журнале
+        //     «Unhandled exception in guest thread».
+        //  2. Игра сама вызвала аварийный останов: в журнале `SvcBreak`
+        //     (`reason=0x0` — BreakReason_Panic). Это не ошибка ядра: игру оно
+        //     уже загрузило и отвечало на её вызовы, а приговор вынесла сама
+        //     игра. Разбор не знал этой строки, поэтому на телефоне 06.11
+        //     человек тридцать секунд смотрел на «кадров нет», хотя причина
+        //     лежала в журнале прямым текстом.
+        val guestThread = fresh.contains("Unhandled exception in guest thread")
+        val panic = KenjiCrash.guestPanic(fresh)
+        if (!guestThread && panic.isEmpty()) return
 
         guestFailed = true
+        if (!guestThread) {
+            failOnGuestPanic(appContext, fresh, panic)
+            return
+        }
+
         val why = KenjiCrash.guestFailure(fresh)
         // Строки ДО исключения — единственное место, где ядро могло назвать
         // номер процесса, который оно не нашло. Без них следующий отчёт
@@ -479,6 +496,37 @@ class KenjiPlayerActivity : Activity(), SurfaceHolder.Callback {
             }
             fail(short + ".\n\nЭто ошибка самого ядра, а не файла игры. " +
                 "Запомнил: эта игра будет запускаться на Eden.")
+        }
+    }
+
+    /**
+     * Игра сама остановила себя — сказать это её словами.
+     *
+     * ПОЧЕМУ ОТДЕЛЬНО. Паника гостя (`SvcBreak`) выглядит как наше падение
+     * только если не читать журнал. Ядро уже загрузило игру и десять секунд
+     * отвечало на её запросы; останов попросила сама игра. Человеку нужно
+     * ровно это и услышать: не «прошивки нет» и не «поверхность не создана»,
+     * а «игра сама вышла, вот её последние слова».
+     *
+     * Игру всё равно переводим на Eden: там она работает — проверено.
+     */
+    private fun failOnGuestPanic(appContext: android.content.Context, fresh: String, panic: String) {
+        val context = runCatching { KenjiCrash.panicContext(fresh) }.getOrDefault(emptyList())
+        context.forEach { line ->
+            runCatching { KenjiReport.watch(appContext, "перед паникой: " + line.take(140)) }
+        }
+        runCatching { KenjiReport.watch(appContext, "гость: " + panic.take(200)) }
+        runCatching { CoreFallback.note(appContext, gamePath, panic) }
+        val remember = runCatching {
+            EngineStore.setCoreFor(appContext, romPath, EngineHybrid.Core.EDEN)
+        }.getOrDefault(false)
+        runCatching { KenjiBridge.stopPlay() }
+        val tail = if (context.isEmpty()) "" else
+            "\n\nПоследние строки журнала:\n" + context.take(4).joinToString("\n")
+        val next = if (remember) "Запомнил: эта игра теперь запускается на Eden."
+        else "Запустите её на Eden — выбор ядра на вкладке «Инструменты»."
+        runOnUiThread {
+            fail("второе ядро остановилось. " + panic + tail + "\n\n" + next)
         }
     }
 

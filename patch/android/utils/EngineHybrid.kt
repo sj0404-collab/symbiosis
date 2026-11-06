@@ -182,6 +182,7 @@ object EngineHybrid {
             "fast2DCopy" -> bool(v)?.let { cfg.copy(fast2DCopy = it) }
             "internet" -> bool(v)?.let { cfg.copy(enableInternetAccess = it) }
             "integrity" -> bool(v)?.let { cfg.copy(enableFsIntegrityChecks = it) }
+            "services" -> bool(v)?.let { cfg.copy(ignoreMissingServices = it) }
             "vsync" -> v.toIntOrNull()?.takeIf { it in 0..2 }?.let {
                 cfg.copy(vSyncMode = it)
             }
@@ -212,6 +213,7 @@ object EngineHybrid {
         "fast2DCopy" -> cfg.fast2DCopy.toString()
         "internet" -> cfg.enableInternetAccess.toString()
         "integrity" -> cfg.enableFsIntegrityChecks.toString()
+        "services" -> cfg.ignoreMissingServices.toString()
         "vsync" -> cfg.vSyncMode.toString()
         "scale" -> trimFloat(cfg.resScale)
         "aniso" -> trimFloat(cfg.maxAnisotropy)
@@ -469,6 +471,15 @@ object EngineHybrid {
         Field(
             "integrity", "Проверка целостности",
             "Только у Kenji. Выключена — быстрее запуск, как в проверенных настройках.",
+            false,
+            listOf(Choice("false", "выкл"), Choice("true", "вкл"))
+        ),
+        Field(
+            "services", "Терпеть отсутствующие службы",
+            "Только у Kenji. Игра просит системную службу, которой у ядра нет: " +
+                "с этой строкой ядро отвечает заглушкой вместо остановки игры. " +
+                "В Kenji Space она выключена по умолчанию — включать точечно, " +
+                "если игра падает сразу после заставки.",
             false,
             listOf(Choice("false", "выкл"), Choice("true", "вкл"))
         )

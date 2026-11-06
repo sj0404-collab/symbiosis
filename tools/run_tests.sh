@@ -227,6 +227,12 @@ if command -v kotlinc >/dev/null 2>&1; then
       # Где второе ядро ищет прошивку: подпапки в registered и плоские .nca
       # в bis/system/Contents. Ссылка на папку Eden — ноль файлов для Kenji.
       KenjiFirmwareLayoutTest) echo "$HERE/patch/android/utils/KenjiData.kt" ;;
+      # Паника гостя: `SvcBreak reason=0x0` — игра остановила себя сама.
+      # Раньше разбор знал только .NET-исключения и на экране оставалось
+      # «кадров нет» вместо приговора.
+      KenjiPanicTest) echo "$HERE/patch/android/utils/KenjiCrash.kt \
+        $HERE/patch/android/utils/KenjiData.kt \
+        $HERE/patch/android/utils/EngineHybrid.kt" ;;
       TitleKeysTest) echo "$HERE/patch/android/utils/TitleKeys.kt \
         $HERE/patch/android/utils/ExtraKeys.kt" ;;
       # Дополнительные ключи: какая строка — ключ игры, что дописывать в
