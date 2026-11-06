@@ -2994,3 +2994,20 @@ MD5 `670d32d3e6fa06dc2c82798e548255ad`, 48 326 398 Б) — но при свер�
 `ConverterOutcomeTest` 16/0, `NativeLibraryPresenterTest` 80/0 (пометка
 «дополнение»), `NspProbeTest` 42/0, `KenjiFirmwareShareTest` 7/0; синтаксис и
 ссылки Kotlin — 0 проблем на 114 файлах.
+
+### 51.7. Сборка `42189426903` (коммит `318e6d0`)
+
+Первая попытка (`42187727039`, коммит `cc3b77a`) упала на компиляции: в
+экране ключей не был импортирован `MaterialAlertDialogBuilder`. Добавлен,
+пересобрано.
+
+**APK: https://gofile.io/d/CQbDsSp4** — MD5 `835f29a4ea8ef338e1a518a6eb28b05b`,
+48 375 066 Б, 46.1 МБ.
+
+Тесты: `TitleKeysTest` 29/0, `ConverterOutcomeTest` 16/0,
+`NativeLibraryPresenterTest` 80/0, `NspProbeTest` 42/0,
+`KenjiFirmwareShareTest` 7/0; остальное зелёное.
+
+Сверено по собранному APK (md5 совпал с логом и с gofile): `Распаковано, но
+ядро файл не открывает` — 1, `в файле нет строк вида` — 1, `ключей игр
+добавлено` — 1, `не отдельная игра` — 1, `enqueueFolder` — 8, `sharePlan` — 1.
