@@ -3055,3 +3055,20 @@ MD5 `670d32d3e6fa06dc2c82798e548255ad`, 48 326 398 Б) — но при свер�
 `NspProbeTest` 44/0 (добавлен случай с объявленной таблицей имён в гигабайт),
 `TitleKeysTest` 29/0, `ConverterOutcomeTest` 16/0,
 `NativeLibraryPresenterTest` 80/0, `KenjiFirmwareShareTest` 7/0.
+
+### 52.5. Сборка `42195267034` (коммит `5d5b558`)
+
+Первая попытка (`42193433766`, коммит `13bff68`) не собралась: два
+`override fun onResume` в одном файле и забытый импорт `Context` в GameHelper.
+Обе ошибки мои, обе исправлены. Чтобы такое не повторялось, в
+`tools/check_kotlin_syntax.py` добавлена проверка повторов объявлений: вторая
+функция с той же сигнатурой теперь ловится локально, а не на CI.
+
+**APK: https://gofile.io/d/HAyibO6r** — MD5 `7906d18a282533e95468f95e215072a5`,
+48 375 030 Б, 46.1 МБ.
+
+Тесты: `NspProbeTest` 44/0, `TitleKeysTest` 29/0, `ConverterOutcomeTest` 16/0,
+`NativeLibraryPresenterTest` 80/0, `KenjiFirmwareShareTest` 7/0.
+
+Сверено по собранному APK: `прошлый обход библиотеки не закончился` — 1,
+`таблица имён` — 1, `scan-in-progress.txt` — 1, `ui-crash.txt` — 3.
