@@ -27,6 +27,7 @@ import org.yuzu.yuzu_emu.utils.KenjiBridge
 import org.yuzu.yuzu_emu.utils.KenjiCrash
 import org.yuzu.yuzu_emu.utils.KenjiPlayService
 import org.yuzu.yuzu_emu.utils.KenjiReport
+import org.yuzu.yuzu_emu.utils.KernelLogFormat
 import org.yuzu.yuzu_emu.utils.UiGuard
 
 /**
@@ -76,6 +77,13 @@ class KenjiPlayerActivity : Activity(), SurfaceHolder.Callback {
 
     /** Путь к игре: нужен, чтобы запомнить за ней Eden после отказа по кадрам. */
     private var romPath: String = ""
+
+    /** Слова, по которым видно, на чём стоит отрисовка. */
+    private val RENDER_NEEDLES = listOf(
+        "Renderer", "Vulkan", "Swapchain", "SwapChain", "Present",
+        "NvGpu", "Graphics", "Gpu", "Surface", "Shader",
+        "{Vi}", "Display", "Framebuffer", "Present"
+    )
 
     /** Предел ожидания первого кадра. Дальше честно сдаёмся. */
     private val noFramesLimitSeconds = 30
@@ -367,6 +375,14 @@ class KenjiPlayerActivity : Activity(), SurfaceHolder.Callback {
                     }
                     if (rate > 0) append('\n').append("≈ ").append(rate / 3).append(" кадр/с")
                     if (tail.isNotEmpty()) append('\n').append(tail)
+                    // Ноль кадров — показываем слова ядра про отрисовку: без
+                    // них экран состоит из наших догадок, а причина лежит в
+                    // журнале, которого человек не видит.
+                    if (frames == 0L) {
+                        runCatching { rendererTail(appContext, 1) }.getOrDefault(emptyList())
+                            .firstOrNull { line -> !tail.contains(line) }
+                            ?.let { line -> append('\n').append(line) }
+                    }
                 }
                 // Тот же текст — в отчёт. Человеку некогда делать скриншот на
                 // чёрном экране, поэтому всё, что видно, записывается само.
@@ -403,13 +419,30 @@ class KenjiPlayerActivity : Activity(), SurfaceHolder.Callback {
      * можно не заставлять человека ждать и не повторять ту же попытку вслепую.
      */
     private fun giveUpOnFrames(appContext: android.content.Context) {
+        // СНАЧАЛА ЕЩЁ РАЗ ЖУРНАЛ, ПОТОМ СЧЁТЧИК.
+        //
+        // «Кадров нет» — это наш вывод, а игра могла уже сама остановиться и
+        // назвать причину. Приговор самой игры важнее нашего счётчика, поэтому
+        // перед ним читаем журнал ещё раз (на телефоне 06.11 паника была на
+        // 15.7 с, а сообщение о кадрах — на 30-й).
+        runCatching { checkGuestFailure(appContext) }
+        if (guestFailed) return
+        val renderer = runCatching { rendererTail(appContext, 3) }.getOrDefault(emptyList())
+        renderer.forEach { line ->
+            runCatching { KenjiReport.watch(appContext, "отрисовка: " + line) }
+        }
         val remember = runCatching {
             EngineStore.setCoreFor(appContext, romPath, EngineHybrid.Core.EDEN)
         }.getOrDefault(false)
         val message = buildString {
             append("второе ядро не отдало ни одного кадра за ")
             append(noFramesLimitSeconds).append(" с: игра загрузилась внутри ядра, ")
-            append("но рисование не пошло. ")
+            append("но рисование не пошло.")
+            if (renderer.isNotEmpty()) {
+                append("\n\nЧто ядро говорит про отрисовку:\n")
+                append(renderer.take(2).joinToString("\n"))
+            }
+            append(' ')
             append(
                 if (remember) "Запомнил: эта игра теперь запускается на Eden."
                 else "Запустите её на Eden — выбор ядра на вкладке «Инструменты»."
@@ -444,10 +477,23 @@ class KenjiPlayerActivity : Activity(), SurfaceHolder.Callback {
                 val size = (length - coreLogOffset).coerceAtMost(256L * 1024L).toInt()
                 val buffer = ByteArray(size)
                 val read = raf.read(buffer)
-                coreLogOffset = length
-                if (read <= 0) "" else String(buffer, 0, read)
+                if (read <= 0) return@use ""
+                // СМЕЩЕНИЕ ДВИГАЕМ ТОЛЬКО ДО ПОСЛЕДНЕГО ПЕРЕВОДА СТРОКИ.
+                //
+                // Ядро пишет журнал прямо сейчас, поэтому кусок почти всегда
+                // обрывается посреди последней строки. Пока смещение прыгало
+                // на конец файла, строка `SvcBreak reason=0x0 …` разрезалась
+                // между двумя чтениями («SvcBr» + «eak reason=…») и поиск по
+                // «SvcBreak» не находил её вовсе. Именно поэтому 06.11 на
+                // экране было старое «кадров нет», хотя паника лежала в
+                // журнале. Теперь огрызок остаётся на следующее чтение.
+                val (text, used) = KernelLogFormat.completeLines(buffer, read)
+                coreLogOffset += used.toLong()
+                text
             }
         }.getOrDefault("")
+        // В куске нет ни одной целой строки — подождём следующего тика.
+        if (fresh.isEmpty()) return
         // ДВЕ РАЗНЫЕ ОСТАНОВКИ, И РАНЬШЕ МЫ ВИДЕЛИ ТОЛЬКО ОДНУ.
         //
         //  1. Ядро уронило гостевой поток: в журнале
@@ -565,6 +611,14 @@ class KenjiPlayerActivity : Activity(), SurfaceHolder.Callback {
      * Теперь ищем последнюю строку с `Exception`/`|E|` и показываем её вместе
      * со следующими: там написано, ЧТО случилось, а не где.
      */
+    /** Что ядро само говорит про отрисовку — слова для экрана и отчёта. */
+    private fun rendererTail(context: android.content.Context, limit: Int): List<String> =
+        runCatching {
+            val file = KenjiBridge.coreLogFile(context) ?: return emptyList()
+            val text = KernelLogFormat.tailOf(file, KernelLogFormat.TAIL_BYTES)
+            KernelLogFormat.pickLines(text, RENDER_NEEDLES, limit)
+        }.getOrDefault(emptyList())
+
     private fun coreLogTail(context: android.content.Context, lines: Int): String =
         runCatching {
             val file = KenjiBridge.coreLogFile(context) ?: return ""

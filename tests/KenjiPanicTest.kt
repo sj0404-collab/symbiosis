@@ -19,6 +19,7 @@
 import org.yuzu.yuzu_emu.utils.EngineHybrid
 import org.yuzu.yuzu_emu.utils.KenjiCrash
 import org.yuzu.yuzu_emu.utils.KenjiData
+import org.yuzu.yuzu_emu.utils.KernelLogFormat
 
 private var passed = 0
 private var failed = 0
@@ -137,6 +138,61 @@ fun main() {
         KenjiData.firmwareCount(tmp).toString()
     )
     tmp.deleteRecursively()
+
+    // ── 7. журнал читается кусками: строка не должна разрезаться ────────
+    //
+    // Ядро дописывает журнал во время игры, поэтому кусок почти всегда
+    // обрывается посреди последней строки. На телефоне 06.11 строка паники
+    // попала в два чтения — «SvcBr» и «eak reason=…» — и поиск её не нашёл.
+    val bytes = deviceLog.toByteArray()
+    val token = "SvcBreak".toByteArray()
+    var at = -1
+    for (i in 0..bytes.size - token.size) {
+        if ((token.indices).all { k -> bytes[i + k] == token[k] }) {
+            at = i
+            break
+        }
+    }
+    check("строка паники найдена в журнале для разреза", at > 0)
+    val cut = at + 5 // рубим посреди слова SvcBreak
+    val naive = String(bytes, 0, cut)
+    check(
+        "дыра, которую это исправляет: разрезанная строка не видна",
+        KenjiCrash.guestPanic(naive).isEmpty(),
+        naive.takeLast(30)
+    )
+    val (first, used) = KernelLogFormat.completeLines(bytes, cut)
+    check("кусок 1 не заходит за последний перевод строки", used <= cut, "$used из $cut")
+    check("кусок 1 кончается целой строкой", first.endsWith("\n"), first.takeLast(20))
+    check("кусок 1 не содержит полустроки SvcBreak", !first.contains("SvcBr"), first.takeLast(40))
+    // Ядро дописало строку — следующее чтение начинается с огрызка.
+    val rest = String(bytes, used, bytes.size - used) + "\n"
+    val (second, used2) = KernelLogFormat.completeLines(rest.toByteArray(), rest.toByteArray().size)
+    check("кусок 2 дочитан целиком", used2 == rest.toByteArray().size, "$used2 из ${rest.length}")
+    check("паника находится после второго чтения", KenjiCrash.guestPanic(second).isNotEmpty(), second)
+    check(
+        "ничего не потеряно: два куска дают весь журнал",
+        (first + second) == deviceLog.trimEnd() + "\n",
+        "первый ${first.length} + второй ${second.length} против ${deviceLog.trimEnd().length + 1}"
+    )
+    check(
+        "кусок без переводов строк ничего не съедает",
+        KernelLogFormat.completeLines("abc".toByteArray(), 3).second == 0
+    )
+
+    // ── 8. слова ядра про отрисовку ────────────────────────────────────
+    val render = """
+        |00:00:02.100 |I| HLE.Gpu.GpuContext Renderer: Vulkan
+        |00:00:03.000 |I| HLE.KernelSvc SleepThread(timeout: 0x989680)
+        |00:00:04.500 |W| HLE.Vi.ViDevice OpenDisplay: no display found
+        |00:00:04.500 |W| HLE.Vi.ViDevice OpenDisplay: no display found
+    """.trimMargin()
+    val picked = KernelLogFormat.pickLines(
+        render, listOf("Renderer", "Vulkan", "Display", "SleepThread"), 3
+    )
+    check("строки про отрисовку выбраны", picked.size == 3, picked.joinToString(" | "))
+    check("повторы убраны", picked.count { it.contains("OpenDisplay") } == 1, picked.joinToString(" | "))
+    check("порядок сохранён — последние ближе к концу", picked.last().contains("OpenDisplay"), picked.last())
 
     println()
     println("passed=$passed failed=$failed")

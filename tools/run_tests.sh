@@ -232,6 +232,7 @@ if command -v kotlinc >/dev/null 2>&1; then
       # «кадров нет» вместо приговора.
       KenjiPanicTest) echo "$HERE/patch/android/utils/KenjiCrash.kt \
         $HERE/patch/android/utils/KenjiData.kt \
+        $HERE/patch/android/utils/KernelLogFormat.kt \
         $HERE/patch/android/utils/EngineHybrid.kt" ;;
       TitleKeysTest) echo "$HERE/patch/android/utils/TitleKeys.kt \
         $HERE/patch/android/utils/ExtraKeys.kt" ;;
