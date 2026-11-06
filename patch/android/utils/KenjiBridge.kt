@@ -488,7 +488,7 @@ object KenjiBridge {
         val root = runCatching { DirectoryInitialization.userDirectory }.getOrNull()
             ?: return "данные Eden неизвестны"
         val lines = mutableListOf<String>()
-        lines += "корень данных: " + root.absolutePath
+        lines += "корень данных: " + root
         listOf(
             "nand/system/Contents/registered",
             "bis/system/Contents/registered",
