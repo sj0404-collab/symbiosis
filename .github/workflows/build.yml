@@ -525,14 +525,75 @@ jobs:
         # the plain condition silently skipped the step and the summary carried
         # no download link - the APK existed only as an artifact, which needs a
         # signed-in browser and expires. Only an explicit false opts out.
+        #
+        # ТОКЕН ГОСТЯ. С 06.11 gofile отвечает `error-createFolderResponse` на
+        # любую заливку без учётки — проверено маленьким файлом на семи
+        # серверах. Гостевая учётка даёт токен, и с ним заливка проходит.
+        # Значение токена в журнал не печатаем.
         if: github.event_name != 'workflow_dispatch' || inputs.upload_to_gofile
         run: |
           APK=$(find eden -name "*legacy-release.apk" -o -name "*legacy-debug.apk" | head -1)
+          TOKEN=$(curl -s -X POST https://api.gofile.io/accounts \
+            | python3 -c "import sys,json;print(json.load(sys.stdin)['data']['token'])")
           SRV=$(curl -s https://api.gofile.io/servers | python3 -c "import sys,json;print(json.load(sys.stdin)['data']['servers'][0]['name'])")
-          curl -s -F "file=@$APK" "https://$SRV.gofile.io/contents/uploadfile" -o /tmp/up.json
+          curl -s -m 900 -H "Authorization: Bearer $TOKEN" \
+            -F "file=@$APK" "https://$SRV.gofile.io/contents/uploadfile" -o /tmp/up.json
           python3 - <<'PY' >> "$GITHUB_STEP_SUMMARY"
           import json
-          d = json.load(open('/tmp/up.json'))['data']
-          print(f"## APK\n\n- **Download:** {d['downloadPage']}\n- **MD5:** `{d['md5']}`\n- **Size:** {round(d['size']/1048576,1)} MB")
+          try:
+              d = json.load(open('/tmp/up.json'))['data']
+              print(f"## APK\n\n- **Download:** {d['downloadPage']}\n- **MD5:** `{d['md5']}`\n- **Size:** {round(d['size']/1048576,1)} MB")
+          except Exception:
+              print("## APK\n\ngofile не принял файл; сборка целая, берите из релиза (шаг ниже) или из артефакта ниже.")
           PY
           cat "$GITHUB_STEP_SUMMARY"
+
+      - name: Publish the APK to the GitHub release
+        # «Пришли мне версию с гитхаба» — и вот что человек получал: релиз
+        # `symbiosis-latest` от 28 сентября, на 42 МБ, без всех правок месяца.
+        # Артефакт скачать нельзя без входа в аккаунт, gofile падает, а
+        # постоянной ссылки на свежую сборку не было вовсе.
+        #
+        # Теперь после каждой успешной сборки один и тот же адрес
+        # https://github.com/sj0404-collab/symbiosis/releases/latest/download/Symbiosis.apk
+        # отдаёт именно эту сборку. Плюс лежит копия с номером сборки и md5 —
+        # чтобы у человека на телефоне оставалось и предыдущее, если новая не
+        # подошла.
+        # Публикуем только с рабочей ветки: прогон из pull request не должен
+        # подменять релиз.
+        if: success() && (github.ref_name == 'main' || github.ref_name == 'fix/library-sees-all-games')
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -e
+          APK=$(find eden -name "*legacy-release.apk" -o -name "*legacy-debug.apk" | head -1)
+          MD5=$(md5sum "$APK" | cut -d' ' -f1)
+          SIZE=$(stat -c%s "$APK")
+          MB=$(python3 -c "print(round($SIZE/1048576,1))")
+          NAMED="Symbiosis-${GITHUB_RUN_NUMBER}-${MD5:0:8}.apk"
+          cp "$APK" "$NAMED"
+
+          gh release view symbiosis-latest >/dev/null 2>&1 || \
+            gh release create symbiosis-latest --title "Symbiosis" --notes "Свежая сборка приложения."
+
+          {
+            echo "Сборка $GITHUB_RUN_NUMBER, коммит ${GITHUB_SHA:0:7}."
+            echo ""
+            echo "- MD5: `$MD5`"
+            echo "- Размер: $MB МБ"
+            echo "- Сборка: https://github.com/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+            echo ""
+            echo "Постоянная ссылка на последнюю сборку:"
+            echo "https://github.com/$GITHUB_REPOSITORY/releases/latest/download/Symbiosis.apk"
+          } > /tmp/notes.md
+
+          # Постоянное имя: ссылка /latest/download/ никогда не меняется.
+          gh release upload symbiosis-latest "$APK#Symbiosis.apk" --clobber
+          # Копия с номером сборки: предыдущие не затираются.
+          if [ "$GITHUB_REF_NAME" = "main" ] || [ "$GITHUB_REF_NAME" = "fix/library-sees-all-games" ]; then
+            gh release upload symbiosis-latest "$NAMED" --clobber
+          fi
+          gh release edit symbiosis-latest --notes-file /tmp/notes.md
+          echo "### Релиз обновлён" >> "$GITHUB_STEP_SUMMARY"
+          echo "https://github.com/$GITHUB_REPOSITORY/releases/latest/download/Symbiosis.apk" >> "$GITHUB_STEP_SUMMARY"
+          echo "(MD5 `$MD5`, $MB МБ)" >> "$GITHUB_STEP_SUMMARY"
