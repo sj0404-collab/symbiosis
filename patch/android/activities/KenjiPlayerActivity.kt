@@ -20,6 +20,8 @@ import android.widget.TextView
 import android.widget.Toast
 import java.io.File
 import org.yuzu.yuzu_emu.utils.CoreFallback
+import org.yuzu.yuzu_emu.utils.EngineHybrid
+import org.yuzu.yuzu_emu.utils.EngineStore
 import org.yuzu.yuzu_emu.utils.EngineLoader
 import org.yuzu.yuzu_emu.utils.KenjiBridge
 import org.yuzu.yuzu_emu.utils.KenjiCrash
@@ -71,6 +73,15 @@ class KenjiPlayerActivity : Activity(), SurfaceHolder.Callback {
     private var surfaceHeight = 720
     /** Повторный пинок уже сделан: делается один раз, а не каждые 3 секунды. */
     private var kickedLate = false
+
+    /** Путь к игре: нужен, чтобы запомнить за ней Eden после отказа по кадрам. */
+    private var romPath: String = ""
+
+    /** Предел ожидания первого кадра. Дальше честно сдаёмся. */
+    private val noFramesLimitSeconds = 30
+
+    /** Уже сдались по кадрам: второй раз сообщение не показываем. */
+    private var noFramesGivenUp = false
     /** Сколько байт журнала ядра уже прочитано: ищем только новое. */
     private var coreLogOffset = 0L
     /** Игра уже встала внутри ядра — второй раз не сообщаем. */
@@ -322,6 +333,25 @@ class KenjiPlayerActivity : Activity(), SurfaceHolder.Callback {
                         )
                     }
                 }
+                // Ни одного кадра за полминуты — это не «ещё грузится».
+                //
+                // 06.11 на Mali-G57 игра загрузилась внутри ядра
+                // («Application Loaded: Vault of Power»), поверхность была
+                // создана, а кадров не появилось и за минуту. Человек всё это
+                // время смотрел на чёрный экран и ждал.
+                //
+                // Ждать бесконечно нельзя: через тридцать секунд говорим
+                // прямо, что второе ядро на этом устройстве кадры не отдаёт,
+                // и запоминаем игру за Eden — чтобы следующий запуск пошёл
+                // сразу рабочим путём, без чёрного экрана.
+                if (!noFramesGivenUp && frames == 0L &&
+                    org.kenjinx.android.KenjinxNative.surfaceAsked.get() > 0L &&
+                    seconds >= noFramesLimitSeconds
+                ) {
+                    noFramesGivenUp = true
+                    giveUpOnFrames(appContext)
+                    return
+                }
                 if (!guestFailed) checkGuestFailure(appContext)
                 // Игра встала внутри ядра: экран уже показывает причину, и
                 // перебивать её счётчиком кадров нельзя — человек читает
@@ -364,6 +394,39 @@ class KenjiPlayerActivity : Activity(), SurfaceHolder.Callback {
      * Починить это наше ядро не может — это его внутренняя ошибка. Зато
      * приложение запоминает игру и в следующий раз запускает её на Eden.
      */
+    /**
+     * Второе ядро не отдало ни кадра — сказать и перевести игру на Eden.
+     *
+     * Ни один шаг здесь не гадает: если поверхность создана и ядро записало
+     * «Application Loaded», а счётчик кадров стоит на нуле, значит рисование
+     * не состоялось. Починить это из приложения нельзя (рендерер чужой), зато
+     * можно не заставлять человека ждать и не повторять ту же попытку вслепую.
+     */
+    private fun giveUpOnFrames(appContext: android.content.Context) {
+        val remember = runCatching {
+            EngineStore.setCoreFor(appContext, romPath, EngineHybrid.Core.EDEN)
+        }.getOrDefault(false)
+        val message = buildString {
+            append("второе ядро не отдало ни одного кадра за ")
+            append(noFramesLimitSeconds).append(" с: игра загрузилась внутри ядра, ")
+            append("но рисование не пошло. ")
+            append(
+                if (remember) "Запомнил: эта игра теперь запускается на Eden."
+                else "Запустите её на Eden — выбор ядра на вкладке «Инструменты»."
+            )
+        }
+        runCatching {
+            KenjiReport.watch(appContext, "кадров нет за " + noFramesLimitSeconds + " с")
+            if (remember) KenjiReport.watch(appContext, "игра переведена на Eden")
+        }
+        runOnUiThread {
+            status.text = message
+            Toast.makeText(appContext, message, Toast.LENGTH_LONG).show()
+            // Дать прочитать причину, потом вернуть в библиотеку.
+            status.postDelayed({ runCatching { leave() } }, 4000)
+        }
+    }
+
     private fun checkGuestFailure(appContext: android.content.Context) {
         val file = runCatching { KenjiBridge.coreLogFile(appContext) }.getOrNull() ?: return
         if (!file.isFile) return
@@ -504,6 +567,19 @@ class KenjiPlayerActivity : Activity(), SurfaceHolder.Callback {
         leave()
     }
 
+    /**
+     * Снятие ядра — В ФОНЕ, а не в главном потоке.
+     *
+     * 06.11: человек нажал «Выйти», и приложение зависло на чёрном экране.
+     * Здесь был прямой вызов `unload()` в главном потоке: он ждёт нативный
+     * рендер, а на телефоне с Mali это ожидание уходит в бесконечность, если
+     * цикл не отдал ни одного кадра. Экран при этом уже снят — снаружи это
+     * выглядит как «вышел и всё зависло».
+     *
+     * Теперь окно закрывается сразу, а остановка и выгрузка идут отдельным
+     * потоком со своими сроками: ждать нативного покаяния до бесконечности
+     * незачем.
+     */
     override fun onDestroy() {
         runCatching { KenjiPlayService.stop(applicationContext) }
         // Метка «вышли штатно» — до unload: если процесс умрёт ниже, отчёт
@@ -511,16 +587,29 @@ class KenjiPlayerActivity : Activity(), SurfaceHolder.Callback {
         // А после названного отказа метку не меняем: причина должна дойти до
         // списка игр, иначе она живёт шесть секунд на чёрном экране.
         if (!failed) KenjiReport.markClean(applicationContext)
-        KenjiBridge.stopPlay()
-        loopThread?.join(1500)
-        KenjiBridge.unload()
-        runCatching { pfd?.close() }
+        val thread = loopThread
+        val descriptor = pfd
         pfd = null
+        Thread({
+            runCatching { KenjiBridge.stopPlay() }
+            runCatching { thread?.join(3000) }
+            runCatching { KenjiBridge.unload() }
+            runCatching { descriptor?.close() }
+        }, "kenji-teardown").start()
         super.onDestroy()
     }
 
     private fun leave() {
-        KenjiBridge.stopPlay()
+        // Сначала сообщение: если снятие ядра задержится, человек увидит, что
+        // нажатие принято, а не пустой экран.
+        runCatching {
+            status.text = "выход из второго ядра…"
+        }
+        // stopPlay() уходит в натив: на телефоне, где цикл стоит, этот вызов
+        // ждёт ответа ядра. Поэтому он тоже вне главного потока — иначе окно
+        // не закроется до его возврата.
+        Thread({ runCatching { KenjiBridge.stopPlay() } }, "kenji-stop").start()
+        // Окно закрывается сразу; выгрузка идёт в onDestroy своим потоком.
         finish()
     }
 

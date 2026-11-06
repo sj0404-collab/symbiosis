@@ -512,6 +512,16 @@ cp "$P"/android/layout/*.xml   "$A/res/layout/"
 if [ -d "$P/android/layout-land" ]; then
   cp "$P"/android/layout-land/*.xml "$A/res/layout-land/"
 fi
+# Размеры лаунчера: одни и те же имена, разные значения по ориентации.
+# Без этого списка в альбоме оставалась одна плитка на экран.
+if [ -f "$P/android/values/symbiosis_dimens.xml" ]; then
+  cp "$P/android/values/symbiosis_dimens.xml" "$A/res/values/"
+fi
+if [ -d "$P/android/values-land" ]; then
+  mkdir -p "$A/res/values-land"
+  cp "$P"/android/values-land/*.xml "$A/res/values-land/"
+  echo "  copied res/values-land: $(ls "$P/android/values-land" | tr '\n' ' ')"
+fi
 # navigation/ is only present once a screen has been added to the graph.
 if [ -d "$P/android/navigation" ]; then
   cp "$P"/android/navigation/*.xml "$A/res/navigation/"

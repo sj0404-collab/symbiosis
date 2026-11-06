@@ -32,7 +32,7 @@ test can check without an emulator.
             android:id="@+id/toolbar_launcher"
             style="@style/Widget.Eden.TransparentTopToolbar"
             android:layout_width="match_parent"
-            android:layout_height="?attr/actionBarSize"
+            android:layout_height="@dimen/sym_toolbar_height"
             app:subtitle="@string/launcher_subtitle"
             app:title="@string/launcher_title" />
 
@@ -133,7 +133,7 @@ test can check without an emulator.
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginHorizontal="16dp"
-            android:layout_marginTop="8dp"
+            android:layout_marginTop="@dimen/sym_header_gap"
             android:hint="@string/launcher_search_hint">
 
             <com.google.android.material.textfield.TextInputEditText
@@ -149,7 +149,7 @@ test can check without an emulator.
         <HorizontalScrollView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginTop="8dp"
+            android:layout_marginTop="@dimen/sym_header_gap"
             android:paddingHorizontal="16dp"
             android:clipToPadding="false"
             android:scrollbars="none">
@@ -169,7 +169,7 @@ test can check without an emulator.
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:paddingHorizontal="20dp"
-            android:paddingTop="10dp"
+            android:paddingTop="@dimen/sym_summary_pad_top"
             android:paddingBottom="4dp"
             android:textAppearance="@style/TextAppearance.Material3.BodyMedium"
             android:textColor="?attr/colorPrimary"

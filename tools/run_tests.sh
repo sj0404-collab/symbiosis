@@ -234,6 +234,9 @@ if command -v kotlinc >/dev/null 2>&1; then
       ExtraKeysTest) echo "$HERE/patch/android/utils/ExtraKeys.kt \
         $HERE/patch/android/utils/TitleKeys.kt" ;;
       # Ключ из билета: разметка тикета и AES — без ядра и без сети.
+      # Альбомная ориентация лаунчера: имена размеров совпадают, значения ужаты.
+      # Тест читает ресурсы, Kotlin-исходников ему не нужно.
+      LauncherLandscapeTest) echo "" ;;
       TicketKeyTest) echo "$HERE/patch/android/utils/TicketKey.kt \
         $HERE/patch/android/utils/TitleKeys.kt \
         $HERE/patch/android/utils/ExtraKeys.kt" ;;

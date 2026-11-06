@@ -155,6 +155,7 @@ class NativeLauncherFragment : Fragment() {
             adapter = this@NativeLauncherFragment.adapter
             setHasFixedSize(false)
         }
+        applyOrientationLayout()
 
         applyTheme()
         buildFilterChips()
@@ -435,7 +436,11 @@ class NativeLauncherFragment : Fragment() {
         // Сообщения плагинов — отдельной строкой, а не в дневной сводке:
         // сводка отвечает «сколько игр», а плашка — «что с ними не так».
         val banners = pluginDecisions.banners
-        binding.textLauncherPlugin.isVisible = banners.isNotEmpty()
+        // В альбоме плашку не показываем вовсе (см. applyOrientationLayout):
+        // иначе render() вернёт её обратно и снова съест строку списка.
+        val landscape = resources.configuration.orientation ==
+            android.content.res.Configuration.ORIENTATION_LANDSCAPE
+        binding.textLauncherPlugin.isVisible = banners.isNotEmpty() && !landscape
         if (banners.isNotEmpty()) {
             binding.textLauncherPlugin.text = banners.joinToString("\n") { it.text }
             binding.textLauncherPlugin.setTextColor(
@@ -709,6 +714,43 @@ class NativeLauncherFragment : Fragment() {
         }.getOrElse {
             runCatching { EngineStore.effectiveText(ctx) }.getOrDefault("")
         }
+    }
+
+    /**
+     * В альбомной ориентации — две колонки и никакой лишней шапки.
+     *
+     * ЧТО БЫЛО. 06.11 человек написал: «в альбомном режиме игры видно только
+     * по одной, и их неудобно листать». Причина не в плитке, а в шапке:
+     * заголовок, кнопки, поиск, фильтры, сводка и плашка в портретных отступах
+     * занимали почти всю высоту (в альбоме её около 360dp), и на список
+     * оставалась полоса под одну строку.
+     *
+     * ЧТО СДЕЛАНО. Отступы шапки и плитки вынесены в ресурсы, в `values-land`
+     * они ужаты (однострочная плитка), а список получает две колонки. Одна
+     * разметка на обе ориентации — не надо правки в двух копиях.
+     */
+    private fun applyOrientationLayout() {
+        val landscape = resources.configuration.orientation ==
+            android.content.res.Configuration.ORIENTATION_LANDSCAPE
+        val columns = if (landscape) 2 else 1
+        val current = binding.listLauncher.layoutManager
+        val wantGrid = columns > 1
+        if (wantGrid && current !is androidx.recyclerview.widget.GridLayoutManager) {
+            binding.listLauncher.layoutManager =
+                androidx.recyclerview.widget.GridLayoutManager(requireContext(), columns)
+        } else if (!wantGrid && current !is LinearLayoutManager) {
+            binding.listLauncher.layoutManager = LinearLayoutManager(requireContext())
+        }
+        // Плашка плагина в альбоме уводится со экрана: это подсказка, а не
+        // причина задержки, и место в альбоме дороже.
+        if (landscape) {
+            binding.textLauncherPlugin.visibility = android.view.View.GONE
+        }
+    }
+
+    override fun onConfigurationChanged(newConfig: android.content.res.Configuration) {
+        super.onConfigurationChanged(newConfig)
+        if (_binding != null) applyOrientationLayout()
     }
 
     private fun navigate(destination: Int) {

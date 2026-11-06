@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+SPDX-FileCopyrightText: Copyright 2026 Eden Symbiosis Project
+SPDX-License-Identifier: GPL-3.0-or-later
+
+Размеры лаунчера, которые в альбомной ориентации должны быть меньше.
+
+ЗАЧЕМ ОТДЕЛЬНЫЙ ФАЙЛ. 06.11 в альбомном режиме из списка игр была видна одна
+плитка: шапка (заголовок, кнопки, поиск, фильтры, сводка, плашка) занимала почти
+всю высоту экрана, потому что все отступы рассчитаны на портрет. Менять разметку
+в двух копиях — значит рано или поздно их развести; поэтому отступы и размеры
+вынесены в ресурсы, а `values-land` даёт их ужатые значения. Код разметки один.
+-->
+<resources>
+    <!-- Плитка списка игр. -->
+    <dimen name="sym_tile_margin">6dp</dimen>
+    <dimen name="sym_tile_pad">12dp</dimen>
+    <dimen name="sym_tile_monogram">46dp</dimen>
+    <dimen name="sym_tile_monogram_inner">42dp</dimen>
+    <dimen name="sym_tile_accent_margin">10dp</dimen>
+    <!-- Строк в названии и подписи плитки. -->
+    <integer name="sym_tile_lines">2</integer>
+
+    <!-- Шапка экрана. -->
+    <dimen name="sym_toolbar_height">56dp</dimen>
+    <dimen name="sym_header_gap">8dp</dimen>
+    <dimen name="sym_summary_pad_top">10dp</dimen>
+</resources>

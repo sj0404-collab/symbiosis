@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+SPDX-FileCopyrightText: Copyright 2026 Eden Symbiosis Project
+SPDX-License-Identifier: GPL-3.0-or-later
+
+Альбомная ориентация: та же разметка, ужатые размеры.
+
+На телефоне в альбоме высота экрана около 360dp. Шапка в портретных размерах
+съедала больше 250dp, и на список оставалось место ровно для одной плитки —
+человек листал по одной игре на экран. Здесь шапка ужимается, плитка становится
+однострочной, а списку достаётся втрое больше места.
+-->
+<resources>
+    <dimen name="sym_tile_margin">3dp</dimen>
+    <dimen name="sym_tile_pad">7dp</dimen>
+    <dimen name="sym_tile_monogram">32dp</dimen>
+    <dimen name="sym_tile_monogram_inner">30dp</dimen>
+    <dimen name="sym_tile_accent_margin">5dp</dimen>
+    <integer name="sym_tile_lines">1</integer>
+
+    <dimen name="sym_toolbar_height">44dp</dimen>
+    <dimen name="sym_header_gap">4dp</dimen>
+    <dimen name="sym_summary_pad_top">3dp</dimen>
+</resources>
