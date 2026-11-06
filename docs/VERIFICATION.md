@@ -3225,3 +3225,20 @@ MD5 `670d32d3e6fa06dc2c82798e548255ad`, 48 326 398 Б) — но при свер�
 сохранением комментариев, FF-права, причины отказа), `NspProbeTest` 44/0,
 `NativeLibraryPresenterTest` 80/0, `ExtraKeysTest` 35/0,
 `ConverterOutcomeTest` 16/0, `KenjiFirmwareShareTest` 7/0.
+
+### 54.5. Сборка `42232553022` (коммит `b5d90e2`)
+
+Первый запуск (`42230421968`) упал на `ExtraKeysTest — does not build`:
+`ExtraKeys` теперь зовёт `TitleKeys`, и тесту нужен второй файл. Добавлено в
+`tools/run_tests.sh`. Второй (`42232261356`) упал на установке NDK — сбой
+инфраструктуры раннера, не кода; перезапущен.
+
+**APK: https://gofile.io/d/LPpKVo6x** — MD5 `744d4f3f82d8092cc815ea8f75edc103`,
+48 388 262 Б, 46.1 МБ.
+
+Тесты: `TitleKeysTest` 56/0, `NspProbeTest` 44/0, `ExtraKeysTest` 35/0,
+`NativeLibraryPresenterTest` 80/0, `ConverterOutcomeTest` 16/0,
+`KenjiFirmwareShareTest` 7/0.
+
+Сверено по собранному APK: `правами билета (32 знака)` — 1,
+`title.keys приведён к виду` — 1, `нужно 16 (игра) или 32 (права билета)` — 1.
