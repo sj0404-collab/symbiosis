@@ -54,6 +54,9 @@ class KeysFirmwareFragment : Fragment() {
     /** Итог сбора ключей из билетов: показывается в отчёте экрана. */
     private var harvestReport: String = ""
 
+    /** Что вышло при установке файла ключей: сколько сохранено, сколько новых. */
+    private var mergeReport: String = ""
+
     private val keysDir: File?
         get() = DirectoryInitialization.userDirectory?.let { File(it, "keys") }
 
@@ -203,19 +206,60 @@ class KeysFirmwareFragment : Fragment() {
                     // Preserve the original name: the core looks for the exact
                     // files prod.keys / title.keys.
                     val target = File(dir, name)
-                    context.contentResolver.openInputStream(uri)?.use { input ->
-                        target.outputStream().use { output -> input.copyTo(output) }
+                    val incoming = context.contentResolver.openInputStream(uri)
+                        ?.use { it.readBytes() } ?: ByteArray(0)
+                    if (incoming.isEmpty()) return@runCatching -1
+
+                    // СЛИЯНИЕ, А НЕ ЗАМЕНА.
+                    //
+                    // 06.11 человек спросил прямо: «если я поставлю другой
+                    // prod.keys, мои игры, которые работают на 20.3.0, будут
+                    // работать?» При замене файла целиком ответ был бы «как
+                    // повезёт»: в обрезанном наборе может не оказаться старых
+                    // ревизий, и рабочие игры сломались бы. Поэтому старые
+                    // строки остаются, новые дописываются.
+                    if (name.endsWith(".keys")) {
+                        val incomingText = TitleKeys.decode(incoming)
+                        val newLines = incomingText.lines().dropLastWhile { it.isBlank() }
+                        val oldLines = runCatching { target.readLines() }.getOrDefault(emptyList())
+                        if (oldLines.isNotEmpty()) {
+                            val merged = ExtraKeys.mergeKeys(oldLines, newLines)
+                            target.writeText(merged.lines.joinToString("\n", postfix = "\n"))
+                            mergeReport = buildString {
+                                append("в файле было ").append(oldLines.count { it.contains('=') })
+                                append(" ключей, добавлено ").append(merged.added)
+                                append(", сохранено старых ").append(merged.keptOld)
+                                append(", обновлено ").append(merged.replaced)
+                                val max = runCatching {
+                                    TicketKey.maxRevision(TicketKey.readProdKeys(dir))
+                                }.getOrDefault(-1)
+                                if (max >= 0) {
+                                    append(". Теперь ключи консоли до ревизии 0x")
+                                    append("%02x".format(max))
+                                }
+                            }
+                        } else {
+                            target.writeText(incomingText)
+                        }
+                    } else {
+                        target.writeBytes(incoming)
+                    }
+                    if (name.endsWith(".keys")) {
+                        // Приведём и файл ключей игр к виду, который читает ядро.
+                        runCatching { ExtraKeys.apply(dir) { NativeLibrary.reloadKeys() } }
                     }
                     if (NativeLibrary.reloadKeys()) 1 else 0
                 }.getOrDefault(-1)
             }
 
             val message = when (result) {
-                1 -> getString(R.string.keys_installed_ok)
+                1 -> getString(R.string.keys_installed_ok) +
+                    (if (mergeReport.isNotBlank()) ". " + mergeReport else "")
                 0 -> getString(R.string.keys_invalid)
                 else -> getString(R.string.keys_install_failed)
             }
             Snackbar.make(binding.root, message, Snackbar.LENGTH_LONG).show()
+            mergeReport = ""
             refreshStatus()
         }
     }

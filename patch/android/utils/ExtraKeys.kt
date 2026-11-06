@@ -206,6 +206,54 @@ object ExtraKeys {
      *   этот файл оставался чистым Kotlin и проверялся на хосте без Android.
      * @return отчёт для человека; пусто, если дополнительных файлов нет.
      */
+    /**
+     * Слить новый файл ключей со старым: старое не теряется.
+     *
+     * ЗАЧЕМ. «Установить prod.keys» заменял файл целиком. Человек, у которого
+     * игры шли на ключах 20.3.0, поставил бы файл свежее — и если в нём нет
+     * старых ревизий (бывает у обрезанных наборов), рабочие игры сломались бы.
+     * Наборы ключей накопительные: свежий полный дамп содержит все ревизии с
+     * 0x00. Но полагаться на «обычно содержит» нельзя — поэтому старые строки
+     * остаются на месте, а новые дописываются.
+     *
+     * Совпадающее имя берётся из нового файла: если человек ставит свежий
+     * файл, его значения главнее.
+     */
+    data class Merged(
+        val lines: List<String>,
+        /** Сколько строк осталось только из старого файла. */
+        val keptOld: Int,
+        /** Сколько строк добавилось из нового. */
+        val added: Int,
+        /** Сколько имён было в обоих (взято из нового). */
+        val replaced: Int
+    )
+
+    fun mergeKeys(old: List<String>, new: List<String>): Merged {
+        fun nameOf(line: String): String {
+            val trimmed = line.trim()
+            if (trimmed.isEmpty() || trimmed.startsWith("#") || trimmed.startsWith("//")) {
+                return ""
+            }
+            if (trimmed.indexOf('=') < 0) return ""
+            return trimmed.substringBefore('=').filterNot { it.isWhitespace() }.lowercase()
+        }
+        val out = new.toMutableList()
+        val newNames = new.mapNotNull { nameOf(it).ifEmpty { null } }.toHashSet()
+        val oldNames = old.mapNotNull { nameOf(it).ifEmpty { null } }.toHashSet()
+        var keptOld = 0
+        for (line in old) {
+            val name = nameOf(line)
+            if (name.isEmpty()) continue // комментарии старого файла не тащим
+            if (newNames.contains(name)) continue
+            out.add(line)
+            keptOld++
+        }
+        val replaced = oldNames.count { newNames.contains(it) }
+        val added = newNames.count { !oldNames.contains(it) }
+        return Merged(out, keptOld, added, replaced)
+    }
+
     fun apply(keysDir: File, reload: () -> Boolean): String {
         if (!keysDir.isDirectory) return ""
         val prodFile = File(keysDir, "prod.keys")

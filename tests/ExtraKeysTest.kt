@@ -156,6 +156,40 @@ fun main() {
     empty.deleteRecursively()
 
     println()
+    // ── СЛИЯНИЕ prod.keys: старое не теряется ───────────────────────────
+    //
+    // Вопрос человека: «если поставлю другой prod.keys, игры, которые
+    // работают на 20.3.0, будут работать?» При замене файла целиком — как
+    // повезёт. Поэтому установка сливает: старое остаётся, новое
+    // дописывается, совпадающие имена берутся из нового файла.
+    val oldKeys = listOf(
+        "# старый набор",
+        "master_key_00 = 00000000000000000000000000000000",
+        "titlekek_13 = 13131313131313131313131313131313",
+        "titlekek_source = 13131313131313131313131313131313",
+    )
+    val newKeys = listOf(
+        "# свежий набор",
+        "master_key_00 = ffffffffffffffffffffffffffffffff",
+        "titlekek_16 = 16161616161616161616161616161616",
+    )
+    val merged = ExtraKeys.mergeKeys(oldKeys, newKeys)
+    val mergedNames = merged.lines.map { it.substringBefore('=').trim() }
+    check("старая ревизия 0x13 сохранена", mergedNames.contains("titlekek_13"), mergedNames.toString())
+    check("новый ключ 0x16 добавлен", mergedNames.contains("titlekek_16"), mergedNames.toString())
+    check("совпадающее имя взято из нового файла",
+        merged.lines.any { it.startsWith("master_key_00 = ffff") }, merged.lines.toString())
+    check("сохранено старых строк = 2", merged.keptOld == 2, "получено ${merged.keptOld}")
+    check("добавлено новых = 1", merged.added == 1, "получено ${merged.added}")
+    check("обновлено общих = 1", merged.replaced == 1, "получено ${merged.replaced}")
+
+    // Обратный случай: ставят файл СТАРЕЕ — рабочие игры не должны пострадать.
+    val older = listOf("titlekek_00 = 00000000000000000000000000000001")
+    val keep = ExtraKeys.mergeKeys(newKeys, older)
+    check("при установке старого файла свежие ключи остаются",
+        keep.lines.any { it.contains("titlekek_16") }, keep.lines.toString())
+    check("и старый добавляется", keep.lines.any { it.contains("titlekek_00") }, keep.lines.toString())
+
     println("passed=$passed failed=${failures.size}")
     failures.forEach { println("FAIL  $it") }
     if (failures.isNotEmpty()) kotlin.system.exitProcess(1)
