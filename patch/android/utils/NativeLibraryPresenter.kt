@@ -60,7 +60,9 @@ object NativeLibraryPresenter {
         val title: String,
         val reason: String,
         /** `compressed`, `unreadable`, `split`. */
-        val kind: String
+        val kind: String,
+        /** Короткая пометка из разбора контейнера; пусто — взять по виду. */
+        val note: String = ""
     )
 
     /** Один элемент на экране. */
@@ -134,16 +136,19 @@ object NativeLibraryPresenter {
                 title = s.title.ifBlank { s.name.substringBeforeLast('.') },
                 subtitle = s.reason,
                 badge = extensionOf(s.name.ifEmpty { s.path }),
-                note = when (s.kind) {
-                    "compressed" -> "сжатый"
-                    "split" -> "часть"
-                    "unreadable" -> "нет ключей"
-                    else -> ""
+                // Пометку даёт разбор контейнера: «нет ключей» на всех
+                // подряд было неправдой, когда ключи стояли.
+                note = s.note.ifBlank {
+                    when (s.kind) {
+                        "compressed" -> "сжатый"
+                        "split" -> "часть"
+                        else -> ""
+                    }
                 },
                 path = s.path,
-                action = when (s.kind) {
-                    "compressed" -> Action.CONVERT
-                    "split" -> Action.EXPLAIN_SPLIT
+                action = when {
+                    s.kind == "compressed" || s.note == "сжатый" -> Action.CONVERT
+                    s.kind == "split" -> Action.EXPLAIN_SPLIT
                     else -> Action.KEYS
                 },
                 runnable = false,

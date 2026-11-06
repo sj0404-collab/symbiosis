@@ -79,7 +79,10 @@ fun main() {
     eq("сжатый помечен", model.items[3].note, "сжатый")
     eq("часть — объяснение, а не распаковка", model.items[4].action, Action.EXPLAIN_SPLIT)
     eq("непрочитанный просит ключи", model.items[5].action, Action.KEYS)
-    eq("непрочитанный помечен", model.items[5].note, "нет ключей")
+    // Раньше здесь стояло «нет ключей» на любом нерaспознанном файле. На
+    // телефоне ключи были на месте, и пометка была неправдой — её теперь
+    // даёт разбор контейнера, а без разбора она пустая.
+    eq("без разбора пометка не врёт про ключи", model.items[5].note, "")
     eq("причина стала подписью", model.items[5].subtitle, "ядро не прочитало заголовок")
 
     // ── бейджи: расширение, а не иероглиф ───────────────────────────────
@@ -168,6 +171,27 @@ fun main() {
         "ни одного имени класса в текстах",
         listOf(body, keys.second).none { it.contains("Exception") || it.contains(".kt") }
     )
+    // Пометка из разбора контейнера перебивает общую: «файл в порядке» вместо
+    // «нет ключей», и кнопка ведёт к распаковке, когда дело в сжатии.
+    val probed = NativeLibraryPresenter.build(
+        games = emptyList(),
+        side = listOf(
+            NativeLibraryPresenter.Side(
+                "Vault_of_Power.nsp", "/p/v.nsp", "Vault of Power",
+                "Контейнер читается: игра 01004f302847e000, частей 4, билет внутри есть. " +
+                    "Ключи на месте — значит ядро отказало не из-за них, и это наш дефект.",
+                "unreadable", "файл в порядке"
+            ),
+            NativeLibraryPresenter.Side(
+                "Packed.nsp", "/p/p.nsp", "Packed",
+                "Это сжатый образ (NSZ): ядро открывает только распакованные.",
+                "unreadable", "сжатый"
+            )
+        )
+    )
+    eq("пометка из разбора на плитке", probed.items[0].note, "файл в порядке")
+    eq("и кнопка по разбору", probed.items[1].action, Action.CONVERT)
+
     val split = NativeLibraryPresenter.explain("split", "Big", "часть разрезанного образа")
     check("диалог части про целый файл", split.second.contains("целый файл"), split.second)
 

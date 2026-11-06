@@ -359,7 +359,8 @@ class NativeLauncherFragment : Fragment() {
                     path = s.path,
                     title = s.title,
                     reason = s.reason,
-                    kind = s.kind
+                    kind = s.kind,
+                    note = s.note
                 )
             }
 

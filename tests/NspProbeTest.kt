@@ -170,6 +170,16 @@ fun main() {
     eq("0100…b001 — дополнение", NspProbe.partOf("0100fe701475b001"), NspProbe.Part.DLC)
     eq("мусор — неизвестно", NspProbe.partOf("короткий"), NspProbe.Part.UNKNOWN)
 
+    // ── короткая пометка на плитке ──────────────────────────────────────
+    // Пометка — то, что человек видит до нажатия. Она не имеет права
+    // говорить «нет ключей», когда ключи на месте.
+    eq("пометка: сжатый", NspProbe.label(rNsz, true), "сжатый")
+    eq("пометка: файл в порядке", NspProbe.label(rGood, true), "файл в порядке")
+    eq("пометка: нет ключей", NspProbe.label(rGood, false), "нет ключей")
+    eq("пометка: нет билета", NspProbe.label(rNo, true), "нет билета")
+    eq("пометка: не образ", NspProbe.label(rZip, true), "не образ")
+    eq("пометка: обрезан", NspProbe.label(rCut, true), "обрезан")
+
     println()
     println("passed=$passed failed=${failures.size}")
     failures.forEach { println("FAIL  $it") }

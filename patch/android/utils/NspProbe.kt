@@ -57,6 +57,9 @@ object NspProbe {
      *
      * @param titleId 16 hex-символов или пустая строка
      * @param problem что не так с файлом; пусто — с контейнером всё в порядке
+     * @param fault   короткий код неполадки: по нему ставится пометка на
+     *                плитке. Отдельно от [problem], потому что одна и та же
+     *                фраза может быть и бедой, и подсказкой.
      */
     data class Result(
         val container: Container,
@@ -66,6 +69,7 @@ object NspProbe {
         val entries: Int,
         val compressed: Boolean,
         val problem: String,
+        val fault: String = "",
     ) {
         /** Контейнер читается без ключей — значит отказ ядра не про контейнер. */
         val readable: Boolean get() = problem.isEmpty() && container != Container.UNKNOWN
@@ -93,7 +97,7 @@ object NspProbe {
         val head = runCatching { bytes.readAt(0, 0x200) }.getOrDefault(ByteArray(0))
 
         when {
-            head.isEmpty() -> return empty(Container.UNKNOWN, "файл пуст или не читается")
+            head.isEmpty() -> return empty(Container.UNKNOWN, "файл пуст или не читается", "empty")
 
             // "HEAD" на 0x100 — образ картриджа. Расширение может быть любым.
             head.size >= 0x104 && ascii(head, 0x100, 4) == "HEAD" -> {
@@ -109,6 +113,7 @@ object NspProbe {
                     entries = 0,
                     compressed = ext == "xcz",
                     problem = problem,
+                    fault = if (problem.isEmpty()) "" else "ext-mismatch",
                 )
             }
 
@@ -123,6 +128,7 @@ object NspProbe {
                     entries = 0,
                     compressed = compressed,
                     problem = if (compressed) "сжатый NCA (NCZ) — сначала распаковать" else "",
+                    fault = if (compressed) "compressed" else "",
                 )
             }
 
@@ -134,7 +140,8 @@ object NspProbe {
                 return empty(
                     Container.UNKNOWN,
                     "это не образ Nintendo" +
-                        if (what.isNotEmpty()) " (первые байты «$what»)" else " (подпись не опознана)"
+                        if (what.isNotEmpty()) " (первые байты «$what»)" else " (подпись не опознана)",
+                    "not-image"
                 )
             }
         }
@@ -142,20 +149,20 @@ object NspProbe {
 
     private fun probePfs0(bytes: Bytes, ext: String): Result {
         val header = runCatching { bytes.readAt(0, 0x10) }.getOrDefault(ByteArray(0))
-        if (header.size < 0x10) return empty(Container.UNKNOWN, "файл обрезан: нет заголовка")
+        if (header.size < 0x10) return empty(Container.UNKNOWN, "файл обрезан: нет заголовка", "truncated")
 
         val count = u32(header, 4)
         val stringTableSize = u32(header, 8)
         if (count <= 0 || count > MAX_ENTRIES) {
-            return empty(Container.UNKNOWN, "заголовок контейнера повреждён (файлов: $count)")
+            return empty(Container.UNKNOWN, "заголовок контейнера повреждён (файлов: $count)", "header")
         }
         if (stringTableSize <= 0) {
-            return empty(Container.UNKNOWN, "заголовок контейнера повреждён (нет таблицы имён)")
+            return empty(Container.UNKNOWN, "заголовок контейнера повреждён (нет таблицы имён)", "header")
         }
 
         val table = runCatching { bytes.readAt(0x10L, count * PFS0_ENTRY) }.getOrDefault(ByteArray(0))
         if (table.size < count * PFS0_ENTRY) {
-            return empty(Container.UNKNOWN, "файл обрезан: таблица файлов не дочитана")
+            return empty(Container.UNKNOWN, "файл обрезан: таблица файлов не дочитана", "truncated")
         }
         val names = runCatching {
             bytes.readAt(0x10L + count.toLong() * PFS0_ENTRY, stringTableSize)
@@ -203,7 +210,7 @@ object NspProbe {
         if (titleId.isEmpty()) titleId = fromName
 
         if (count > 0 && firstOffset == 0L && names.isEmpty()) {
-            return empty(Container.UNKNOWN, "файл обрезан сразу после заголовка")
+            return empty(Container.UNKNOWN, "файл обрезан сразу после заголовка", "truncated")
         }
 
         val container = if (compressed || ext == "nsz") Container.NSZ else Container.NSP
@@ -216,6 +223,12 @@ object NspProbe {
                 "в образе нет билета (.tik): нужен ключ этой игры в title.keys"
             else -> ""
         }
+        val fault = when {
+            compressed || ext == "nsz" -> "compressed"
+            ext == "xci" -> "ext-mismatch"
+            !hasTicket && titleId.isEmpty() -> "no-ticket"
+            else -> ""
+        }
 
         return Result(
             container = container,
@@ -225,6 +238,7 @@ object NspProbe {
             entries = count,
             compressed = compressed || ext == "nsz",
             problem = problem,
+            fault = fault,
         )
     }
 
@@ -246,11 +260,31 @@ object NspProbe {
     }
 
     /**
+     * Короткая пометка на плитке — то, что видно до нажатия.
+     *
+     * Раньше на всех нерaспознанных файлах стояло «нет ключей». На телефоне
+     * ключи были на месте (204 записи), поэтому пометка была неправдой.
+     */
+    fun label(result: Result, keysPresent: Boolean): String = when {
+        result.fault == "compressed" || result.compressed -> "сжатый"
+        result.fault == "truncated" -> "обрезан"
+        result.fault == "empty" -> "пустой файл"
+        result.fault == "header" -> "заголовок битый"
+        result.fault == "ext-mismatch" -> "другой формат"
+        result.fault == "not-image" -> "не образ"
+        result.fault == "no-ticket" -> "нет билета"
+        result.container == Container.UNKNOWN -> ""
+        !keysPresent -> "нет ключей"
+        else -> "файл в порядке"
+    }
+
+    /**
      * Человеческая причина отказа — для плитки и диалога.
      *
      * Отдельно от [Result.problem]: там короткая суть для разбора, здесь —
      * фраза, которую не стыдно показать.
      */
+
     fun verdict(result: Result, keysPresent: Boolean): String = when {
         result.container == Container.UNKNOWN -> result.problem
 
@@ -280,7 +314,7 @@ object NspProbe {
 
     // ── разбор байтов ──────────────────────────────────────────────────
 
-    private fun empty(container: Container, problem: String) = Result(
+    private fun empty(container: Container, problem: String, fault: String = "") = Result(
         container = container,
         part = Part.UNKNOWN,
         titleId = "",
@@ -288,6 +322,7 @@ object NspProbe {
         entries = 0,
         compressed = false,
         problem = problem,
+        fault = fault,
     )
 
     private fun ascii(data: ByteArray, offset: Int, length: Int): String {

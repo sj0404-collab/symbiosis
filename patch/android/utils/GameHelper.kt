@@ -77,7 +77,9 @@ object GameHelper {
         val path: String,
         val title: String,
         val reason: String,
-        val kind: String
+        val kind: String,
+        /** Короткая пометка на плитке; пусто — взять по виду отказа. */
+        val note: String = ""
     )
 
     @Volatile
@@ -440,12 +442,14 @@ object GameHelper {
                     // «проверьте ключи» — то есть текст был догадкой, а не
                     // причиной.
                     val probe = runCatching { probeContainer(it.uri) }.getOrNull()
+                    val keys = keysOkNow()
                     val why = if (probe == null) {
                         "ядро не прочитало заголовок · проверьте ключи или распакуйте файл"
                     } else {
-                        NspProbe.verdict(probe, keysOkNow())
+                        NspProbe.verdict(probe, keys)
                     }
-                    side.add(Sidecar(filename, filePath, base, why, "unreadable"))
+                    val note = if (probe == null) "" else NspProbe.label(probe, keys)
+                    side.add(Sidecar(filename, filePath, base, why, "unreadable", note))
                     return@forEach
                 }
                 when (entry.kind) {
