@@ -433,13 +433,19 @@ object GameHelper {
                 val game = runCatching { getGame(it.uri, true, false) }.getOrNull()
                 if (game == null) {
                     stats.failed++
-                    side.add(
-                        Sidecar(
-                            filename, filePath, base,
-                            "ядро не прочитало заголовок · проверьте ключи или распакуйте файл",
-                            "unreadable"
-                        )
-                    )
+                    // Прежде чем списывать отказ на ключи, читаем сам
+                    // контейнер: имя таблицы PFS0 и билет доступны без
+                    // расшифровки. На телефоне ключи были на месте (204
+                    // записи, прошивка 22.0.0), а плитки всё равно говорили
+                    // «проверьте ключи» — то есть текст был догадкой, а не
+                    // причиной.
+                    val probe = runCatching { probeContainer(it.uri) }.getOrNull()
+                    val why = if (probe == null) {
+                        "ядро не прочитало заголовок · проверьте ключи или распакуйте файл"
+                    } else {
+                        NspProbe.verdict(probe, keysOkNow())
+                    }
+                    side.add(Sidecar(filename, filePath, base, why, "unreadable"))
                     return@forEach
                 }
                 when (entry.kind) {
@@ -451,6 +457,42 @@ object GameHelper {
             }
         }
     }
+
+    /**
+     * Прочитать контейнер по байтам, без ядра и без ключей.
+     *
+     * Через дескриптор, а не через InputStream: у образа в несколько
+     * гигабайт нужны только первые килобайты, а таблица файлов — по
+     * известному смещению. Копировать файл целиком никто не станет.
+     */
+    private fun probeContainer(uri: Uri): NspProbe.Result? = runCatching {
+        val context = YuzuApplication.appContext
+        val name = uri.lastPathSegment ?: uri.toString()
+        context.contentResolver.openFileDescriptor(uri, "r")?.use { pfd ->
+            val stream = java.io.FileInputStream(pfd.fileDescriptor)
+            try {
+                val channel = stream.channel
+                fun readAt(offset: Long, size: Int): ByteArray {
+                    if (size <= 0) return ByteArray(0)
+                    val buffer = java.nio.ByteBuffer.allocate(size)
+                    var readTotal = 0
+                    while (readTotal < size) {
+                        val n = channel.read(buffer, offset + readTotal)
+                        if (n <= 0) break
+                        readTotal += n
+                    }
+                    return if (readTotal == 0) ByteArray(0) else buffer.array().copyOf(readTotal)
+                }
+                NspProbe.probe(NspProbe.Bytes { offset, size -> readAt(offset, size) }, name)
+            } finally {
+                runCatching { stream.close() }
+            }
+        }
+    }.getOrNull()
+
+    /** Состояние ключей прямо сейчас — без него вердикт был бы догадкой. */
+    private fun keysOkNow(): Boolean =
+        runCatching { NativeLibrary.areKeysPresent() }.getOrDefault(false)
 
     private fun mountExternalContentDirectories(mountedContainerUris: MutableSet<String>) {
         val uniqueExternalContentDirs = linkedSetOf<String>()

@@ -28,6 +28,8 @@ import org.yuzu.yuzu_emu.R
 import org.yuzu.yuzu_emu.YuzuApplication
 import org.yuzu.yuzu_emu.databinding.FragmentKeysFirmwareBinding
 import org.yuzu.yuzu_emu.utils.DirectoryInitialization
+import org.yuzu.yuzu_emu.utils.KenjiBridge
+import org.yuzu.yuzu_emu.utils.KenjiData
 import org.yuzu.yuzu_emu.utils.FileUtil
 import org.yuzu.yuzu_emu.utils.NativeSymbiosis
 
@@ -170,7 +172,21 @@ class KeysFirmwareFragment : Fragment() {
     private fun reloadKeys() {
         viewLifecycleOwner.lifecycleScope.launch {
             val ok = withContext(Dispatchers.IO) {
-                runCatching { NativeLibrary.reloadKeys() }.getOrDefault(false)
+                val reloaded = runCatching { NativeLibrary.reloadKeys() }.getOrDefault(false)
+                // И сразу передать их второму ядру: у него своя папка, и без
+                // этого «ключи установлены» относилось только к Eden. Человек
+                // справедливо ждал, что установка ключей — это для всего
+                // приложения, а не для одного из двух ядер.
+                runCatching {
+                    val context = requireContext().applicationContext
+                    // Только если второе ядро вообще заведено (его папка
+                    // существует): создавать чужие каталоги из экрана ключей
+                    // незачем.
+                    if (KenjiBridge.dataDir(context).isDirectory) {
+                        KenjiBridge.seedKeys(context)
+                    }
+                }
+                reloaded
             }
             Snackbar.make(
                 binding.root,
@@ -235,6 +251,20 @@ class KeysFirmwareFragment : Fragment() {
         if (others.isNotEmpty()) {
             sb.append("\nother files:\n")
             others.forEach { sb.append("  ").append(it.name).append('\n') }
+        }
+
+        // Второе ядро: у него своя папка данных, и ключи в неё передаются
+        // отдельно. Без этой строки экран отвечал только за Eden, а человек
+        // читал его как «ключи есть везде».
+        runCatching {
+            val context = requireContext().applicationContext
+            val root = KenjiBridge.dataDir(context)
+            sb.append("\nвторое ядро (Kenji)\n")
+            sb.append("  папка данных: ").append(root.absolutePath).append('\n')
+            sb.append("  prod.keys: ")
+                .append(if (KenjiData.hasKeys(KenjiData.normalizeRoot(root))) "есть" else "нет")
+                .append('\n')
+            sb.append("  передать заново: «Перезагрузить ключи»\n")
         }
 
         sb.append("\ncore reports keys present: ")
