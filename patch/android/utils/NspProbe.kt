@@ -86,6 +86,9 @@ object NspProbe {
     private const val MAX_ENTRIES = 512
     private const val MAX_NAME = 0x200
 
+    /** Больше этого таблица имён не бывает; всё сверх — испорченный заголовок. */
+    private const val MAX_NAME_TABLE = 0x100000
+
     /**
      * Разобрать файл.
      *
@@ -156,8 +159,16 @@ object NspProbe {
         if (count <= 0 || count > MAX_ENTRIES) {
             return empty(Container.UNKNOWN, "заголовок контейнера повреждён (файлов: $count)", "header")
         }
-        if (stringTableSize <= 0) {
-            return empty(Container.UNKNOWN, "заголовок контейнера повреждён (нет таблицы имён)", "header")
+        // Таблица имён ограничена разумным размером: в заголовке лежит
+        // 32-битное число, и битый файл может объявить таблицу в гигабайты.
+        // Раньше это превращалось в попытку выделить столько памяти прямо во
+        // время обхода библиотеки — то есть в падение приложения при запуске.
+        if (stringTableSize <= 0 || stringTableSize > MAX_NAME_TABLE) {
+            return empty(
+                Container.UNKNOWN,
+                "заголовок контейнера повреждён (таблица имён: $stringTableSize байт)",
+                "header"
+            )
         }
 
         val table = runCatching { bytes.readAt(0x10L, count * PFS0_ENTRY) }.getOrDefault(ByteArray(0))

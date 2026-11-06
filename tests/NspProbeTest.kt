@@ -192,6 +192,17 @@ fun main() {
     eq("пустой файл", NspProbe.probe(bytesOf(ByteArray(0)), "x.nsp").container,
         NspProbe.Container.UNKNOWN)
 
+    // ── битый заголовок не должен тянуть память ─────────────────────────
+    // В заголовке PFS0 размер таблицы имён — 32-битное число. Файл с
+    // объявленной таблицей в гигабайты раньше заставлял выделять её целиком
+    // прямо во время обхода библиотеки, то есть ронял приложение при запуске.
+    val huge = buildPfs0(listOf(File("a.nca", ByteArray(64)))).copyOf()
+    System.arraycopy(le32(0x3FFFFFFF), 0, huge, 8, 4)
+    val rHuge = NspProbe.probe(bytesOf(huge), "huge.nsp")
+    check("огромная таблица имён названа порчей заголовка",
+        rHuge.problem.contains("таблица имён"), rHuge.problem)
+    eq("и помечена как битый заголовок", NspProbe.label(rHuge, true), "заголовок битый")
+
     // ── билет без права ─────────────────────────────────────────────────
     // Vault of Power на телефоне: билет внутри есть, а Rights ID — FF.
     // Показывать ffffffffffffffff как идентификатор игры нельзя, поэтому он

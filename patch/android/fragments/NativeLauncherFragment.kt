@@ -16,10 +16,6 @@ import androidx.core.view.isVisible
 import androidx.core.view.updatePadding
 import androidx.fragment.app.Fragment
 import androidx.fragment.app.activityViewModels
-import androidx.lifecycle.Lifecycle
-import androidx.lifecycle.lifecycleScope
-import androidx.lifecycle.repeatOnLifecycle
-import kotlinx.coroutines.launch
 import androidx.navigation.fragment.findNavController
 import androidx.recyclerview.widget.LinearLayoutManager
 import com.google.android.material.chip.Chip
@@ -40,6 +36,7 @@ import org.yuzu.yuzu_emu.utils.EngineLoader
 import org.yuzu.yuzu_emu.utils.EngineStore
 import org.yuzu.yuzu_emu.utils.ExitTrace
 import org.yuzu.yuzu_emu.utils.GameHelper
+import org.yuzu.yuzu_emu.utils.UiGuard
 import org.yuzu.yuzu_emu.utils.GameIconUtils
 import org.yuzu.yuzu_emu.utils.KenjiReport
 import org.yuzu.yuzu_emu.utils.KernelLog
@@ -96,10 +93,23 @@ class NativeLauncherFragment : Fragment() {
      */
     private lateinit var converter: ConverterPicker
 
+    /** Был ли экран уже показан: первый onResume не считаем возвратом. */
+    private var returnedToScreen = false
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enterTransition = MaterialSharedAxis(MaterialSharedAxis.X, true)
         returnTransition = MaterialSharedAxis(MaterialSharedAxis.X, false)
+
+        // Отчёт о падении ставим сразу, а не при запуске игры.
+        //
+        // 06.11 приложение падало при запуске, пока шёл обход библиотеки, и
+        // не оставалось ничего: обработчик ставился только в эмуляции, то
+        // есть уже после того, как человек дошёл до игры. Теперь любое
+        // падение главного процесса пишет `symbiosis/ui-crash.txt`, а
+        // нативный сбой — туда же со стеком.
+        runCatching { UiGuard.install(requireContext().applicationContext) }
+        runCatching { UiGuard.armNative(requireContext().applicationContext) }
 
         converter = ConverterPicker(
             fragment = this,
@@ -171,21 +181,45 @@ class NativeLauncherFragment : Fragment() {
         // Жалоба 06.11: часть файлов уже удалена, а в библиотеке они видны —
         // и появляются как раз после того, как зайдёшь в «Папки с играми»
         // (экран папок обновляет список, а плитки остаются от прежнего
-        // построения). Обход дешёвый — это перечисление каталогов, — и
-        // правильнее сделать его при каждом возврате на экран, чем
-        // показывать то, чего нет.
-        viewLifecycleOwner.lifecycleScope.launch {
-            repeatOnLifecycle(Lifecycle.State.RESUMED) {
-                gamesViewModel.reloadGames(false)
-            }
-        }
+        // построения).
+        //
+        // Возврат на экран помечается флагом, а обход делается в onResume:
+        // запускать его из repeatOnLifecycle оказалось плохой идеей — блок
+        // перезапускается на каждом входе в RESUMED, и при старте это давало
+        // второй обход поверх первого, пока первый ещё шёл.
         gamesViewModel.games.collect(viewLifecycleOwner) {
             games = it
             render()
         }
 
         setInsets()
+
+        // Прошлый обход не дошёл до конца — говорим об этом прямо: падение в
+        // сканировании и падение на отрисовке чинятся по-разному.
+        if (GameHelper.lastScanUnfinished(requireContext())) {
+            Snackbar.make(
+                binding.root,
+                "прошлый обход библиотеки не закончился: приложение закрылось во время сканирования",
+                Snackbar.LENGTH_LONG
+            ).show()
+        }
     }
+
+    override fun onResume() {
+        super.onResume()
+        // Первый заход после создания экрана пропускаем: список уже
+        // запрошен во viewModel. Дальше — каждый возврат, но не поверх
+        // идущего обхода.
+        if (!returnedToScreen) {
+            returnedToScreen = true
+            return
+        }
+        if (viewModelStoreOwnerVisible()) {
+            gamesViewModel.reloadGames(false)
+        }
+    }
+
+    private fun viewModelStoreOwnerVisible(): Boolean = isAdded && !isDetached
 
     /**
      * Цвет экрана.

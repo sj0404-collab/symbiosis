@@ -23,6 +23,9 @@ import androidx.core.net.toUri
 
 object GameHelper {
     private const val KEY_OLD_GAME_PATH = "game_path"
+
+    /** Потолок на одно чтение при разборе контейнера — 1 МиБ. */
+    private const val MAX_PROBE_READ = 0x100000
     const val KEY_GAMES = "Games"
 
     var cachedGameList = mutableListOf<Game>()
@@ -153,6 +156,32 @@ object GameHelper {
         return games
     }
 
+    /**
+     * Метка «обход идёт».
+     *
+     * Приложение падало при запуске, пока шёл обход, и от этого не оставалось
+     * ничего: система закрывает процесс, файл отчёта пишется только если
+     * обработчик уже поставлен. Метка позволяет на следующем запуске сказать
+     * прямо: прошлый обход не закончился — приложение упало или было закрыто
+     * во время сканирования. Это отличает падение в обходе от падения на
+     * отрисовке, и без logcat другого способа нет.
+     */
+    private fun scanMarker(context: Context): File =
+        File(File(context.getExternalFilesDir(null), "symbiosis"), "scan-in-progress.txt")
+
+    /** Прошлый обход не дошёл до конца. */
+    fun lastScanUnfinished(context: Context): Boolean =
+        runCatching { scanMarker(context).isFile }.getOrDefault(false)
+
+    private fun markScanStart(context: Context) = runCatching {
+        val file = scanMarker(context)
+        file.parentFile?.mkdirs()
+        file.writeText(System.currentTimeMillis().toString())
+        Unit
+    }
+
+    private fun markScanEnd(context: Context) = runCatching { scanMarker(context).delete() }
+
     fun getGames(): List<Game> {
         val games = mutableListOf<Game>()
         val context = YuzuApplication.appContext
@@ -238,6 +267,7 @@ object GameHelper {
 
         val stats = ScanStats()
         val startedAt = System.currentTimeMillis()
+        markScanStart(YuzuApplication.appContext)
         val side = mutableListOf<Sidecar>()
 
         val badDirs = mutableListOf<Int>()
@@ -310,6 +340,7 @@ object GameHelper {
                 .putStringSet(KEY_GAMES, serializedGames)
         }
 
+        markScanEnd(YuzuApplication.appContext)
         cachedGameList = unique.toMutableList()
         sidecar = side.toList()
         stats.folders = gameDirs.size
@@ -448,26 +479,26 @@ object GameHelper {
                     val titleKeys = runCatching { titleKeyLines() }.getOrDefault(emptyList())
                     val titleKey = probe?.takeIf { it.titleId.isNotEmpty() }
                         ?.let { TitleKeys.has(titleKeys, it.titleId) }
-                    // Контейнер цел — тогда настоящую причину знает само ядро:
-                    // оно читает NCA и говорит MissingTitlekey, когда ключа
-                    // игры нет. Без этого библиотека отвечала «дело не в
-                    // ключах», а во вкладке «Папки» про тот же файл было
-                    // написано «нужен title key» — два разных ответа на один
-                    // вопрос.
-                    val core = if (probe != null && probe.readable) {
-                        runCatching { NativeSymbiosis.romProblem(it.uri.toString()) }
-                            .getOrNull().orEmpty()
-                    } else ""
-                    val why = when {
-                        probe == null -> "ядро не прочитало заголовок · проверьте ключи или распакуйте файл"
-                        core.isNotBlank() -> core
-                        else -> NspProbe.verdict(probe, keys, titleKey)
+                    // Причину называем сами, по байтам контейнера.
+                    //
+                    // Здесь был вызов NativeSymbiosis.romProblem на каждый
+                    // неоткрывшийся файл — и приложение стало падать ровно во
+                    // время обхода при запуске. Неудивительно: эта функция
+                    // проходит путь загрузки игры внутри ядра (сессия
+                    // эмуляции, ключи, разбор CNMT), а обход идёт фоном сразу
+                    // после старта, когда ядро ещё не поднято. Падение в
+                    // нативной части не ловится ни try, ни runCatching —
+                    // процесс просто умирает.
+                    //
+                    // Поэтому в обходе только чистое чтение контейнера, а
+                    // ответ ядра остаётся там, где его вызывают нажатием:
+                    // вкладка «Папки» и диалог плитки.
+                    val why = if (probe == null) {
+                        "ядро не прочитало заголовок · проверьте ключи или распакуйте файл"
+                    } else {
+                        NspProbe.verdict(probe, keys, titleKey)
                     }
-                    val keysNote = when {
-                        core.contains("MissingTitlekey") || core.contains("title key") -> "нет ключа игры"
-                        probe == null -> ""
-                        else -> NspProbe.label(probe, keys, titleKey)
-                    }
+                    val keysNote = if (probe == null) "" else NspProbe.label(probe, keys, titleKey)
                     // Дополнение и обновление — не игра.
                     //
                     // На телефоне DLC Blade Chimera стоял в библиотеке как
@@ -480,7 +511,9 @@ object GameHelper {
                         entry.kind == LibraryIndex.Kind.UPDATE -> "обновление"
                         else -> ""
                     }
-                    val note = if (keysNote.isNotEmpty()) keysNote else role
+                    // Роль важнее пометки о ключе: «дополнение» — это про то,
+                    // что за файл, а не про то, что с ним не так.
+                    val note = if (role.isNotEmpty()) role else keysNote
                     val text = if (role.isEmpty()) why else "Это $role, а не отдельная игра. $why"
                     side.add(Sidecar(filename, filePath, base, text, "unreadable", note, role))
                     return@forEach
@@ -506,14 +539,21 @@ object GameHelper {
         val context = YuzuApplication.appContext
         val name = uri.lastPathSegment ?: uri.toString()
         context.contentResolver.openFileDescriptor(uri, "r")?.use { pfd ->
+            // Поток не закрываем отдельно: дескриптор принадлежит pfd, и
+            // двойное закрытие — это лишний повод для исключения на ровном
+            // месте, ровно во время обхода.
             val stream = java.io.FileInputStream(pfd.fileDescriptor)
-            try {
+            run {
                 val channel = stream.channel
                 fun readAt(offset: Long, size: Int): ByteArray {
                     if (size <= 0) return ByteArray(0)
-                    val buffer = java.nio.ByteBuffer.allocate(size)
+                    // Потолок на одно чтение: размеры приходят из самого
+                    // файла, и битый заголовок не должен превращаться в
+                    // попытку выделить гигабайт во время обхода.
+                    val want = if (size > MAX_PROBE_READ) MAX_PROBE_READ else size
+                    val buffer = java.nio.ByteBuffer.allocate(want)
                     var readTotal = 0
-                    while (readTotal < size) {
+                    while (readTotal < want) {
                         val n = channel.read(buffer, offset + readTotal)
                         if (n <= 0) break
                         readTotal += n
@@ -521,8 +561,6 @@ object GameHelper {
                     return if (readTotal == 0) ByteArray(0) else buffer.array().copyOf(readTotal)
                 }
                 NspProbe.probe(NspProbe.Bytes { offset, size -> readAt(offset, size) }, name)
-            } finally {
-                runCatching { stream.close() }
             }
         }
     }.getOrNull()
