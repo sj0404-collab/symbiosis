@@ -2915,3 +2915,16 @@ MD5 `670d32d3e6fa06dc2c82798e548255ad`, 48 326 398 Б) — но при свер�
 `NspProbeTest` 42/0 (добавлены относительные смещения и живой порядок
 записей), `KenjiFirmwareShareTest` 7/0, `TitleKeysTest` 19/0,
 `NativeLibraryPresenterTest` 78/0.
+
+### 50.5. Сборка `42184074493` (коммит `397e217`)
+
+**APK: https://gofile.io/d/m5QCwWTT** — MD5 `8db01856a5bf71329bb011c2aefc8bed`,
+48 346 782 Б, 46.1 МБ.
+
+Тесты: `NspProbeTest` 42/0, `KenjiFirmwareShareTest` 7/0, `TitleKeysTest`
+19/0, `NativeLibraryPresenterTest` 78/0; весь остальной набор зелёный.
+
+Сверено по собранному APK (артефакт CI, md5 совпал с логом и с gofile):
+`общая прошивка Eden: ссылка, копий нет` — 1, `ссылки на этой папке запрещены
+системой` — 1, `старая копия убрана` — 1, `sharePlan` — 1,
+`по смещению части лежит не NCA` — 1 (текст остался для настоящего мусора).
