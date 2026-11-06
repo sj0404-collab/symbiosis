@@ -73,6 +73,16 @@ def problems(path: Path) -> list[str]:
                 i += 2
                 continue
             if ch == "*" and nxt == "/":
+                # `*/` посреди текста комментария закрывает его — и весь
+                # остаток строки компилятор читает как код. Именно так путь
+                # `*/system/Contents` в документации уронил сборку: ошибки
+                # посыпались на строках ниже, а причина была здесь.
+                after = text[i + 2] if i + 2 < n else ""
+                if after and not after.isspace() and after not in "*)};/,.":
+                    out.append(
+                        f"{line}: «*/» внутри комментария — комментарий закроется "
+                        f"раньше времени (после него «{after}»)"
+                    )
                 depth -= 1
                 i += 2
                 continue
