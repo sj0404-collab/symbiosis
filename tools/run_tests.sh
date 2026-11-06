@@ -224,6 +224,9 @@ if command -v kotlinc >/dev/null 2>&1; then
       # наличие определяется по файлам, а не по «keys present: true».
       # Прошивка у двух ядер одна: ссылка вместо второй копии на 300 МБ.
       KenjiFirmwareShareTest) echo "$HERE/patch/android/utils/KenjiData.kt" ;;
+      # Где второе ядро ищет прошивку: подпапки в registered и плоские .nca
+      # в bis/system/Contents. Ссылка на папку Eden — ноль файлов для Kenji.
+      KenjiFirmwareLayoutTest) echo "$HERE/patch/android/utils/KenjiData.kt" ;;
       TitleKeysTest) echo "$HERE/patch/android/utils/TitleKeys.kt \
         $HERE/patch/android/utils/ExtraKeys.kt" ;;
       # Дополнительные ключи: какая строка — ключ игры, что дописывать в

@@ -607,14 +607,26 @@ class KeysFirmwareFragment : Fragment() {
             // раньше здесь молчали, а в хранилище лежал второй комплект.
             val fw = KenjiData.firmwareDir(root)
             val linked = runCatching { android.system.Os.readlink(fw.absolutePath) }.getOrNull()
+            val flat = KenjiData.flatFirmwareCount(root)
+            val nested = KenjiData.firmwareCountOf(KenjiData.firmwareDir(root))
             sb.append("  прошивка: ")
             when {
                 linked != null -> sb.append("ссылка на ").append(linked)
-                KenjiData.hasFirmware(root) ->
-                    sb.append("копия, ").append(KenjiData.firmwareCount(root)).append(" файлов")
-                // Прошивки Eden нет вовсе — тогда второму ядру нечего отдать,
-                // и надо сказать, что делать, а не просто «нет».
-                else -> sb.append("нет (в Eden тоже нет прошивки: установите её на вкладке «Прошивка»)")
+                // Раскладка, которую читает Kenji: плоские .nca в Contents.
+                flat > 0 -> sb.append("общая с Eden, ").append(flat).append(" файлов ссылками")
+                nested > 0 -> sb.append("копия, ").append(nested).append(" файлов")
+                // Прошивки Eden нет вовсе — тогда второму ядру нечего отдать.
+                // Говорим это вместе с картой поиска: где искали и что нашли.
+                // Без карты «прошивка: нет» при установленной прошивке
+                // выглядит как поломка, и искать причину приходится вслепую.
+                else -> {
+                    sb.append("нет\n")
+                    runCatching {
+                        KenjiBridge.firmwareSearchReport().lineSequence().forEach {
+                            sb.append("    ").append(it).append('\n')
+                        }
+                    }
+                }
             }
             sb.append('\n')
             sb.append("  передать заново: «Перезагрузить ключи»\n")

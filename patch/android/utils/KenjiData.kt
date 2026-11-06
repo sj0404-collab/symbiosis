@@ -152,9 +152,44 @@ object KenjiData {
     /** Ключи: `<корень>/system`. */
     fun keysDir(root: File): File = File(root, "system")
 
-    /** Сколько файлов прошивки лежит в корне. */
+    /**
+     * Сколько файлов прошивки лежит в папке ядра.
+     *
+     * Считаем и вложенные папки: установщик прошивки Kenji (Ryujinx) кладёт
+     * NCA не плоским списком, а подпапками — `registered/<id>/…`. Старый счёт
+     * «только файлы в корне» на такой раскладке давал ноль, и отчёт честно
+     * писал «прошивка: нет», хотя она лежала рядом.
+     *
+     * Папка, откуда Kenji читает прошивку ПЛОСКИМ списком.
+     *
+     * РАЗНЫЕ РАСКЛАДКИ У ДВУХ ЯДЕР — вот почему прошивка «не видна».
+     * В исходниках Kenji-NX (`ContentManager.LoadEntries`) перебираются:
+     *   1) подпапки внутри `registered` — и из каждой берётся первый файл;
+     *   2) файлы `.nca`, лежащие прямо в `Contents` (НЕ в `registered`).
+     * Eden (yuzu) держит прошивку плоским списком внутри `registered`. То есть
+     * даже когда папка прошивки Eden подставлена ссылкой, Kenji не находит в
+     * ней ни одного NCA: он ждёт либо подпапки, либо файлы на уровень выше.
+     *
+     * Отсюда и `TimeZoneBinary system title not found` в его журнале.
+     */
+    fun firmwareContentsDir(root: File): File = File(File(File(root, "bis"), "system"), "Contents")
+
+    /** Сколько прошивочных .nca лежит плоско в `Contents`. */
+    fun flatFirmwareCount(root: File): Int = runCatching {
+        firmwareContentsDir(root).listFiles()
+            ?.count { it.isFile && it.name.endsWith(".nca", ignoreCase = true) } ?: 0
+    }.getOrDefault(0)
+
     fun firmwareCount(root: File): Int =
-        runCatching { firmwareDir(root).listFiles()?.count { it.isFile } ?: 0 }.getOrDefault(0)
+        firmwareCountOf(firmwareDir(root)) + flatFirmwareCount(root)
+
+    /** Файлов в указанной папке прошивки — любой уровень вложенности. */
+    fun firmwareCountOf(dir: File): Int = runCatching {
+        if (!dir.isDirectory) return@runCatching 0
+        var count = 0
+        dir.walkTopDown().forEach { if (it.isFile) count++ }
+        count
+    }.getOrDefault(0)
 
     fun hasFirmware(root: File): Boolean = firmwareCount(root) > 0
 

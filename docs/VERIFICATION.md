@@ -3607,3 +3607,69 @@ Vault of Power пошёл на Eden — на снимке видно игров�
 Сверено по собранному APK: в dex — «кадров нет за » 1, «игра переведена на
 Eden» 2, «выход из второго ядра» 1; в ресурсах — `sym_tile_margin` и
 `sym_toolbar_height` (значит `values-land` попал в сборку).
+
+## §62. Прошивка второго ядра: почему её «нет» при установленной прошивке
+
+### 62.1. Вопрос и проверка по исходникам
+
+Человек предположил, что ядро не читает игру из-за отсутствия BIOS. Проверено по
+исходникам Kenji-NX (ветка `libryujinx_bionic`), а не на память:
+
+- **BIOS у Switch нет.** Ветка `LowFirmwareVersion` в загрузчике — про версию
+  прошивки, а не про файл BIOS. Искать «файл BIOS» нечего.
+- **Прошивка нужна** и лежит в `bis/system/Contents` — это видно по
+  `AppDataManager.DefaultNandDir = "bis"`, `KeysDir = "system"` и
+  `ContentPath.SystemContent => <база>/bis/system/Contents`.
+- Нет прошивки → нет системного тайтла `010000000000080E` (TimeZoneBinary).
+  `TimeZoneContentManager.GetTimeZoneBinaryTitleContentPath()` возвращает пустую
+  строку, и в журнал идёт ровно то, что видел человек:
+  `TimeZoneBinary system title not found!`.
+
+Значит вопрос не «нужен ли BIOS», а «видит ли ядро файлы прошивки».
+
+### 62.2. Настоящая причина: разные раскладки у двух ядер
+
+`ContentManager.LoadEntries` (Kenji) читает содержимое **двумя** способами:
+
+1. `EnumerateDirectories(<Contents>/registered)` — из каждой подпапки берётся
+   **первый** файл; имя папки минус `.nca` становится именем содержимого.
+2. `EnumerateFiles(<Contents>)` — только файлы `.nca`, лежащие **прямо** в
+   `Contents`. Файлы, лежащие прямо в `registered`, не читаются вообще.
+
+Eden (yuzu) держит прошивку плоским списком внутри `registered`. Поэтому ссылка
+`<ядро>/bis/system/Contents/registered` → папка Eden давала второму ядру **ноль**
+NCA: подпапок там нет, а плоские файлы лежат на уровень глубже, чем он смотрит.
+
+### 62.3. Что исправлено
+
+- `KenjiData.firmwareContentsDir(root)` — папка, которую читает Kenji:
+  `<ядро>/bis/system/Contents`.
+- `KenjiData.flatFirmwareCount(root)` — сколько `.nca` лежит плоско в `Contents`;
+  `firmwareCount` = вложенные (рекурсивно в `registered`) + плоские.
+- `KenjiBridge.bridgeFirmware(...)` — каждый `.nca` прошивки Eden получает **свою**
+  ссылку в `<ядро>/bis/system/Contents/<имя>.nca`. Копий нет: 300+ МБ не
+  дублируются, обновление прошивки в Eden сразу видно второму ядру. Старая
+  ссылка на папку убирается — она всё равно не работала.
+- `seedFirmware` и `shareFirmware` переведены на этот мост; `linkFirmware` и
+  `isPlainCopy` удалены как мёртвый код.
+- Отчёт на экране «Ключи и прошивка» больше не пишет «копия, N файлов», когда
+  файлы на самом деле ссылки: «общая с Eden, N файлов ссылками».
+
+**Почему плоское размещение верно, а не догадка:** `LoadEntries` кладёт в индекс
+`(_contentDictionary)` пару `(nca.Header.TitleId, ContentType)`, то есть ключ
+берётся из **заголовка NCA**, а не из имени файла. Путь берётся из `LocationEntry`,
+построенной при обходе, — шаблона `registered/<id>.nca` нет.
+`GetInstalledContentPath(0x010000000000080E, BuiltInSystem, Data)` возвращает
+`SystemContent:/<имя>.nca`, а `VirtualFileSystem.SwitchPathToSystemPath` переводит
+это в `<база>/bis/system/Contents/<имя>.nca` — ровно туда, куда кладутся ссылки.
+
+### 62.4. Проверки
+
+`KenjiFirmwareLayoutTest` 12/0 (синтетические файлы, устройство не нужно): путь
+`bis/system/Contents`; пустая папка — 0; файлы плоско в `registered` не считаются
+плоскими, но видны вложенным счётчиком; плоские `.nca` в `Contents` считаются,
+общий счёт = сумма; `prod.keys` и `readme.txt` прошивкой не считаются; подпапка
+внутри `Contents` не попадает в плоский счётчик.
+
+`KenjiFirmwareShareTest` 7/0 — правила ссылки не изменились.
+Синтаксис: 115 файлов, 0 проблем. Ссылки: 115 файлов, 0 проблем.

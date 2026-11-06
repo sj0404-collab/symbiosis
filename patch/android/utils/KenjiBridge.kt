@@ -441,10 +441,68 @@ object KenjiBridge {
         return if (copied > 0) "профиль Eden перенесён: $copied файлов" else "профиль Eden пуст"
     }
 
-    /** Папка прошивки Eden, если данные Eden известны. */
-    private fun edenFirmwareDir(): File? {
+    /**
+     * Папка прошивки Eden, если данные Eden известны.
+     *
+     * ПУТЬ НЕ ОДИН. Eden (yuzu) держит прошивку в `nand/system/Contents/
+     * registered`, Kenji (Ryujinx) — в `bis/system/Contents/registered` (это
+     * видно в его же исходниках: AppDataManager.DefaultNandDir = "bis",
+     * ContentPath.SystemContent = <база>/bis/system/Contents). Если человек
+     * когда-то ставил прошивку вторым ядром или перекладывал папку, данные
+     * могут лежать в любой из них. Поэтому: сначала проверяем оба известных
+     * пути, потом ищем `*/system/Contents/registered` на два уровня вниз.
+     *
+     * Раньше проверялся ровно один путь, и при любом расхождении отчёт писал
+     * «прошивка: нет» — а установленная прошивка 22.0.0 при этом была.
+     */
+    fun edenFirmwareDir(): File? {
         val root = runCatching { DirectoryInitialization.userDirectory }.getOrNull() ?: return null
-        return File(File(File(File(root, "nand"), "system"), "Contents"), "registered")
+        val direct = listOf(
+            File(File(File(File(root, "nand"), "system"), "Contents"), "registered"),
+            File(File(File(File(root, "bis"), "system"), "Contents"), "registered"),
+            File(File(File(root, "system"), "Contents"), "registered"),
+        )
+        direct.firstOrNull { it.isDirectory && hasAnyFile(it) }?.let { return it }
+        // Поиск на два уровня: <корень>/<любая>/system/Contents/registered.
+        return runCatching {
+            File(root).listFiles()?.asSequence()
+                ?.filter { it.isDirectory }
+                ?.map { File(File(File(it, "system"), "Contents"), "registered") }
+                ?.firstOrNull { it.isDirectory && hasAnyFile(it) }
+        }.getOrNull()
+    }
+
+    /** Есть ли в папке хоть один файл — на любом уровне вложенности. */
+    private fun hasAnyFile(dir: File): Boolean = runCatching {
+        dir.walkTopDown().any { it.isFile }
+    }.getOrDefault(false)
+
+    /**
+     * Что видно про прошивку Eden: для отчёта, когда её не нашли.
+     *
+     * Возвращает список проверенных путей и содержимое корня данных, чтобы по
+     * одному снимку было видно, где она лежит на самом деле, а не гадать.
+     */
+    fun firmwareSearchReport(): String {
+        val root = runCatching { DirectoryInitialization.userDirectory }.getOrNull()
+            ?: return "данные Eden неизвестны"
+        val lines = mutableListOf<String>()
+        lines += "корень данных: " + root.absolutePath
+        listOf(
+            "nand/system/Contents/registered",
+            "bis/system/Contents/registered",
+            "system/Contents/registered",
+        ).forEach { rel ->
+            val f = File(root, rel)
+            lines += "  $rel: " + when {
+                !f.isDirectory -> "нет папки"
+                else -> KenjiData.firmwareCountOf(f).let { "$it файлов" }
+            }
+        }
+        val subs = runCatching { File(root).listFiles()?.filter { it.isDirectory }?.map { it.name } }
+            .getOrNull().orEmpty()
+        lines += "  папки в корне: " + if (subs.isEmpty()) "нет" else subs.take(8).joinToString(", ")
+        return lines.joinToString("\n")
     }
 
     /**
@@ -463,11 +521,11 @@ object KenjiBridge {
      */
     fun shareFirmware(context: Context): String {
         val root = edenFirmwareDir() ?: return ""
-        if (!root.isDirectory) return ""
-        val dest = KenjiData.firmwareDir(dataDir(context))
-        val report = linkFirmware(root, dest)
+        val report = bridgeFirmware(root, dataDir(context), allowCopy = false)
         bridgeReport = report
-        if (report.startsWith("общая")) freedBytes = freeOldCopies(context, dataDir(context))
+        if (report.startsWith("общая")) {
+            freedBytes = freeOldCopies(context, dataDir(context))
+        }
         return report
     }
 
@@ -492,64 +550,108 @@ object KenjiBridge {
         val src = edenFirmwareDir() ?: return "данные Eden неизвестны — прошивку не отдать"
         if (!src.isDirectory) return "в Eden нет прошивки — второе ядро останется без неё"
 
-        // СНАЧАЛА ССЫЛКА, А НЕ КОПИЯ.
+        // ССЫЛКА НА КАЖДЫЙ ФАЙЛ, А НЕ КОПИЯ.
         //
         // Прошивка — это триста с лишним мегабайт, одни и те же файлы NCA у
         // обоих ядер. 06.11 человек сказал прямо: не дублировать, а
-        // использовать прошивку Eden через ярлык. Ссылка даёт ровно это:
-        // папка у ядра своя, а файлы внутри — те же самые, байт в байт, и
-        // обновление прошивки в Eden сразу видно второму ядру.
+        // использовать прошивку Eden через ярлык.
         //
-        // На /storage/emulated (FUSE) ссылки запрещены, поэтому папка данных
-        // ядра по умолчанию — приватная, где они работают. Если человек выбрал
-        // внешнюю папку, честно говорим, что система не даёт, и остаётся
-        // копия — но и её делаем один раз и только недостающих файлов.
-        val dest = KenjiData.firmwareDir(coreRoot)
-        bridgeReport = linkFirmware(src, dest)
-        if (bridgeReport.startsWith("общая")) {
+        // И САМОЕ ВАЖНОЕ: ссылку надо положить ТУДА, ГДЕ ЯДРО СМОТРИТ.
+        // Kenji читает плоские `.nca` из `bis/system/Contents`, а в `registered`
+        // он смотрит только подпапки. Eden держит файлы плоско в `registered`,
+        // поэтому прежняя ссылка на папку давала второму ядру ноль файлов —
+        // прошивки как будто нет, и в журнале `TimeZoneBinary system title not
+        // found`. Теперь каждый файл получает свою ссылку в `Contents`.
+        val report = bridgeFirmware(src, coreRoot, allowCopy = true)
+        bridgeReport = report
+        if (report.startsWith("общая")) {
             freedBytes = freeOldCopies(context, coreRoot)
-            return bridgeReport
         }
+        return report
+    }
 
-        // Главное: если прошивка уже лежит в папке данных ядра — её не трогаем.
-        // Ровно это и значит «без переноса»: папка выбрана, файлы на месте.
-        val have0 = KenjiData.firmwareCount(coreRoot)
-        if (have0 > 0) {
-            return "прошивка уже в папке ядра: $have0 файлов — переноса нет"
-        }
+    /**
+     * Подставить прошивку Eden второму ядру в ТОЙ раскладке, которую он читает.
+     *
+     * ПОЧЕМУ НЕ ССЫЛКОЙ НА ПАПКУ. Kenji (`ContentManager.LoadEntries`) читает
+     * прошивку двумя способами: подпапки внутри `registered` и плоские `.nca`
+     * прямо в `Contents`. Eden держит файлы плоско в `registered`. Ссылка на
+     * такую папку даёт второму ядру НОЛЬ файлов — прошивка как будто не
+     * установлена, в журнале `TimeZoneBinary system title not found`.
+     *
+     * Поэтому каждый `.nca` из Eden получает СВОЮ ссылку в
+     * `<ядро>/bis/system/Contents/<имя>.nca`. Копий нет — 0 байт сверх
+     * структуры, обновление прошивки в Eden сразу видно второму ядру.
+     *
+     * @param allowCopy false — только ссылки (для отчёта, мгновенно);
+     *                  true — недостающие файлы копируются, если ссылки запрещены
+     */
+    private fun bridgeFirmware(src: File, coreRoot: File, allowCopy: Boolean): String {
+        val files = collectNca(src)
+        if (files.isEmpty()) return "в папке прошивки Eden нет файлов .nca"
 
-        val files = runCatching { src.listFiles()?.filter { it.isFile } }.getOrNull().orEmpty()
-        if (files.isEmpty()) return "каталог прошивки Eden пуст"
-
-        if (!dest.isDirectory && !dest.mkdirs()) {
+        val contents = KenjiData.firmwareContentsDir(coreRoot)
+        if (!contents.isDirectory && !contents.mkdirs()) {
             return "не удалось создать каталог прошивки второго ядра"
         }
-        val fingerprint = "${files.size}:${files.maxOf { it.lastModified() }}:${files.sumOf { it.length() }}"
-        val marker = File(coreRoot, ".firmware-source")
-        val have = runCatching { dest.listFiles()?.count { it.isFile } ?: 0 }.getOrDefault(0)
-        if (have >= files.size && marker.isFile &&
-            runCatching { marker.readText().trim() }.getOrDefault("") == fingerprint
-        ) {
-            return "прошивка уже перенесена: ${files.size} файлов"
-        }
+        // Старая ссылка на папку (прошлая версия) бесполезна для Kenji:
+        // в ней лежат плоские файлы, а он ищет подпапки. Убираем.
+        val oldLink = KenjiData.firmwareDir(coreRoot)
+        if (isLink(oldLink)) oldLink.delete()
 
+        var linked = 0
         var copied = 0
         var kept = 0
+        var failed = 0
         for (file in files) {
-            val to = File(dest, file.name)
-            if (to.isFile && to.length() == file.length()) {
+            val target = File(contents, file.name)
+            if (target.isFile && !isLink(target)) {
                 kept++
                 continue
             }
-            runCatching {
-                file.copyTo(to, overwrite = true)
-                copied++
+            if (isLink(target)) {
+                if (isLinkTo(target, file)) {
+                    linked++
+                    continue
+                }
+                target.delete()
+            }
+            val ok = runCatching {
+                android.system.Os.symlink(file.absolutePath, target.absolutePath)
+                true
+            }.getOrDefault(false)
+            if (ok) {
+                linked++
+                continue
+            }
+            if (allowCopy) {
+                val copiedOk = runCatching {
+                    file.copyTo(target, overwrite = true)
+                    true
+                }.getOrDefault(false)
+                if (copiedOk) copied++ else failed++
+            } else {
+                failed++
             }
         }
-        runCatching { marker.writeText(fingerprint) }
-        return "прошивка Eden перенесена: $copied файлов, уже было $kept, всего ${files.size}" +
-            (if (bridgeReport.isNotEmpty()) " · $bridgeReport" else "")
+        val total = linked + copied + kept
+        return when {
+            total == 0 -> "прошивка не подставилась: ссылки запрещены, скопировать нечего"
+            copied > 0 ->
+                "общая прошивка Eden: $linked ссылками, $copied копией, всего $total файлов"
+            else ->
+                "общая прошивка Eden: $linked ссылками, копий нет, всего $total файлов" +
+                    (if (failed > 0) " (не удалось: $failed)" else "")
+        }
     }
+
+    /** Все `.nca` прошивки — и плоско, и во вложенных папках. */
+    private fun collectNca(dir: File): List<File> = runCatching {
+        dir.walkTopDown()
+            .filter { it.isFile && it.name.endsWith(".nca", ignoreCase = true) }
+            .take(2048)
+            .toList()
+    }.getOrDefault(emptyList())
 
     /** Что вышло со ссылкой на прошивку: для отчёта. */
     @Volatile
@@ -560,81 +662,6 @@ object KenjiBridge {
     @Volatile
     var freedBytes: Long = 0L
         private set
-
-    /**
-     * Отдать ядру папку прошивки Eden ссылкой.
-     *
-     * Ссылку делает только приложение (у него есть права на свою папку), и
-     * только если файловая система это умеет: на FUSE ссылки запрещены.
-     *
-     * @return фраза для отчёта; начинается с «общая», если ссылка удалась
-     */
-    private fun linkFirmware(src: File, dest: File): String {
-        val parent = dest.parentFile
-        if (parent == null || !(parent.isDirectory || parent.mkdirs())) {
-            return "не удалось создать каталог прошивки второго ядра"
-        }
-        val linked = isLink(dest)
-        val sameTarget = linked && isLinkTo(dest, src)
-        val copy = dest.isDirectory && !linked && isPlainCopy(src, dest)
-        // «Разрешены ли ссылки» выясняется попыткой; до неё считаем, что да.
-        when (KenjiData.sharePlan(linked, sameTarget, copy, true)) {
-            KenjiData.Share.ALREADY_LINKED -> return "общая прошивка Eden: ссылка уже стоит"
-            KenjiData.Share.KEEP_OWN ->
-                // В папке ядра есть файлы, которых нет в Eden: удалять её
-                // нельзя, иначе человек потеряет то, что у него было.
-                return "в папке ядра своя прошивка — оставили как есть"
-            else -> Unit
-        }
-        // Старая ссылка на другую папку — убираем, она всё равно мешает.
-        if (linked) dest.delete()
-        val wasDirectory = dest.isDirectory
-
-        val temp = File(parent, "registered.symbiosis-link")
-        if (isLink(temp)) temp.delete()
-        val made = runCatching {
-            android.system.Os.symlink(src.absolutePath, temp.absolutePath)
-            true
-        }.getOrDefault(false)
-        if (!made) {
-            return "ссылки на этой папке запрещены системой (внешний том) — файлы копируются"
-        }
-        // Через ссылку должны быть видны те же файлы, и только потом убираем копию.
-        val same = runCatching {
-            val need = src.list()?.toSet().orEmpty()
-            var got = temp.list()?.toSet().orEmpty()
-            if (got.isEmpty()) {
-                // Some FUSE-free paths need the link to settle; try again.
-                got = temp.list()?.toSet().orEmpty()
-            }
-            need.isNotEmpty() && need == got
-        }.getOrDefault(false)
-        if (!same) {
-            temp.delete()
-            return "ссылка не подтвердилась — оставили копию"
-        }
-        if (wasDirectory) dest.deleteRecursively()
-        if (!temp.renameTo(dest)) {
-            val ok = runCatching { dest.deleteRecursively(); temp.renameTo(dest) }
-                .getOrDefault(false)
-            if (!ok) {
-                temp.delete()
-                return "ссылка создана, но не встала на место"
-            }
-        }
-        return if (isLinkTo(dest, src)) {
-            "общая прошивка Eden: ссылка, копий нет"
-        } else {
-            "ссылка не подтвердилась — оставили копию"
-        }
-    }
-
-    /** В [dest] только копия файлов из [src] — её можно заменить ссылкой. */
-    private fun isPlainCopy(src: File, dest: File): Boolean = runCatching {
-        val have = dest.list()?.toSet().orEmpty()
-        val want = src.list()?.toSet().orEmpty()
-        have.isNotEmpty() && want.containsAll(have)
-    }.getOrDefault(false)
 
     private fun isLink(file: File): Boolean = runCatching {
         android.system.Os.readlink(file.absolutePath)
