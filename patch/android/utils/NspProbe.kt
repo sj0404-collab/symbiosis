@@ -168,38 +168,47 @@ object NspProbe {
             bytes.readAt(0x10L + count.toLong() * PFS0_ENTRY, stringTableSize)
         }.getOrDefault(ByteArray(0))
 
+        // Смещения в таблице PFS0 ОТНОСИТЕЛЬНЫЕ: они считаются от начала
+        // области данных, а не от начала файла. Именно на этом я и ошибся в
+        // сборке §49 — читал «по смещению части» от нуля файла, попадал в
+        // случайные байты и объявлял собранным неверно каждый живой файл:
+        // у Blade Chimera вышло «Yj», у DLC «Б5», у Vault of Power «C».
+        val dataStart = 0x10L + count.toLong() * PFS0_ENTRY + stringTableSize
+
         var compressed = false
         var hasTicket = false
         var titleId = ""
         var fromName = ""
-        var firstOffset = -1L
         var firstMagic = ""
 
         for (i in 0 until count) {
             val base = i * PFS0_ENTRY
             val offset = u64(table, base)
             val size = u64(table, base + 8)
+            // u64 отдаёт -1, если поля не дочитались: тогда и смещение, и
+            // размер бессмысленны, и читать по ним нельзя.
+            if (offset < 0 || size < 0) continue
             val nameOffset = u32(table, base + 0x10)
             val name = cString(names, nameOffset)
-            if (firstOffset < 0) {
-                firstOffset = offset
-                // Первая часть — то, что ядро откроет первым. Если по
-                // смещению 0x200 там «NCZS», распаковка не состоялась, и
-                // называть файл целым нельзя.
-                val magic = runCatching { bytes.readAt(offset + 0x200L, 4) }
+            if (name.endsWith(".ncz", ignoreCase = true)) compressed = true
+            // Части проверяем у ПЕРВОГО NCA, а не у первой записи: в
+            // контейнере первыми обычно идут .cert, .tik и .xml, и метка NCA
+            // стоит не в них.
+            if (firstMagic.isEmpty() && name.endsWith(".nca", ignoreCase = true)) {
+                val magic = runCatching { bytes.readAt(dataStart + offset + 0x200L, 4) }
                     .getOrDefault(ByteArray(0))
                 // Только печатное: нули в заголовке иначе выглядели бы как
                 // «метка есть», и файл объявлялся бы собранным неверно.
                 firstMagic = ascii(magic, 0, 4).filter { it.code in 32..126 }
             }
-            if (name.endsWith(".ncz", ignoreCase = true)) compressed = true
             if (name.endsWith(".tik", ignoreCase = true)) {
                 hasTicket = true
                 if (titleId.isEmpty() && size >= TICKET_RIGHTS_ID + TICKET_RIGHTS_LEN) {
                     // Rights ID билета — это и есть идентификатор игры. Лежит
                     // открытым текстом: расшифровывать его не нужно.
-                    val rights = runCatching { bytes.readAt(offset + TICKET_RIGHTS_ID, TICKET_RIGHTS_LEN) }
-                        .getOrDefault(ByteArray(0))
+                    val rights = runCatching {
+                        bytes.readAt(dataStart + offset + TICKET_RIGHTS_ID, TICKET_RIGHTS_LEN)
+                    }.getOrDefault(ByteArray(0))
                     // Rights ID — 16 байт: первые восемь и есть идентификатор
                     // игры, остальные восемь нулевые. В текст идёт только он,
                     // иначе получится 32 символа вместо 16.
@@ -228,7 +237,7 @@ object NspProbe {
             if (fromFileName != null && TitleKeys.isPlausible(fromFileName)) titleId = fromFileName
         }
 
-        if (count > 0 && firstOffset == 0L && names.isEmpty()) {
+        if (count > 0 && names.isEmpty()) {
             return empty(Container.UNKNOWN, "файл обрезан сразу после заголовка", "truncated")
         }
 

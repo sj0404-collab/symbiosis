@@ -58,7 +58,10 @@ private fun buildPfs0(files: List<File>): ByteArray {
     var dataOffset = 0
     files.forEachIndexed { i, f ->
         val base = 0x10 + i * 0x18
-        System.arraycopy(le64((headerSize + dataOffset).toLong()), 0, out, base, 8)
+        // Смещение относительное — от начала области данных, как в живом
+        // PFS0. Абсолютное здесь дало бы файл, которого не бывает: именно на
+        // этом тест и не поймал ошибку §49, где «не NCA» ставилось всем.
+        System.arraycopy(le64(dataOffset.toLong()), 0, out, base, 8)
         System.arraycopy(le64(f.data.size.toLong()), 0, out, base + 8, 8)
         System.arraycopy(le32(nameOffset), 0, out, base + 0x10, 4)
         System.arraycopy(f.data, 0, out, headerSize + dataOffset, f.data.size)
@@ -112,6 +115,22 @@ fun main() {
         )
     )
     val rGood = NspProbe.probe(bytesOf(good), "game.nsp")
+    // Порядок записей как в живом дампе: сертификат, билет, потом части.
+    // Проверка «первая запись — NCA» на таком файле врала.
+    val liveOrder = buildPfs0(
+        listOf(
+            File("cert.cert", ByteArray(0x300)),
+            File("t.tik", ticket(tnmt)),
+            File("abc.nca", ByteArray(0x400).also {
+                System.arraycopy("NCA3".toByteArray(), 0, it, 0x200, 4)
+            }),
+            File("abc.cnmt.nca", ByteArray(0x300)),
+        )
+    )
+    val rLive = NspProbe.probe(bytesOf(liveOrder), "live.nsp")
+    check("живой порядок записей не считается ошибкой", rLive.problem.isEmpty(), rLive.problem)
+    check("и вердикт не отправляет за ключами наугад",
+        !rLive.problem.contains("не NCA"), rLive.problem)
     eq("обычный NSP распознан", rGood.container, NspProbe.Container.NSP)
     eq("идентификатор взят из билета", rGood.titleId, tnmt)
     eq("это игра, а не обновление", rGood.part, NspProbe.Part.GAME)

@@ -139,7 +139,11 @@ object KenjiBridge {
         if (chosen != null && runCatching { chosen.isDirectory || chosen.mkdirs() }.getOrDefault(false)) {
             return chosen
         }
-        return File(context.getExternalFilesDir(null), "kenji")
+        // Приватная папка приложения, а не внешняя: на внешнем томе (FUSE)
+        // ссылки запрещены, и прошивку Eden пришлось бы копировать вторым
+        // комплектом — триста с лишним мегабайт. В приватной папке ссылка
+        // работает, и прошивка у двух ядер одна.
+        return File(context.filesDir, "kenji")
     }
 
     /** Выбранная человеком папка данных, если она задана и доступна. */
@@ -441,6 +445,30 @@ object KenjiBridge {
      */
     fun seedFirmware(context: Context): String {
         val coreRoot = dataDir(context)
+        val root = runCatching { DirectoryInitialization.userDirectory }.getOrNull()
+            ?: return "данные Eden неизвестны — прошивку не отдать"
+        val src = File(File(File(File(root, "nand"), "system"), "Contents"), "registered")
+        if (!src.isDirectory) return "в Eden нет прошивки — второе ядро останется без неё"
+
+        // СНАЧАЛА ССЫЛКА, А НЕ КОПИЯ.
+        //
+        // Прошивка — это триста с лишним мегабайт, одни и те же файлы NCA у
+        // обоих ядер. 06.11 человек сказал прямо: не дублировать, а
+        // использовать прошивку Eden через ярлык. Ссылка даёт ровно это:
+        // папка у ядра своя, а файлы внутри — те же самые, байт в байт, и
+        // обновление прошивки в Eden сразу видно второму ядру.
+        //
+        // На /storage/emulated (FUSE) ссылки запрещены, поэтому папка данных
+        // ядра по умолчанию — приватная, где они работают. Если человек выбрал
+        // внешнюю папку, честно говорим, что система не даёт, и остаётся
+        // копия — но и её делаем один раз и только недостающих файлов.
+        val dest = KenjiData.firmwareDir(coreRoot)
+        bridgeReport = linkFirmware(src, dest)
+        if (bridgeReport.startsWith("общая")) {
+            freedBytes = freeOldCopies(context, coreRoot)
+            return bridgeReport
+        }
+
         // Главное: если прошивка уже лежит в папке данных ядра — её не трогаем.
         // Ровно это и значит «без переноса»: папка выбрана, файлы на месте.
         val have0 = KenjiData.firmwareCount(coreRoot)
@@ -448,14 +476,9 @@ object KenjiBridge {
             return "прошивка уже в папке ядра: $have0 файлов — переноса нет"
         }
 
-        val root = runCatching { DirectoryInitialization.userDirectory }.getOrNull()
-            ?: return "данные Eden неизвестны — прошивку не перенести"
-        val src = File(File(File(File(root, "nand"), "system"), "Contents"), "registered")
-        if (!src.isDirectory) return "в Eden нет прошивки — второе ядро останется без неё"
         val files = runCatching { src.listFiles()?.filter { it.isFile } }.getOrNull().orEmpty()
         if (files.isEmpty()) return "каталог прошивки Eden пуст"
 
-        val dest = KenjiData.firmwareDir(coreRoot)
         if (!dest.isDirectory && !dest.mkdirs()) {
             return "не удалось создать каталог прошивки второго ядра"
         }
@@ -482,7 +505,121 @@ object KenjiBridge {
             }
         }
         runCatching { marker.writeText(fingerprint) }
-        return "прошивка Eden перенесена: $copied файлов, уже было $kept, всего ${files.size}"
+        return "прошивка Eden перенесена: $copied файлов, уже было $kept, всего ${files.size}" +
+            (if (bridgeReport.isNotEmpty()) " · $bridgeReport" else "")
+    }
+
+    /** Что вышло со ссылкой на прошивку: для отчёта. */
+    @Volatile
+    var bridgeReport: String = ""
+        private set
+
+    /** Сколько байт освободили, убрав старую копию прошивки. */
+    @Volatile
+    var freedBytes: Long = 0L
+        private set
+
+    /**
+     * Отдать ядру папку прошивки Eden ссылкой.
+     *
+     * Ссылку делает только приложение (у него есть права на свою папку), и
+     * только если файловая система это умеет: на FUSE ссылки запрещены.
+     *
+     * @return фраза для отчёта; начинается с «общая», если ссылка удалась
+     */
+    private fun linkFirmware(src: File, dest: File): String {
+        val parent = dest.parentFile
+        if (parent == null || !(parent.isDirectory || parent.mkdirs())) {
+            return "не удалось создать каталог прошивки второго ядра"
+        }
+        val linked = isLink(dest)
+        val sameTarget = linked && isLinkTo(dest, src)
+        val copy = dest.isDirectory && !linked && isPlainCopy(src, dest)
+        // «Разрешены ли ссылки» выясняется попыткой; до неё считаем, что да.
+        when (KenjiData.sharePlan(linked, sameTarget, copy, true)) {
+            KenjiData.Share.ALREADY_LINKED -> return "общая прошивка Eden: ссылка уже стоит"
+            KenjiData.Share.KEEP_OWN ->
+                // В папке ядра есть файлы, которых нет в Eden: удалять её
+                // нельзя, иначе человек потеряет то, что у него было.
+                return "в папке ядра своя прошивка — оставили как есть"
+            else -> Unit
+        }
+        // Старая ссылка на другую папку — убираем, она всё равно мешает.
+        if (linked) dest.delete()
+        val wasDirectory = dest.isDirectory
+
+        val temp = File(parent, "registered.symbiosis-link")
+        if (isLink(temp)) temp.delete()
+        val made = runCatching {
+            android.system.Os.symlink(src.absolutePath, temp.absolutePath)
+            true
+        }.getOrDefault(false)
+        if (!made) {
+            return "ссылки на этой папке запрещены системой (внешний том) — файлы копируются"
+        }
+        // Через ссылку должны быть видны те же файлы, и только потом убираем копию.
+        val same = runCatching {
+            val need = src.list()?.toSet().orEmpty()
+            var got = temp.list()?.toSet().orEmpty()
+            if (got.isEmpty()) {
+                // Some FUSE-free paths need the link to settle; try again.
+                got = temp.list()?.toSet().orEmpty()
+            }
+            need.isNotEmpty() && need == got
+        }.getOrDefault(false)
+        if (!same) {
+            temp.delete()
+            return "ссылка не подтвердилась — оставили копию"
+        }
+        if (wasDirectory) dest.deleteRecursively()
+        if (!temp.renameTo(dest)) {
+            val ok = runCatching { dest.deleteRecursively(); temp.renameTo(dest) }
+                .getOrDefault(false)
+            if (!ok) {
+                temp.delete()
+                return "ссылка создана, но не встала на место"
+            }
+        }
+        return if (isLinkTo(dest, src)) {
+            "общая прошивка Eden: ссылка, копий нет"
+        } else {
+            "ссылка не подтвердилась — оставили копию"
+        }
+    }
+
+    /** В [dest] только копия файлов из [src] — её можно заменить ссылкой. */
+    private fun isPlainCopy(src: File, dest: File): Boolean = runCatching {
+        val have = dest.list()?.toSet().orEmpty()
+        val want = src.list()?.toSet().orEmpty()
+        have.isNotEmpty() && want.containsAll(have)
+    }.getOrDefault(false)
+
+    private fun isLink(file: File): Boolean = runCatching {
+        android.system.Os.readlink(file.absolutePath)
+        true
+    }.getOrDefault(false)
+
+    private fun isLinkTo(file: File, target: File): Boolean = runCatching {
+        File(android.system.Os.readlink(file.absolutePath)).canonicalPath == target.canonicalPath
+    }.getOrDefault(false)
+
+    /**
+     * Убрать старую копию прошивки, если она осталась от прежних сборок.
+     *
+     * Копия — это те же файлы, что уже видны через ссылку, и держать их
+     * вторым комплектом на телефоне нет причины. Удаляем только каталог
+     * `registered` в папке данных ядра по умолчанию: чужие папки не трогаем.
+     */
+    private fun freeOldCopies(context: Context, activeRoot: File): Long {
+        val legacy = File(context.getExternalFilesDir(null), "kenji")
+        if (legacy.canonicalPath == activeRoot.canonicalPath) return 0L
+        val old = KenjiData.firmwareDir(legacy)
+        if (!old.isDirectory || isLink(old)) return 0L
+        val size = runCatching {
+            old.listFiles()?.filter { it.isFile }?.sumOf { it.length() } ?: 0L
+        }.getOrDefault(0L)
+        val removed = runCatching { old.deleteRecursively() }.getOrDefault(false)
+        return if (removed) size else 0L
     }
 
     /**
@@ -542,9 +679,22 @@ object KenjiBridge {
             fwFiles > 0 -> "прошивка: $fwFiles файлов, версию ядро не назвало"
             else -> "прошивки нет — укажите папку с прошивкой в «Ядра»"
         }
+        // Как прошивка досталась второму ядру: ссылкой на папку Eden (копий
+        // нет) или копией. Раньше об этом молчали, и человек видел в
+        // хранилище второй комплект на триста с лишним мегабайт.
+        val fwShare = buildString {
+            if (bridgeReport.isNotEmpty()) append(bridgeReport)
+            if (freedBytes > 0) {
+                if (isNotEmpty()) append(", ")
+                append("старая копия убрана: ")
+                append(freedBytes / (1024 * 1024))
+                append(" МБ свободно")
+            }
+        }
         return Status(
             true,
-            "плеер второго ядра готов · " + lastConfig + " · " + fwText + " · " + firmware +
+            "плеер второго ядра готов · " + lastConfig + " · " + fwText +
+                (if (fwShare.isNotEmpty()) " · " + fwShare else "") + " · " + firmware +
                 " · " + profile,
             started.symbols
         )

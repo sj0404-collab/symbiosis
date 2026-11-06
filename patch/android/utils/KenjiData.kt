@@ -75,6 +75,42 @@ object KenjiData {
         return current
     }
 
+    /** Как отдать второму ядру прошивку Eden, не копируя её. */
+    enum class Share {
+        /** Ссылка уже стоит на нужную папку — делать нечего. */
+        ALREADY_LINKED,
+
+        /** В папке ядра лежит ровно копия прошивки Eden — её можно заменить ссылкой. */
+        REPLACE_COPY,
+
+        /** В папке ядра своя прошивка, которой нет в Eden — не трогать. */
+        KEEP_OWN,
+
+        /** Ссылку сделать нельзя (внешний том) — остаётся копия. */
+        COPY_ONLY
+    }
+
+    /**
+     * Решение о прошивке — чистой функцией, чтобы правила проверялись без
+     * телефона и без вызова `Os.symlink`.
+     *
+     * @param linked        в папке ядра уже ссылка
+     * @param sameTarget    и она указывает именно на папку прошивки Eden
+     * @param plainCopy     файлы в папке ядра — это копия файлов Eden
+     * @param linkPossible  система разрешает ссылки в этой папке
+     */
+    fun sharePlan(
+        linked: Boolean,
+        sameTarget: Boolean,
+        plainCopy: Boolean,
+        linkPossible: Boolean
+    ): Share = when {
+        linked && sameTarget -> Share.ALREADY_LINKED
+        !linkPossible -> Share.COPY_ONLY
+        plainCopy -> Share.REPLACE_COPY
+        else -> Share.KEEP_OWN
+    }
+
     /** Прошивка: `<корень>/bis/system/Contents/registered`. */
     fun firmwareDir(root: File): File =
         File(File(File(File(root, "bis"), "system"), "Contents"), "registered")

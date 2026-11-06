@@ -221,6 +221,8 @@ if command -v kotlinc >/dev/null 2>&1; then
         $HERE/patch/android/utils/ExtraKeys.kt" ;;
       # Ключ игры — не то же, что 204 ключа консоли. Проверяем, что его
       # наличие определяется по файлам, а не по «keys present: true».
+      # Прошивка у двух ядер одна: ссылка вместо второй копии на 300 МБ.
+      KenjiFirmwareShareTest) echo "$HERE/patch/android/utils/KenjiData.kt" ;;
       TitleKeysTest) echo "$HERE/patch/android/utils/TitleKeys.kt \
         $HERE/patch/android/utils/ExtraKeys.kt" ;;
       # Дополнительные ключи: какая строка — ключ игры, что дописывать в
