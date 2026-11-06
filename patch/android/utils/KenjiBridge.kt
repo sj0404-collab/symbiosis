@@ -136,8 +136,22 @@ object KenjiBridge {
     fun dataDir(context: Context): File {
         val chosen = runCatching { dataPrefs(context).getString(KEY_DATA_ROOT, null) }
             .getOrNull()?.takeIf { it.isNotBlank() }?.let { File(it) }
-        if (chosen != null && runCatching { chosen.isDirectory || chosen.mkdirs() }.getOrDefault(false)) {
-            return chosen
+        if (chosen != null) {
+            // Привести к корню и проверить, что это вообще корень: в настройках
+            // мог остаться путь к папке прошивки от прежней версии, и тогда
+            // ядро заводило дерево внутри дерева. На телефоне в отчёте так и
+            // вышло — «папка данных: …/Eden/bis/system/Contents/registered».
+            val root = runCatching { KenjiData.normalizeRoot(chosen) }.getOrDefault(chosen)
+            val eden = runCatching { DirectoryInitialization.userDirectory }.getOrNull()
+                ?.let { File(it) }
+            if (KenjiData.usableRoot(root, eden) &&
+                runCatching { root.isDirectory || root.mkdirs() }.getOrDefault(false)
+            ) {
+                return root
+            }
+            // Неподходящий путь забываем, чтобы не возвращаться к нему каждый
+            // запуск: дальше — приватная папка, где ссылка на прошивку работает.
+            dataPrefs(context).edit().remove(KEY_DATA_ROOT).apply()
         }
         // Приватная папка приложения, а не внешняя: на внешнем томе (FUSE)
         // ссылки запрещены, и прошивку Eden пришлось бы копировать вторым

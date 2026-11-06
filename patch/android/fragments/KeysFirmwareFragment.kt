@@ -195,12 +195,17 @@ class KeysFirmwareFragment : Fragment() {
                 runCatching {
                     val dir = keysDir ?: return@runCatching Installed(-1, 0)
                     dir.mkdirs()
-                    val text = YuzuApplication.appContext.contentResolver
-                        .openInputStream(uri)?.use { it.readBytes().toString(Charsets.UTF_8) }
-                        .orEmpty()
-                    val lines = text.lineSequence().map { it.trim() }
-                        .filter { ExtraKeys.isTitleLine(it) }.toList()
-                    if (lines.isEmpty()) return@runCatching Installed(-2, 0)
+                    val bytes = YuzuApplication.appContext.contentResolver
+                        .openInputStream(uri)?.use { it.readBytes() } ?: ByteArray(0)
+                    // Кодировку разбираем сами: `title.keys` бывает в UTF-16
+                    // и с BOM, и прочитать его как UTF-8 — значит увидеть
+                    // нули между буквами и решить, что файл пустой.
+                    val text = TitleKeys.decode(bytes)
+                    val lines = TitleKeys.keyLines(text)
+                    // Ничего не разобрали — показываем, что именно лежит в
+                    // файле, а не «нет строк». Иначе человек ищет ошибку в
+                    // ключах, которых у него в порядке.
+                    if (lines.isEmpty()) return@runCatching Installed(-2, 0, 0, text)
                     // Складываем как дополнительный файл: ядро всё равно
                     // читает только title.keys, а сведение делает ExtraKeys.
                     val store = File(dir, "title-keys-${System.currentTimeMillis()}.txt")
@@ -215,7 +220,17 @@ class KeysFirmwareFragment : Fragment() {
             }
             val message = when {
                 outcome.code == -1 -> getString(R.string.keys_install_failed)
-                outcome.code == -2 -> "в файле нет строк вида «0100… = 32hex»"
+                outcome.code == -2 -> {
+                    val survey = TitleKeys.survey(outcome.sample.lineSequence().toList())
+                    when {
+                        survey.withSeparator == 0 ->
+                            "в файле нет ключей игр: ни одной строки с «=» или «:»"
+                        survey.rejected.isNotEmpty() ->
+                            "в файле " + survey.withSeparator + " строк с «=», но ни одна не похожа " +
+                                "на ключ игры. Первая: " + survey.rejected.first()
+                        else -> "в файле нет ключей игр"
+                    }
+                }
                 outcome.added > 0 -> "ключей игр добавлено: ${outcome.added}"
                 else -> "новых ключей нет: эти уже установлены"
             }
@@ -224,7 +239,14 @@ class KeysFirmwareFragment : Fragment() {
         }
     }
 
-    private data class Installed(val code: Int, val added: Int)
+    private data class Installed(
+        val code: Int,
+        val added: Int,
+        /** Сколько строк с «=» было в файле — для честного отказа. */
+        val seen: Int = 0,
+        /** Начало файла без значений ключей: только для объяснения. */
+        val sample: String = ""
+    )
 
     /**
      * Вписать один ключ игры руками.
@@ -406,8 +428,20 @@ class KeysFirmwareFragment : Fragment() {
             sb.append("\nвторое ядро (Kenji)\n")
             sb.append("  папка данных: ").append(root.absolutePath).append('\n')
             sb.append("  prod.keys: ")
-                .append(if (KenjiData.hasKeys(KenjiData.normalizeRoot(root))) "есть" else "нет")
+                .append(if (KenjiData.hasKeys(root)) "есть" else "нет")
                 .append('\n')
+            // Прошивка: ссылка на папку Eden или копия — это разные ответы, и
+            // раньше здесь молчали, а в хранилище лежал второй комплект.
+            val fw = KenjiData.firmwareDir(root)
+            val linked = runCatching { android.system.Os.readlink(fw.absolutePath) }.getOrNull()
+            sb.append("  прошивка: ")
+            when {
+                linked != null -> sb.append("ссылка на ").append(linked)
+                KenjiData.hasFirmware(root) ->
+                    sb.append("копия, ").append(KenjiData.firmwareCount(root)).append(" файлов")
+                else -> sb.append("нет")
+            }
+            sb.append('\n')
             sb.append("  передать заново: «Перезагрузить ключи»\n")
         }
 

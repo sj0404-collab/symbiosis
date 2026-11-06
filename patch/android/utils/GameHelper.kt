@@ -507,10 +507,20 @@ object GameHelper {
                     // «игра не открывается» про файл, который игрой не
                     // является. Роль известна уже из имени и идентификатора
                     // (хвост 800 и выше), так что молчать об этом нельзя.
-                    val role = when {
-                        entry.kind == LibraryIndex.Kind.DLC -> "дополнение"
-                        entry.kind == LibraryIndex.Kind.UPDATE -> "обновление"
-                        else -> ""
+                    // Роль берём из идентификатора внутри контейнера, а имя
+                    // файла — только запасной источник. 06.11 DLC Blade
+                    // Chimera стоял подписанным «обновление»: в имени был
+                    // тег версии, а настоящая роль видна в хвосте
+                    // идентификатора.
+                    val role = when (probe?.part ?: NspProbe.Part.UNKNOWN) {
+                        NspProbe.Part.DLC -> "дополнение"
+                        NspProbe.Part.UPDATE -> "обновление"
+                        NspProbe.Part.GAME -> ""
+                        NspProbe.Part.UNKNOWN -> when (entry.kind) {
+                            LibraryIndex.Kind.DLC -> "дополнение"
+                            LibraryIndex.Kind.UPDATE -> "обновление"
+                            else -> ""
+                        }
                     }
                     // Роль важнее пометки о ключе: «дополнение» — это про то,
                     // что за файл, а не про то, что с ним не так.

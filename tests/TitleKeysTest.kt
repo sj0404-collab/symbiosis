@@ -118,6 +118,56 @@ fun main() {
         "01007fc01cf4e000 = 99999999999999999999999999999999")
     eq("и не добавляет вторую строку", TitleKeys.ids(replaced).size, 2)
 
+    // ── настоящий title.keys: другой разделитель, BOM, UTF-16 ───────────
+    // На телефоне 06.11 в title.keys было 6 записей, а приложение сказало
+    // «ключей игр нет: ни одной строки вида «0100… = 32hex»». Файл был не
+    // виноват — разбор понимал только «=» и только UTF-8.
+    val colon = listOf("01004f302847e000 : 22222222222222222222222222222222")
+    eq("двоеточие как разделитель", TitleKeys.ids(colon).size, 1)
+    val spaces = listOf("0100FE701475A000\t=   33333333333333333333333333333333")
+    check("табуляция и регистр не мешают", TitleKeys.ids(spaces).contains("0100fe701475a000"))
+    eq("BOM в начале файла не мешает",
+        TitleKeys.ids(listOf("\uFEFF01004f302847e000 = 22222222222222222222222222222222")).size, 1)
+
+    val utf16 = TitleKeys.decode(
+        "\uFEFF01004f302847e000 = 22222222222222222222222222222222\r\n"
+            .toByteArray(Charsets.UTF_16LE)
+    )
+    eq("UTF-16 прочитан", TitleKeys.ids(utf16.lines()).size, 1)
+    val utf16NoBom = TitleKeys.decode(
+        "0100fe701475a000 = 33333333333333333333333333333333\r\n".toByteArray(Charsets.UTF_16LE)
+    )
+    eq("UTF-16 без BOM прочитан", TitleKeys.ids(utf16NoBom.lines()).size, 1)
+
+    // Отчёт обязан объяснить, что не так, а не отписаться «нет строк».
+    val bad = listOf(
+        "01004f302847e000 = 00112233",                     // ключ короткий
+        "заметка = значение",                               // слева не идентификатор
+        "0011223344556677 = 22222222222222222222222222222222", // идентификатор не игры
+    )
+    val survey = TitleKeys.survey(bad)
+    eq("принятых нет", survey.ids.size, 0)
+    eq("строк с разделителем три", survey.withSeparator, 3)
+    eq("все три объяснены", survey.rejected.size, 3)
+    check("короткий ключ назван", survey.rejected.any { it.contains("32") }, survey.rejected.toString())
+    check("левая часть названа", survey.rejected.any { it.contains("16 hex") }, survey.rejected.toString())
+
+    val text = TitleKeys.report(bad)
+    check("отчёт не врёт про «нет строк»", !text.contains("ни одного файла"), text)
+    check("отчёт показывает счёт строк", text.contains("3"), text)
+
+    // ── установка файла: приводим к «id = key», мусор не тащим ──────────
+    val file = TitleKeys.keyLines(
+        "# комментарий\r\n" +
+            "01004F302847E000:22222222222222222222222222222222\r\n" +
+            "0100fe701475a000 = 00112233445566778899AABBCCDDEEFF\r\n" +
+            "ffffffffffffffff = 11111111111111111111111111111111\r\n"
+    )
+    eq("из файла взяты две настоящие строки", file.size, 2)
+    check("вид приведён к «id = key»",
+        file.contains("01004f302847e000 = 22222222222222222222222222222222"), file.toString())
+    check("FF-строка отброшена", file.none { it.startsWith("ffff") }, file.toString())
+
     dir.deleteRecursively()
 
     println()

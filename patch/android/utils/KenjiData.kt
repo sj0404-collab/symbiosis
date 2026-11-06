@@ -111,6 +111,40 @@ object KenjiData {
         else -> Share.KEEP_OWN
     }
 
+    /**
+     * Годится ли папка в корень данных ядра.
+     *
+     * ЧТО БЫЛО НЕ ТАК. На телефоне в отчёте стояло:
+     * `папка данных: …/Eden/bis/system/Contents/registered` — то есть корнем
+     * данных ядра оказалась сама папка прошивки. Ядро завело бы внутри неё
+     * `bis/`, `system/` и `Games/` — то есть прошивку внутри прошивки, а
+     * ссылка на прошивку Eden вообще не туда.
+     *
+     * Такое получается двумя путями: человек выбрал папку с прошивкой (это
+     * законно, но приводить надо к корню), либо в настройках остался путь от
+     * прежней версии. Поэтому корень проверяется перед использованием, а
+     * неподходящий отбрасывается в пользу приватной папки.
+     *
+     * @param edenRoot данные Eden: `<user>/nand`, `<user>/keys` и т.д.
+     */
+    fun usableRoot(root: File, edenRoot: File?): Boolean {
+        val name = root.name.lowercase()
+        // Внутри самого дерева прошивки или ключей корнем быть нельзя.
+        if (name == "registered" || name == "contents" || name == "bis") return false
+        if (edenRoot != null) {
+            val path = runCatching { root.canonicalPath }.getOrDefault(root.absolutePath)
+            val eden = runCatching { edenRoot.canonicalPath }.getOrDefault(edenRoot.absolutePath)
+            // Ровно папка nand/system/Contents/registered или keys — не корень.
+            if (path.startsWith(File(eden, "nand").absolutePath) &&
+                root.name.lowercase() != "nand"
+            ) {
+                return false
+            }
+            if (path == File(eden, "keys").absolutePath) return false
+        }
+        return true
+    }
+
     /** Прошивка: `<корень>/bis/system/Contents/registered`. */
     fun firmwareDir(root: File): File =
         File(File(File(File(root, "bis"), "system"), "Contents"), "registered")

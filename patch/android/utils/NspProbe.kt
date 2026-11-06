@@ -191,6 +191,8 @@ object NspProbe {
         var titleId = ""
         var fromName = ""
         var firstMagic = ""
+        // true — смещения относительные (как в формате), false — абсолютные.
+        var relativeToData = true
 
         for (i in 0 until count) {
             val base = i * PFS0_ENTRY
@@ -206,19 +208,35 @@ object NspProbe {
             // контейнере первыми обычно идут .cert, .tik и .xml, и метка NCA
             // стоит не в них.
             if (firstMagic.isEmpty() && name.endsWith(".nca", ignoreCase = true)) {
-                val magic = runCatching { bytes.readAt(dataStart + offset + 0x200L, 4) }
-                    .getOrDefault(ByteArray(0))
-                // Только печатное: нули в заголовке иначе выглядели бы как
-                // «метка есть», и файл объявлялся бы собранным неверно.
-                firstMagic = ascii(magic, 0, 4).filter { it.code in 32..126 }
+                // Два кандидата: смещение относительное (как в формате) и
+                // абсолютное (так пишут некоторые конвертеры — и такие файлы
+                // ядро открывает, потому что читает таблицу по-своему).
+                //
+                // Обвинять файл разрешено только когда НИ ОДИН вариант не
+                // дал метку NCA: 06.11 «собран неверно» стояло на живых
+                // файлах дважды, и оба раза это была моя ошибка чтения.
+                val candidates = listOf(dataStart + offset, offset).distinct()
+                for (candidate in candidates) {
+                    val magic = runCatching { bytes.readAt(candidate + 0x200L, 4) }
+                        .getOrDefault(ByteArray(0))
+                    val text = ascii(magic, 0, 4).filter { it.code in 32..126 }
+                    if (text.startsWith("NCA") || text == "NCZS") {
+                        firstMagic = text
+                        if (candidate == offset) relativeToData = false
+                        break
+                    }
+                    // Не подошло — запоминаем для объяснения, но не приговор.
+                    if (firstMagic.isEmpty()) firstMagic = "?" + text
+                }
             }
             if (name.endsWith(".tik", ignoreCase = true)) {
                 hasTicket = true
                 if (titleId.isEmpty() && size >= TICKET_RIGHTS_ID + TICKET_RIGHTS_LEN) {
                     // Rights ID билета — это и есть идентификатор игры. Лежит
                     // открытым текстом: расшифровывать его не нужно.
+                    val ticketBase = if (relativeToData) dataStart + offset else offset
                     val rights = runCatching {
-                        bytes.readAt(dataStart + offset + TICKET_RIGHTS_ID, TICKET_RIGHTS_LEN)
+                        bytes.readAt(ticketBase + TICKET_RIGHTS_ID, TICKET_RIGHTS_LEN)
                     }.getOrDefault(ByteArray(0))
                     // Rights ID — 16 байт: первые восемь и есть идентификатор
                     // игры, остальные восемь нулевые. В текст идёт только он,
@@ -260,8 +278,6 @@ object NspProbe {
                 "внутри контейнер NSP, а расширение «.xci»: ядро выбирает загрузчик по расширению"
             firstMagic == "NCZS" ->
                 "части внутри всё ещё сжаты (NCZS): распаковка не состоялась"
-            firstMagic.isNotEmpty() && !firstMagic.startsWith("NCA") ->
-                "по смещению части лежит не NCA («$firstMagic»): контейнер собран неверно"
             !hasTicket && titleId.isEmpty() ->
                 "в образе нет билета (.tik): нужен ключ этой игры в title.keys"
             else -> ""
@@ -270,7 +286,6 @@ object NspProbe {
             compressed || ext == "nsz" -> "compressed"
             ext == "xci" -> "ext-mismatch"
             firstMagic == "NCZS" -> "compressed"
-            firstMagic.isNotEmpty() && !firstMagic.startsWith("NCA") -> "not-nca"
             !hasTicket && titleId.isEmpty() -> "no-ticket"
             else -> ""
         }
@@ -317,7 +332,7 @@ object NspProbe {
         result.fault == "header" -> "заголовок битый"
         result.fault == "ext-mismatch" -> "другой формат"
         result.fault == "not-image" -> "не образ"
-        result.fault == "not-nca" -> "собран неверно"
+        result.fault == "not-nca" -> "не разобран"
         // Пометки «файл в порядке» больше нет: целый контейнер — это ещё не
         // рабочая игра. 06.11 такое «в порядке» стояло на игре, которую ядро
         // не открыло из-за отсутствующего ключа.

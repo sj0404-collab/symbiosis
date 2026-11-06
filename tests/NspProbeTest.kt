@@ -230,12 +230,36 @@ fun main() {
     check("недоделанная распаковка названа", rStill.problem.contains("NCZS"), rStill.problem)
     eq("пометка — сжатый", NspProbe.label(rStill, true), "сжатый")
 
-    val garbageEntry = buildPfs0(listOf(File("a.nca", ByteArray(0x210).also {
-        System.arraycopy("XXXX".toByteArray(), 0, it, 0x200, 4)
-    })))
+    // Непонятная метка части — НЕ приговор файлу.
+    //
+    // Дважды за день «собран неверно» стояло на живых файлах, и оба раза это
+    // была ошибка чтения смещения. Поэтому теперь приговор выносится только
+    // тогда, когда точно видно сжатие (NCZS); всё непонятное молчит.
+    val garbageEntry = buildPfs0(
+        listOf(
+            File("a.nca", ByteArray(0x210).also {
+                System.arraycopy("XXXX".toByteArray(), 0, it, 0x200, 4)
+            }),
+            File("t.tik", ticket(tnmt)),
+        )
+    )
     val rGarbage = NspProbe.probe(bytesOf(garbageEntry), "garbage.nsp")
-    check("часть не NCA — сказано прямо", rGarbage.problem.contains("не NCA"), rGarbage.problem)
-    eq("пометка — собран неверно", NspProbe.label(rGarbage, true), "собран неверно")
+    check("непонятная метка не обвиняет файл", rGarbage.problem.isEmpty(), rGarbage.problem)
+
+    // Конвертеры иногда пишут абсолютные смещения — такие файлы ядро
+    // открывает, и обвинять их нельзя.
+    val absolute = buildPfs0(
+        listOf(
+            File("a.nca", ByteArray(0x210).also {
+                System.arraycopy("NCA3".toByteArray(), 0, it, 0x200, 4)
+            }),
+            File("t.tik", ticket(tnmt)),
+        )
+    )
+    val headerSize = 0x10 + 2 * 0x18 + "a.nca".length + 1 + "t.tik".length + 1
+    System.arraycopy(le64(headerSize.toLong()), 0, absolute, 0x10, 8)
+    val rAbsolute = NspProbe.probe(bytesOf(absolute), "absolute.nsp")
+    check("абсолютные смещения тоже читаются", rAbsolute.problem.isEmpty(), rAbsolute.problem)
 
     // ── NSP без билета ──────────────────────────────────────────────────
     val noTicket = buildPfs0(listOf(File("aaa.nca", ByteArray(16))))
