@@ -464,6 +464,19 @@ jobs:
             echo "  ok   отчёт о падении плеера в dex"
           else echo "  MISSING отчёт о падении плеера в dex"; fail=1; fi
 
+          # §48: библиотека больше не отправляет за ключами наугад — она
+          # читает контейнер и называет настоящую причину. Проверяем по dex,
+          # что разбор и новые тексты доехали до сборки.
+          for text in "Это сжатый образ (NSZ)" "внутри образ картриджа (XCI)" \
+                      "второе ядро (Kenji)" "билет внутри есть" "ядро отказало не из-за них"; do
+            if cat classes*.dex | grep -a -q "$text"; then
+              echo "  ok   \"$text\" in dex"
+            else echo "  MISSING \"$text\" in dex"; fail=1; fi
+          done
+          if cat classes*.dex | grep -a -q "NspProbe"; then
+            echo "  ok   NspProbe в dex"
+          else echo "  MISSING NspProbe в dex"; fail=1; fi
+
           # What the 25 MB budget is actually about.
           python3 - "$GITHUB_WORKSPACE/$APK" <<'SIZEPY' | tee -a "$GITHUB_STEP_SUMMARY"
           import sys, zipfile, os

@@ -149,6 +149,21 @@ fun main() {
     eq("диалог: кнопка", button, "Распаковать")
     val keys = NativeLibraryPresenter.explain("unreadable", "Metroid Dread", "ядро не прочитало заголовок")
     check("диалог ключей зовёт prod.keys", keys.second.contains("prod.keys"), keys.second)
+    // Причина из разбора контейнера должна доходить до диалога дословно:
+    // раньше здесь стояла общая фраза про ключи, и она противоречила экрану
+    // ключей, где всё было на месте (05.11).
+    val nsz = NativeLibraryPresenter.explain(
+        "unreadable", "Vault of Power",
+        "Это сжатый образ (NSZ): ядро открывает только распакованные."
+    )
+    check("причина из разбора дошла до диалога", nsz.second.contains("NSZ"), nsz.second)
+    eq("и кнопка стала «Распаковать»", nsz.third, "Распаковать")
+    val known = NativeLibraryPresenter.explain(
+        "unreadable", "Crafty Survivors",
+        "Контейнер читается: игра 0100fe701475a000, частей 4, билет внутри есть."
+    )
+    check("про ключи не выдумывается, когда дело не в них",
+        known.second.contains("0100fe701475a000"), known.second)
     check(
         "ни одного имени класса в текстах",
         listOf(body, keys.second).none { it.contains("Exception") || it.contains(".kt") }
