@@ -3281,3 +3281,15 @@ Vault of Power: причина названа верно (билет без пр
   поле — остаётся вставить ключ.
 
 Строки: `keys_add_title_key` = «Вписать ключ» / «Enter key».
+
+### 55.4. Сборка `42236886037` (коммит `2dbf51d`)
+
+**APK: https://gofile.io/d/OHIVlWjz** — MD5 `f88608c0e58b32e0f447f37f43efb82a`,
+48 392 514 Б, 46.2 МБ.
+
+Все хост-тесты зелёные, в том числе `TitleKeysTest` 56/0, `ExtraKeysTest` 35/0,
+`NspProbeTest` 44/0, `KenjiFirmwareShareTest` 7/0,
+`NativeLibraryPresenterTest` 80/0.
+
+Сверено по собранному APK: «Вписать ключ» — 1, `titleId` — 35,
+«в Eden тоже нет прошивки» — 1, «ссылка на » — 1.
