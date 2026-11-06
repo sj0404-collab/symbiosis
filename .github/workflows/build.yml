@@ -564,6 +564,10 @@ jobs:
         if: success() && (github.ref_name == 'main' || github.ref_name == 'fix/library-sees-all-games')
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Без этого gh ищет локальный git-репозиторий в рабочем каталоге и
+          # падает «fatal: not a git repository» — сборка идёт в подпапке.
+          # С GH_REPO он ходит в API по имени репозитория и git ему не нужен.
+          GH_REPO: ${{ github.repository }}
         run: |
           set -e
           APK=$(find eden -name "*legacy-release.apk" -o -name "*legacy-debug.apk" | head -1)
