@@ -35,7 +35,7 @@ def digest(path):
 
 
 def dex_classes_and_methods(data, wanted):
-    """Read DEX class definitions and method-id signatures, not just string hits."""
+    """Read DEX class definitions and their declared method signatures."""
     assert data.startswith(b'dex\n')
     u32 = lambda off: struct.unpack_from('<I', data, off)[0]
     strings_off = u32(0x3c)
@@ -65,13 +65,50 @@ def dex_classes_and_methods(data, wanted):
                            for i in range(u32(parameters)))
         return '(' + args + ')' + type_name(result)
 
-    defined = {type_name(u32(classes_off + 32 * i)) for i in range(classes_size)} & wanted
-    methods = set()
-    for i in range(methods_size):
-        class_id, proto_id, name_id = struct.unpack_from('<HHI', data, methods_off + 8 * i)
-        cls = type_name(class_id)
-        if cls in defined:
-            methods.add((cls, string(name_id), prototype(proto_id)))
+    def uleb(offset):
+        value, shift = 0, 0
+        while True:
+            byte = data[offset]
+            offset += 1
+            value |= (byte & 0x7f) << shift
+            if not byte & 0x80:
+                return value, offset
+            shift += 7
+            if shift >= 35:
+                raise ValueError('invalid DEX uleb128')
+
+    defined, methods = set(), set()
+    for i in range(classes_size):
+        class_def = classes_off + 32 * i
+        cls = type_name(u32(class_def))
+        if cls not in wanted:
+            continue
+        defined.add(cls)
+        pos = u32(class_def + 24)  # class_data_off
+        if not pos:
+            continue
+        counts = []
+        for _ in range(4):
+            n, pos = uleb(pos)
+            counts.append(n)
+        static_fields, instance_fields, direct_methods, virtual_methods = counts
+        for _ in range(static_fields + instance_fields):
+            _, pos = uleb(pos)  # field_idx_diff
+            _, pos = uleb(pos)  # access_flags
+        for count in (direct_methods, virtual_methods):
+            method_index = 0
+            for _ in range(count):
+                delta, pos = uleb(pos)
+                method_index += delta
+                _, pos = uleb(pos)  # access_flags
+                _, pos = uleb(pos)  # code_off
+                if method_index >= methods_size:
+                    raise ValueError('invalid DEX method index')
+                class_id, proto_id, name_id = struct.unpack_from(
+                    '<HHI', data, methods_off + 8 * method_index)
+                if type_name(class_id) != cls:
+                    raise ValueError('method does not belong to its class')
+                methods.add((cls, string(name_id), prototype(proto_id)))
     return defined, methods
 
 
