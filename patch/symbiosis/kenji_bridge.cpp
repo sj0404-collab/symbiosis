@@ -1899,12 +1899,9 @@ Java_org_yuzu_yuzu_1emu_utils_KenjiBridge_nativeRendererKick(JNIEnv* env, jobjec
 }
 
 /**
- * Ввод — после устройства и после игры.
- *
- * Порядок не наш вкус: `InitializeInput` передаёт `EmulationContext` в
- * менеджеры касаний и геймпадов, и до `deviceInitialize` его просто нет.
- * В официальном приложении это делает GameHost.start, когда игра уже
- * загружена.
+ * Ввод после deviceInitialize и до загрузки игры. Контекст нужен менеджерам
+ * ввода; родственное ядро создаёт его в deviceInitialize. Порядок нужно
+ * проверить с бинарником на устройстве.
  */
 JNIEXPORT jstring JNICALL
 Java_org_yuzu_yuzu_1emu_utils_KenjiBridge_nativeInputInit(JNIEnv* env, jobject, jint width,

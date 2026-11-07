@@ -885,10 +885,9 @@ object KenjiBridge {
     /**
      * Поднять ввод (касания, геймпады).
      *
-     * Строго после [deviceInit] и после загрузки игры: ядро передаёт в
-     * менеджеры ввода `EmulationContext`, а он существует только с этого
-     * момента. Раньше ввод поднимался вместе с поверхностью — и на этом
-     * месте процесс умирал с NullReferenceException.
+     * После [deviceInit]: в родственном ядре он создаёт EmulationContext.
+     * До loadGame, поскольку загрузка может начать исполнение гостя. Раньше
+     * вызов до deviceInit падал; перенос после deviceInit требует проверки на устройстве.
      */
     fun inputInit(width: Int, height: Int): Status {
         ensureBridge()?.let { return Status(false, it) }

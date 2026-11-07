@@ -97,6 +97,7 @@ class KenjiPlayerActivity : Activity(), SurfaceHolder.Callback {
     /** Сколько байт журнала ядра уже прочитано: ищем только новое. */
     private var coreLogOffset = 0L
     private var coreLogPath: String? = null
+    private val hidHistory = java.util.ArrayDeque<String>()
     /** Игра уже встала внутри ядра — второй раз не сообщаем. */
     private var guestFailed = false
     /** Путь игры: по нему основной процесс переведёт её на Eden. */
@@ -228,6 +229,29 @@ class KenjiPlayerActivity : Activity(), SurfaceHolder.Callback {
                 return@Thread
             }
 
+            // Контекст уже создан deviceInit. Ставим ввод и первый Npad до
+            // loadGame: в родственном ядре загрузка уже запускает гостя.
+            // Бинарник может отличаться; порядок требует проверки на телефоне.
+            KenjiBridge.noteStep("5/6 · ввод")
+            KenjiBridge.setWindowHandle(nw)
+            val input = onMainAndWait { KenjiBridge.inputInit(w, h) }
+            if (!input.ok) {
+                runOnUiThread { fail(input.message) }
+                return@Thread
+            }
+
+            // Сначала регистрируем виртуальный контроллер игрока 1, затем
+            // обновляем ввод в отдельном потоке, как делает Android-хост Kenji.
+            // По одному возврату API нельзя доказать, что гость его принял.
+            val padId = KenjiBridge.connectVirtualPad()
+            runCatching { KenjiReport.watch(appContext, "виртуальный контроллер: " +
+                if (padId >= 0) "зарегистрирован, id $padId" else "ядро не подключило") }
+            if (padId < 0) {
+                runOnUiThread { fail("Второе ядро не подключило виртуальный контроллер игрока 1.") }
+                return@Thread
+            }
+            if (!startInputUpdates()) return@Thread
+
             runOnUiThread { status.text = "второе ядро · загружаю игру" }
             KenjiBridge.noteStep("4/6 · игра")
             val load = KenjiBridge.loadGame(fd, KenjiBridge.fileTypeOf(path))
@@ -250,29 +274,6 @@ class KenjiPlayerActivity : Activity(), SurfaceHolder.Callback {
                     else "пользователь ядра: $user"
                 )
             }
-
-            // Ввод — после игры, как в официальном Kenji (GameHost.start):
-            // ядро передаёт EmulationContext в менеджеры ввода, и до
-            // загрузки игры его нет. Окно отдаём тем же вызовом, что и оригинал.
-            KenjiBridge.noteStep("5/6 · ввод")
-            KenjiBridge.setWindowHandle(nw)
-            val input = onMainAndWait { KenjiBridge.inputInit(w, h) }
-            if (!input.ok) {
-                runOnUiThread { fail(input.message) }
-                return@Thread
-            }
-
-            // Сначала регистрируем виртуальный контроллер игрока 1, затем
-            // обновляем ввод в отдельном потоке, как делает Android-хост Kenji.
-            // По одному возврату API нельзя доказать, что гость его принял.
-            val padId = KenjiBridge.connectVirtualPad()
-            runCatching { KenjiReport.watch(appContext, "виртуальный контроллер: " +
-                if (padId >= 0) "зарегистрирован, id $padId" else "ядро не подключило") }
-            if (padId < 0) {
-                runOnUiThread { fail("Второе ядро не подключило виртуальный контроллер игрока 1.") }
-                return@Thread
-            }
-            if (!startInputUpdates()) return@Thread
 
             // Строка настроек рядом со статусом: «ядро запустилось» без них
             // ничего не говорит о том, с чем именно оно запустилось.
@@ -533,6 +534,14 @@ class KenjiPlayerActivity : Activity(), SurfaceHolder.Callback {
             .getOrDefault("")
         val fresh = incremental + "\n" + recent
         if (fresh.isBlank()) return
+        // Сохраняем немного сведений о состоянии контроллера заранее: к моменту
+        // паники их может вытеснить подробный журнал обновлений ввода.
+        KenjiCrash.hidEvidence(fresh).forEach { line ->
+            if (!hidHistory.contains(line)) {
+                if (hidHistory.size >= 8) hidHistory.removeFirst()
+                hidHistory.addLast(line)
+            }
+        }
         // ДВЕ РАЗНЫЕ ОСТАНОВКИ, И РАНЬШЕ МЫ ВИДЕЛИ ТОЛЬКО ОДНУ.
         //
         //  1. Ядро уронило гостевой поток: в журнале
@@ -618,7 +627,8 @@ class KenjiPlayerActivity : Activity(), SurfaceHolder.Callback {
      */
     private fun failOnGuestPanic(appContext: android.content.Context, fresh: String, panic: String) {
         val context = runCatching { KenjiCrash.panicContext(fresh) }.getOrDefault(emptyList())
-        val evidence = runCatching { KenjiCrash.panicEvidence(fresh) }.getOrDefault(emptyList())
+        val evidence = (hidHistory.toList() +
+            runCatching { KenjiCrash.panicEvidence(fresh) }.getOrDefault(emptyList())).distinct()
         evidence.forEach { line ->
             runCatching { KenjiReport.watch(appContext, "строка журнала: " + line.take(200)) }
         }

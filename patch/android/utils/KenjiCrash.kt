@@ -975,11 +975,20 @@ object KenjiCrash {
     fun panicResultHint(text: String): String {
         val evidence = panicEvidence(text)
         if (evidence.any { it.contains("SetTerminateResult") && it.contains("2202-0710") }) {
-            return "Код завершения 2202-0710: контроллер Npad не подключён. " +
-                "Ядро записало этот результат перед остановкой; его связь с другими неполадками ещё нужно проверить."
+            return "Код завершения 2202-0710: ошибка HID NpadNotConnected. " +
+                "Это связано с состоянием ввода, но по одному коду нельзя установить, какого контроллера или ресурса не хватает."
         }
         return ""
     }
+
+    fun hidEvidence(text: String, limit: Int = 8): List<String> = text.lineSequence()
+        .filter { line ->
+            listOf("Configured Controller", "Connected Controller", "Disconnected Controller", "No matching controllers found")
+                .any { line.contains(it, ignoreCase = true) }
+        }
+        .map { it.trim().take(240) }
+        .filter { it.isNotEmpty() }
+        .distinct().toList().takeLast(limit)
 
     /** Диагностические строки рядом с последним SvcBreak, без вывода причин наугад. */
     fun panicEvidence(text: String): List<String> {
@@ -990,12 +999,13 @@ object KenjiCrash {
         // SetTerminateResult не обязательно первопричина: выводим исходную строку.
         val results = window.filter { it.contains("SetTerminateResult", ignoreCase = true) }
             .takeLast(2)
+        val hid = hidEvidence(window.joinToString("\n"), 3)
         val stack = window.filter {
             it.contains("nn::diag::detail::Abort", ignoreCase = true) ||
                 it.contains("main:0x", ignoreCase = true) ||
                 Regex("""^\s*X\[(0|1|2)]\s*:""").containsMatchIn(it)
         }.takeLast(5)
-        return (results + stack).map { it.trim().take(240) }.distinct()
+        return (results + hid + stack).map { it.trim().take(240) }.distinct()
     }
 
     /** Строка журнала, в которой нет причины, а только обычная работа. */

@@ -133,9 +133,14 @@ fun main() {
         |00:00:16.360 |I| {Common} ServiceAm SetTerminateResult: Result = 0x00058cca (2202-0710).
         |00:00:16.500 |E| HLE.GuestThread.28 KernelSvc Break: SvcBreak reason=0x0000000000000000 pid=109 tid=28 pc=0x139553C0
     """.trimMargin()
-    check("результат HID распознан", KenjiCrash.panicResultHint(hidLog).contains("контроллер Npad не подключён"))
+    check("результат HID распознан", KenjiCrash.panicResultHint(hidLog).contains("ошибка HID NpadNotConnected"))
     check("нет выдуманной причины без строки результата", KenjiCrash.panicResultHint("SvcBreak reason=0 2202-0710").isEmpty())
     check("другой результат не подписывается как HID", KenjiCrash.panicResultHint(evidenceLog).isEmpty())
+    val hidState = "00:00:05.100 |I| Hid Configure: Configured Controller ProController to Player1\n" +
+        "00:00:05.200 |W| Hid Remap: No matching controllers found\n" + hidLog
+    val hidEvidence = KenjiCrash.panicEvidence(hidState)
+    check("конфигурация контроллера сохраняется", hidEvidence.any { it.contains("Configured Controller") })
+    check("предупреждение о контроллере сохраняется", hidEvidence.any { it.contains("No matching controllers") })
 
     // ── 5. служба-заглушка: переключатель доходит до ядра ───────────────
     //
