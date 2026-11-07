@@ -24,6 +24,20 @@ class KenjiUiResponseGateTest(unittest.TestCase):
             ], check=True, timeout=30)
             subprocess.run([str(exe)], check=True, timeout=15)
 
+    @unittest.skipUnless(shutil.which('g++'), 'requires a C++ compiler')
+    def test_gate_against_dlopen_mock_then_refuse_after_dlclose(self):
+        with tempfile.TemporaryDirectory() as directory:
+            lib, exe = Path(directory) / 'mock.so', Path(directory) / 'test-dlopen'
+            subprocess.run([
+                'g++', '-std=c++17', '-fPIC', '-shared', '-Wall', '-Wextra', '-Werror',
+                str(ROOT / 'tests/kenji_ui_mock_core.cpp'), '-o', str(lib)
+            ], check=True, timeout=30)
+            subprocess.run([
+                'g++', '-std=c++17', '-pthread', '-Wall', '-Wextra', '-Werror',
+                str(ROOT / 'tests/kenji_ui_mock_core_test.cpp'), '-ldl', '-o', str(exe)
+            ], check=True, timeout=30)
+            subprocess.run([str(exe), str(lib)], check=True, timeout=15)
+
 
 if __name__ == '__main__':
     unittest.main()
