@@ -971,6 +971,23 @@ object KenjiCrash {
         return picked.map { it.trim().take(160) }.filter { it.isNotEmpty() }
     }
 
+    /** Диагностические строки рядом с последним SvcBreak, без вывода причин наугад. */
+    fun panicEvidence(text: String): List<String> {
+        val lines = text.lines()
+        val at = lines.indexOfLast { it.contains("SvcBreak", ignoreCase = true) }
+        if (at < 0) return emptyList()
+        val window = lines.subList((at - 400).coerceAtLeast(0), (at + 81).coerceAtMost(lines.size))
+        // SetTerminateResult не обязательно первопричина: выводим исходную строку.
+        val results = window.filter { it.contains("SetTerminateResult", ignoreCase = true) }
+            .takeLast(2)
+        val stack = window.filter {
+            it.contains("nn::diag::detail::Abort", ignoreCase = true) ||
+                it.contains("main:0x", ignoreCase = true) ||
+                Regex("""^\s*X\[(0|1|2)]\s*:""").containsMatchIn(it)
+        }.takeLast(5)
+        return (results + stack).map { it.trim().take(240) }.distinct()
+    }
+
     /** Строка журнала, в которой нет причины, а только обычная работа. */
     private fun isNoise(line: String): Boolean {
         val text = line.trim()

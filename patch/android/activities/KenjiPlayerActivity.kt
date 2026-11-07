@@ -602,6 +602,10 @@ class KenjiPlayerActivity : Activity(), SurfaceHolder.Callback {
      */
     private fun failOnGuestPanic(appContext: android.content.Context, fresh: String, panic: String) {
         val context = runCatching { KenjiCrash.panicContext(fresh) }.getOrDefault(emptyList())
+        val evidence = runCatching { KenjiCrash.panicEvidence(fresh) }.getOrDefault(emptyList())
+        evidence.forEach { line ->
+            runCatching { KenjiReport.watch(appContext, "строка журнала: " + line.take(200)) }
+        }
         context.forEach { line ->
             runCatching { KenjiReport.watch(appContext, "перед паникой: " + line.take(140)) }
         }
@@ -611,8 +615,10 @@ class KenjiPlayerActivity : Activity(), SurfaceHolder.Callback {
             EngineStore.setCoreFor(appContext, romPath, EngineHybrid.Core.EDEN)
         }.getOrDefault(false)
         Thread({ runCatching { KenjiBridge.stopPlay() } }, "kenji-stop-panic").start()
-        val tail = if (context.isEmpty()) "" else
-            "\n\nПоследние строки журнала:\n" + context.take(4).joinToString("\n")
+        val details = if (evidence.isNotEmpty()) evidence else context.take(4)
+        val tail = if (details.isEmpty()) "" else
+            "\n\nСтроки журнала рядом с остановкой (не обязательно причина):\n" +
+                details.joinToString("\n")
         val next = if (remember) "Запомнил: эта игра теперь запускается на Eden."
         else "Запустите её на Eden — выбор ядра на вкладке «Инструменты»."
         runOnUiThread {

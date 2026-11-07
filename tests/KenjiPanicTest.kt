@@ -115,6 +115,20 @@ fun main() {
     check("не больше девяти строк", withErrorContext.size <= 9, withErrorContext.size.toString())
     check("строки не длиннее 160 знаков", withErrorContext.all { it.length <= 160 })
 
+    val evidenceLog = """
+        |00:00:15.000 |I| HLE.OsThread.11 ServiceAm SetTerminateResult: Result = 0x000002a2 (ResultErrApplicationAborted (2162-0001)).
+        |X[1]: 0x0000000012345678
+        |LR: 0x000000001387e828 (nnSdk:0xab828) => nn::diag::detail::Abort(nn::Result const*):0x0018
+        |0x0000000012340000 (main:0x1234)
+        |00:00:16.300 |E| HLE.GuestThread.28 KernelSvc Break: SvcBreak reason=0x0000000000000000 pid=109 tid=28 pc=0x139553C0
+    """.trimMargin()
+    val evidence = KenjiCrash.panicEvidence(evidenceLog)
+    check("терминальный результат сохранён дословно", evidence.any { it.contains("2162-0001") })
+    check("строка Abort сохранена", evidence.any { it.contains("Abort(nn::Result const*)") })
+    check("кадр main сохранён", evidence.any { it.contains("main:0x1234") })
+    check("регистр сохранён как адрес, не как результат", evidence.any { it.contains("X[1]: 0x0000000012345678") })
+    check("без SvcBreak нет доказательств паники", KenjiCrash.panicEvidence("SetTerminateResult: 0x123").isEmpty())
+
     // ── 5. служба-заглушка: переключатель доходит до ядра ───────────────
     //
     // В Kenji Space это ровно та же настройка (`ignoreMissingServices`), и она
