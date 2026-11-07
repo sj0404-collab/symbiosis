@@ -26,6 +26,10 @@ for lib in symbiosis_kenji kenjinxjni; do
     -llog -ldl -landroid -o "$WORK/apk/lib/arm64-v8a/lib$lib.so"
 done
 "$KOTLINC_HOME/bin/kotlinc" "$ROOT/patch/android/kenjinx/KenjinxNative.kt" \
+  "$ROOT/patch/android/utils/KenjiUiText.kt" \
+  "$ROOT/patch/android/utils/KenjiUiCoordinator.kt" \
+  "$ROOT/patch/android/activities/KenjiUiPresenter.kt" \
+  "$ROOT/tests/android_core_probe/src/dev/symbiosis/coreprobe/UiProbeActivity.kt" \
   -jvm-target 17 -classpath "$ANDROID_JAR" -d "$WORK/classes"
 javac -source 8 -target 8 -bootclasspath "$ANDROID_JAR" -d "$WORK/classes" \
   "$ROOT/tests/android_core_probe/src/org/yuzu/yuzu_emu/utils/KenjiBridge.java" \
