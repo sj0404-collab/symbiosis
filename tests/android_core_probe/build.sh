@@ -35,7 +35,8 @@ done
   -Wl,-soname,libcore_mock.so "$ROOT/tests/android_core_probe/mock_core.cpp" \
   -llog -o "$WORK/apk/lib/arm64-v8a/libcore_mock.so"
 "$CXX" -std=c++17 -O2 -shared -fPIC -static-libstdc++ -Wl,-z,max-page-size=16384 \
-  -Wl,-soname,libgraphics_reference_probe.so "$ROOT/tests/android_core_probe/graphics_reference_probe.cpp" \
+  -Wl,-soname,libgraphics_reference_probe.so -I"$ROOT/patch/symbiosis" \
+  "$ROOT/tests/android_core_probe/graphics_reference_probe.cpp" \
   -llog -ldl -landroid -lnativewindow -o "$WORK/apk/lib/arm64-v8a/libgraphics_reference_probe.so"
 "$KOTLINC_HOME/bin/kotlinc" "$ROOT/patch/android/kenjinx/KenjinxNative.kt" \
   "$ROOT/patch/android/utils/KenjiUiText.kt" \
