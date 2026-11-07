@@ -253,6 +253,8 @@ jobs:
           python3 fork/tests/test_kenji_release_guard.py
           python3 fork/tests/test_core_settings_screen.py
           python3 fork/tests/test_hid_remap_model.py
+          curl -fsSL --retry 3 'https://raw.githubusercontent.com/thiagooo0/EHRyujinx2/1247747ed81ffb6df2d33153e0ba723ec4ffc32b/src/Ryujinx.HLE/HOS/Services/Hid/IHidServer.cs' -o /tmp/related-hid-server.cs
+          RELATED_HID_SOURCE=/tmp/related-hid-server.cs python3 fork/tests/test_hid_related_stub.py
           git -C eden show HEAD:src/hid_core/resources/npad/npad_resource.cpp > /tmp/original-eden-npad-resource.cpp
           EDEN_NPAD_RESOURCE=/tmp/original-eden-npad-resource.cpp python3 fork/tests/test_hid_710_experiment.py
           git -C eden show HEAD:src/android/app/src/main/java/org/yuzu/yuzu_emu/overlay/InputOverlay.kt > /tmp/original-eden-overlay.kt
