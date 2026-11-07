@@ -117,8 +117,6 @@ object KenjiBridge {
     private external fun nativeSetWindowHandle(handle: Long)
     /** Собственный журнал графики ядра: без него причина молчания не видна. */
     private external fun nativeGraphicsLog(on: Boolean)
-    /** Синхронизация рендерера: у него свой вызов, отдельный от устройства. */
-    private external fun nativeRendererVsync(mode: Int)
     /** Интервал обмена буферов у поверхности Android (0 — не ждать синхронизации). */
     private external fun nativeSwapInterval(surface: android.view.Surface, interval: Int): Int
     /** Сколько кадров в секунду считает само ядро — не наш колбэк. */
@@ -930,11 +928,6 @@ object KenjiBridge {
      */
     fun enableGraphicsLog() {
         if (bridgeLoaded) runCatching { nativeGraphicsLog(true) }
-    }
-
-    /** Синхронизация рендерера — тем же числом, что ушло в устройство. */
-    fun setRendererVsync(mode: Int) {
-        if (bridgeLoaded) runCatching { nativeRendererVsync(mode) }
     }
 
     /**

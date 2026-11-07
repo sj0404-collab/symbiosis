@@ -194,6 +194,33 @@ fun main() {
     check("повторы убраны", picked.count { it.contains("OpenDisplay") } == 1, picked.joinToString(" | "))
     check("порядок сохранён — последние ближе к концу", picked.last().contains("OpenDisplay"), picked.last())
 
+    // ── 9. падение самого ядра (.NET TP Worker → abort) ────────────────
+    //
+    // Дословно из отчёта 07.11 09:56 — наш же вызов синхронизации рендерера.
+    val hostLog = """
+        |00:00:03.572 |E| .NET TP Worker Unhandled exception. System.NullReferenceException: Object reference not set to an instance of an object.
+        |00:00:03.572 |E| .NET TP Worker    at LibKenjinx.LibKenjinx.SetVsyncState(VSyncMode) + 0x80
+        |00:00:03.572 |E| .NET TP Worker    at LibKenjinx.LibKenjinx.JnaSetVsyncStateNative(Int32) + 0x324
+    """.trimMargin()
+    val host = KenjiCrash.hostCrash(hostLog)
+    check("падение ядра найдено", host.isNotEmpty(), host)
+    check("назван вызов", host.contains("SetVsyncState"), host)
+    check("сказано, что это не файл игры", host.contains("не файл игры"), host)
+    check(
+        "сказано, где искать виноватого",
+        host.contains("виноват наш вызов") || host.contains("ошибка в самом ядре"),
+        host
+    )
+    check(
+        "гостевое исключение сюда не попадает",
+        KenjiCrash.hostCrash(dotnet).isEmpty()
+    )
+    check("пустой журнал — пусто", KenjiCrash.hostCrash("").isEmpty())
+    check(
+        "паника гостя падением ядра не считается",
+        KenjiCrash.hostCrash("SvcBreak reason=0x0 tid=1").isEmpty()
+    )
+
     println()
     println("passed=$passed failed=$failed")
     if (failed > 0) kotlin.system.exitProcess(1)

@@ -277,8 +277,14 @@ class EnginesFragment : Fragment() {
                     append(if (ownDir != null) "Своя папка: " else "Внутри приложения: ")
                     append(dataRoot?.absolutePath ?: "не определена")
                     if (dataRoot != null) append("\n").append(KenjiData.describe(dataRoot))
-                    append("\nПрошивка ищется в «bis/system/Contents/registered» внутри этой папки; ")
-                    append("если она там уже лежит — переносить ничего не нужно.")
+                    // РАСКЛАДКА, КОТОРУЮ ЧИТАЕТ ЯДРО, А НЕ ТА, ЧТО ПРИВЫЧНА.
+                    // Kenji читает подпапки в «registered» и плоские .nca в
+                    // «Contents»; файлы, лежащие плоско в «registered», он не
+                    // видит вовсе. Об этом экран и говорит — иначе человек
+                    // кладёт прошивку «как в Eden» и получает чёрный экран.
+                    append("\nПрошивка ищется в «bis/system/Contents» (и в подпапках «registered») ")
+                    append("внутри этой папки — так читает само ядро. Если она там уже лежит, ")
+                    append("переносить ничего не нужно.")
                 }
                 textSize = 13f
                 setTextColor(if (ownDir != null) SymbiosisTheme.MINT else SymbiosisTheme.TEXT_DIM)

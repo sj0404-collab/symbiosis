@@ -1966,26 +1966,6 @@ Java_org_yuzu_yuzu_1emu_utils_KenjiBridge_nativeGraphicsLog(JNIEnv*, jobject, jb
 }
 
 /**
- * Синхронизация рендерера: `graphicsRendererSetVsync(int)` в API ядра.
- *
- * ПОЧЕМУ ОТДЕЛЬНО ОТ `deviceInitialize`. `deviceInitialize` получает
- * `vSyncMode`, но это режим устройства; у самого рендерера есть свой вызов, и
- * официальное приложение зовёт его отдельно. Если рендерер ждёт вертикальную
- * синхронизацию, которой на этой поверхности не бывает, кадр не показывается
- * никогда — а гость при этом живёт и ждёт кадр, что мы и видим на телефоне.
- */
-JNIEXPORT void JNICALL
-Java_org_yuzu_yuzu_1emu_utils_KenjiBridge_nativeRendererVsync(JNIEnv*, jobject, jint mode) {
-    if (g_core == nullptr) return;
-    using Fn = void (*)(int);
-    if (auto fn = reinterpret_cast<Fn>(dlsym(g_core, "graphicsRendererSetVsync"))) {
-        g_inCore = 1;
-        fn(static_cast<int>(mode));
-        g_inCore = 0;
-    }
-}
-
-/**
  * Интервал обмена буферов у самой поверхности Android.
  *
  * ЧТО ЭТО. `ANativeWindow_setSwapInterval(win, 0)` — «не ждать вертикальную
@@ -2014,9 +1994,18 @@ Java_org_yuzu_yuzu_1emu_utils_KenjiBridge_nativeSwapInterval(JNIEnv* env, jobjec
     // есть в libandroid.so с давних версий, поэтому берём её по имени: на
     // старом устройстве вернётся nullptr — тогда честно говорим «не принят»
     // и ничего не ломаем.
+    // БЕРЁМ ИЗ libandroid.so ЯВНО.
+    //
+    // `dlsym(RTLD_DEFAULT, …)` на телефоне вернул nullptr — в отчёте с
+    // устройства так и вышло: «интервал обмена буферов: не принят». Причина:
+    // символ живёт в libandroid.so, а сам файл может быть ещё не загружен в
+    // момент первого вызова. Поэтому открываем библиотеку по имени и ищем в
+    // ней. dlopen ищет уже загруженную копию, повторной загрузки нет.
     using SetIntervalFn = int (*)(ANativeWindow*, int);
-    static SetIntervalFn set_interval =
-        reinterpret_cast<SetIntervalFn>(dlsym(RTLD_DEFAULT, "ANativeWindow_setSwapInterval"));
+    static void* android_lib = dlopen("libandroid.so", RTLD_NOW | RTLD_LOCAL);
+    static SetIntervalFn set_interval = android_lib == nullptr
+        ? nullptr
+        : reinterpret_cast<SetIntervalFn>(dlsym(android_lib, "ANativeWindow_setSwapInterval"));
     if (set_interval == nullptr) return -1;
     const int rc = set_interval(win, interval);
     // Ссылку не отпускаем: указатель уходит в ядро и должен жить до конца

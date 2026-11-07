@@ -903,6 +903,56 @@ object KenjiCrash {
     }
 
     /**
+     * Падение внутри самого ядра — .NET-исключение НЕ в гостевом потоке.
+     *
+     * ЧЕМ ЭТО ОТЛИЧАЕТСЯ ОТ [guestFailure]. Гостевое исключение ядро ловит и
+     * печатает как «Unhandled exception in guest thread»: игра встаёт, а
+     * процесс живёт. Здесь наоборот — исключение вылетело в его собственном
+     * пуле потоков (`.NET TP Worker`), ничем не поймано, и .NET завершает
+     * процесс через abort(): снаружи это `SIGABRT` и «шаг 6/7 · рендерер».
+     *
+     * 07.11 так выглядел наш собственный вызов:
+     *
+     * ```
+     * Unhandled exception. System.NullReferenceException: Object reference not set…
+     *    at LibKenjinx.LibKenjinx.SetVsyncState(VSyncMode) + 0x80
+     * ```
+     *
+     * То есть виноват не файл игры и не прошивка: ядро упало на вызове,
+     * который мы же и сделали. Такую строку нельзя оставлять без перевода —
+     * иначе человек видит «шаг 6/7» и не знает, чей это шаг.
+     *
+     * Пустая строка, если падения ядра в журнале нет.
+     */
+    fun hostCrash(text: String): String {
+        if (!text.contains("Unhandled exception")) return ""
+        // «в гостевом потоке» — это другой разбор, он полнее и живёт в
+        // [guestFailure]; здесь только собственные потоки ядра.
+        if (text.contains("Unhandled exception in guest thread")) return ""
+        val method = Regex("""at ([A-Za-z0-9_.]+\.[A-Za-z0-9_]+)\s*\(""")
+            .findAll(text)
+            .map { it.groupValues[1] }
+            .firstOrNull { it.startsWith("LibKenjinx.") || it.startsWith("Ryujinx.") }
+        val kind = listOf(
+            "NullReferenceException" to "пустая ссылка",
+            "InvalidCastException" to "неверное приведение типа",
+            "ArgumentException" to "недопустимый аргумент",
+            "ObjectDisposedException" to "объект уже освобождён",
+            "IndexOutOfRangeException" to "выход за границы"
+        ).firstOrNull { text.contains(it.first) }?.second
+        val call = method?.substringAfterLast('.')
+        return buildString {
+            append("ядро упало внутри себя")
+            if (call != null) append(": вызов ").append(call)
+            append(" — ")
+            append(kind ?: "исключение не поймано")
+            append(". Это внутренняя ошибка ядра на конкретном вызове, а не файл игры. ")
+            append("Если вызов сделан из приложения (шаг в отчёте) — виноват наш вызов, ")
+            append("и его надо убрать; если шаг «цикл отрисовки» — ошибка в самом ядре.")
+        }
+    }
+
+    /**
      * Строки журнала вокруг паники — то, чем ядро объясняло её само.
      *
      * Шум (`SleepThread`, `WaitSynchronization`, `SendSyncRequest`) отбрасывается:

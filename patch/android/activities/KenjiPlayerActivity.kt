@@ -296,9 +296,14 @@ class KenjiPlayerActivity : Activity(), SurfaceHolder.Callback {
             // Журнал графики ядра — до пинка: пинок и его последствия должны
             // быть в журнале, а не только в наших словах.
             KenjiBridge.enableGraphicsLog()
-            // Синхронизация рендерера отдельным вызовом: в API ядра она своя,
-            // и официальное приложение зовёт её так же.
-            runCatching { KenjiBridge.setRendererVsync(EngineStore.config(appContext).vSyncMode) }
+            // СИНХРОНИЗАЦИЮ РЕНДЕРЕРА ЗДЕСЬ НЕ ЗОВЁМ — ЯДРО НА НЕЙ ПАДАЕТ.
+            //
+            // `graphicsRendererSetVsync` (в ядре `LibKenjinx.SetVsyncState`)
+            // первым делом берёт объект устройства и на этом шаге его ещё нет:
+            // на устройстве 07.11 это дало
+            //   System.NullReferenceException at LibKenjinx.SetVsyncState(VSyncMode)
+            // и abort() через SIGABRT. Режим синхронизации и так уходит в
+            // `deviceInitialize` (параметр vSyncMode), этого достаточно.
             val kick = KenjiBridge.rendererKick(w, h, displayRotation())
             if (!kick.ok) {
                 runOnUiThread { fail(kick.message) }
@@ -532,9 +537,30 @@ class KenjiPlayerActivity : Activity(), SurfaceHolder.Callback {
         //     лежала в журнале прямым текстом.
         val guestThread = fresh.contains("Unhandled exception in guest thread")
         val panic = KenjiCrash.guestPanic(fresh)
-        if (!guestThread && panic.isEmpty()) return
+        // Третья разновидность: ядро уронило САМО СЕБЯ (.NET-исключение в
+        // его собственном пуле потоков → abort → SIGABRT). Так 07.11 упал
+        // наш же вызов синхронизации рендерера. Молчать об этом нельзя:
+        // снаружи это выглядит как «шаг 6/7 · рендерер» без виновника.
+        val hostCrash = KenjiCrash.hostCrash(fresh)
+        if (!guestThread && panic.isEmpty() && hostCrash.isEmpty()) return
 
         guestFailed = true
+        if (!guestThread && panic.isEmpty()) {
+            runCatching { KenjiReport.watch(appContext, "ядро: " + hostCrash.take(200)) }
+            runCatching { KenjiBridge.stopPlay() }
+            val tail = fresh.lines()
+                .filter { it.contains("LibKenjinx") || it.contains("System.") }
+                .map { it.trim().take(160) }
+                .distinct()
+                .takeLast(3)
+            runOnUiThread {
+                fail(
+                    "второе ядро остановилось. " + hostCrash +
+                        if (tail.isEmpty()) "" else "\n\n" + tail.joinToString("\n")
+                )
+            }
+            return
+        }
         if (!guestThread) {
             failOnGuestPanic(appContext, fresh, panic)
             return
