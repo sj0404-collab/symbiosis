@@ -48,6 +48,11 @@ done
 "$CXX" -std=c++17 -O2 -shared -fPIC -static-libstdc++ -Wl,-z,max-page-size=16384 \
   -Wl,-soname,libcore_mock.so "$ROOT/tests/android_core_probe/mock_core.cpp" \
   -llog -o "$WORK/apk/lib/arm64-v8a/libcore_mock.so"
+# Independent native command-line loader; runs from adb shell without any APK.
+"$CXX" -std=c++17 -Wall -Wextra -Werror -O2 -static-libstdc++ -Wl,-z,max-page-size=16384 \
+  "$ROOT/tests/standalone_core_probe/probe.cpp" -ldl -o "$WORK/standalone-core-probe"
+"$CXX" -std=c++17 -Wall -Wextra -Werror -O2 -shared -fPIC -static-libstdc++ -Wl,-z,max-page-size=16384 \
+  "$ROOT/tests/standalone_core_probe/jni.cpp" -ldl -o "$WORK/libstandalonejni.so"
 "$CXX" -std=c++17 -O2 -shared -fPIC -static-libstdc++ -Wl,-z,max-page-size=16384 \
   -Wl,-soname,libgraphics_reference_probe.so -I"$ROOT/patch/symbiosis" \
   "$ROOT/tests/android_core_probe/graphics_reference_probe.cpp" \
@@ -62,6 +67,15 @@ javac -encoding UTF-8 -source 8 -target 8 -bootclasspath "$ANDROID_JAR" -d "$WOR
   "$ROOT/tests/android_core_probe/src/org/yuzu/yuzu_emu/utils/KenjiBridge.java" \
   "$ROOT/tests/android_core_probe/src/dev/symbiosis/coreprobe/ProbeActivity.java" \
   "$ROOT/tests/android_core_probe/src/dev/symbiosis/coreprobe/GraphicsProbeActivity.java"
+# A tiny app_process entry and the actual production callback class, packaged
+# only as a DEX jar (not an APK) for the independent JNI initialization probe.
+mkdir -p "$WORK/standalone-classes" "$WORK/standalone-dex"
+javac -encoding UTF-8 -source 8 -target 8 -bootclasspath "$ANDROID_JAR" -d "$WORK/standalone-classes" \
+  "$ROOT/tests/standalone_core_probe/Main.java"
+mapfile -d '' STANDALONE_CLASSES < <(find "$WORK/classes/org/kenjinx/android" "$WORK/standalone-classes" -name '*.class' -print0)
+"$BT/d8" --min-api "$PROBE_MIN_API" --lib "$ANDROID_JAR" --output "$WORK/standalone-dex" \
+  "${STANDALONE_CLASSES[@]}" "$KOTLINC_HOME/lib/kotlin-stdlib.jar"
+(cd "$WORK/standalone-dex" && zip -q -X "$WORK/standalone.jar" classes.dex)
 mapfile -d '' CLASSES < <(find "$WORK/classes" -name '*.class' -print0)
 "$BT/d8" --min-api "$PROBE_MIN_API" --lib "$ANDROID_JAR" --output "$WORK/dex" \
   "${CLASSES[@]}" "$KOTLINC_HOME/lib/kotlin-stdlib.jar"

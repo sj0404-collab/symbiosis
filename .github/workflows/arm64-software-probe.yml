@@ -60,7 +60,16 @@ jobs:
           if [ "$booted" != 1 ]; then echo 'ARM software emulator did not boot within diagnostic limit'; tail -100 "$PROBE_WORK/emulator.log"; exit 1; fi
           adb shell uname -a
           adb shell cat /proc/cpuinfo | head -120
+          # Standalone runs first, before APK installation; keep its failure
+          # distinct from the separate diagnostic Activity suite.
+          set +e
+          python3 tests/standalone_core_probe/run.py "$PROBE_WORK"
+          standalone_rc=$?
           bash tests/android_core_probe/run.sh
+          activity_rc=$?
+          set -e
+          echo "standalone_rc=$standalone_rc activity_rc=$activity_rc"
+          if [ "$standalone_rc" != 0 ] || [ "$activity_rc" != 0 ]; then exit 1; fi
       - name: Save diagnostic logs only
         if: always()
         uses: actions/upload-artifact@v4
@@ -68,6 +77,7 @@ jobs:
           name: software-arm64-probe-logs
           path: |
             /tmp/sym-arm-soft/emulator.log
+            /tmp/sym-arm-soft/standalone-*.txt
             /tmp/sym-arm-soft/*-logcat.txt
             /tmp/sym-arm-soft/*-probe-crash.txt
             /tmp/sym-arm-soft/*-kenji-stdout.txt
