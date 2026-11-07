@@ -18,12 +18,15 @@ import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.updatePadding
 import androidx.fragment.app.Fragment
 import androidx.lifecycle.lifecycleScope
+import androidx.navigation.fragment.findNavController
 import com.google.android.material.button.MaterialButton
 import com.google.android.material.transition.MaterialSharedAxis
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import org.yuzu.yuzu_emu.HomeNavigationDirections
+import org.yuzu.yuzu_emu.features.settings.model.Settings
 import org.yuzu.yuzu_emu.utils.EngineDownloader
 import org.yuzu.yuzu_emu.utils.EngineHybrid
 import org.yuzu.yuzu_emu.utils.DeviceCompat
@@ -181,48 +184,11 @@ class EnginesFragment : Fragment() {
             )
         }
 
-        // ── связь настроек ──────────────────────────────────────────────
-        root.addView(sectionTitle("Связь настроек", SymbiosisTheme.MINT))
-        root.addView(
-            TextView(ctx).apply {
-                text = "Зелёная точка — значение взято у Eden. Розовая — своё у Kenji. " +
-                    "Нажмите строку, чтобы переключить значение."
-                textSize = 13f
-                setTextColor(SymbiosisTheme.TEXT_DIM)
-                setPadding(0, 0, 0, dp(10))
-            }
-        )
-
-        val settingsCard = LinearLayout(ctx).apply {
-            orientation = LinearLayout.VERTICAL
-            background = rounded(SymbiosisTheme.SURFACE, 20, 1, SymbiosisTheme.OUTLINE)
-            setPadding(dp(4), dp(4), dp(4), dp(4))
-            val lp = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT
-            )
-            lp.bottomMargin = dp(10)
-            layoutParams = lp
-        }
-        EngineStore.rows(ctx).forEachIndexed { index, row ->
-            settingsCard.addView(settingRow(row, index))
-        }
-        root.addView(settingsCard)
-
-        // ── итог ────────────────────────────────────────────────────────
-        root.addView(banner("Второе ядро сейчас: " + EngineStore.summary(ctx), SymbiosisTheme.PINK))
-        root.addView(
-            outlineButton("Вернуть значения Eden", SymbiosisTheme.AMBER) {
-                statusLine = EngineStore.resetFields(ctx)
-                render()
-            }
-        )
-
         // ── ядро по умолчанию ───────────────────────────────────────────
         root.addView(sectionTitle("Ядро по умолчанию", SymbiosisTheme.CYAN))
         root.addView(
             TextView(ctx).apply {
-                text = "С ним запускаются игры, у которых не выбран свой ядро. Сейчас: " +
+                text = "С ним запускаются игры, у которых не выбрано своё ядро. Сейчас: " +
                     EngineStore.globalCore(ctx).label + "."
                 textSize = 13f
                 setTextColor(SymbiosisTheme.TEXT_DIM)
@@ -261,64 +227,120 @@ class EnginesFragment : Fragment() {
         )
         root.addView(cores)
 
-        // ── папка данных второго ядра ───────────────────────────────────
-        //
-        // Ядру передаётся одна папка, и внутри неё оно заводит своё дерево
-        // (bis/system/Contents/registered — прошивка, system — ключи,
-        // Games, Profiles, Logs). Так устроен Kenji: человек выбирает папку,
-        // а не импортирует данные. Пока папка была жёстко приватной, отдать
-        // ядру прошивку можно было только копированием сотен мегабайт.
-        root.addView(sectionTitle("Папка данных второго ядра", SymbiosisTheme.CYAN))
-        val dataRoot = runCatching { KenjiBridge.dataDir(ctx) }.getOrNull()
-        val ownDir = runCatching { KenjiBridge.configuredDataDir(ctx) }.getOrNull()
-        root.addView(
-            TextView(ctx).apply {
-                text = buildString {
-                    append(if (ownDir != null) "Своя папка: " else "Внутри приложения: ")
-                    append(dataRoot?.absolutePath ?: "не определена")
-                    if (dataRoot != null) append("\n").append(KenjiData.describe(dataRoot))
-                    // РАСКЛАДКА, КОТОРУЮ ЧИТАЕТ ЯДРО, А НЕ ТА, ЧТО ПРИВЫЧНА.
-                    // Kenji читает подпапки в «registered» и плоские .nca в
-                    // «Contents»; файлы, лежащие плоско в «registered», он не
-                    // видит вовсе. Об этом экран и говорит — иначе человек
-                    // кладёт прошивку «как в Eden» и получает чёрный экран.
-                    append("\nПрошивка ищется в «bis/system/Contents» (и в подпапках «registered») ")
-                    append("внутри этой папки — так читает само ядро. Если она там уже лежит, ")
-                    append("переносить ничего не нужно.")
+        // Показаны только настройки ядра по умолчанию. Индивидуальный выбор
+        // игры в библиотеке остаётся независимым и не меняется здесь.
+        val selectedCore = EngineStore.globalCore(ctx)
+        if (selectedCore == EngineHybrid.Core.KENJI) {
+            // ── связь настроек ──────────────────────────────────────────────
+            root.addView(sectionTitle("Связь настроек", SymbiosisTheme.MINT))
+            root.addView(
+                TextView(ctx).apply {
+                    text = "Зелёная точка — значение взято у Eden. Розовая — своё у Kenji. " +
+                        "Нажмите строку, чтобы переключить значение."
+                    textSize = 13f
+                    setTextColor(SymbiosisTheme.TEXT_DIM)
+                    setPadding(0, 0, 0, dp(10))
                 }
-                textSize = 13f
-                setTextColor(if (ownDir != null) SymbiosisTheme.MINT else SymbiosisTheme.TEXT_DIM)
-                setPadding(0, 0, 0, dp(10))
-            }
-        )
-        // Если выбрана папка самого Eden — это работает (прошивка, ключи, сейвы
-        // общие), но ядро будет писать туда же свои журналы и профили. Честно
-        // предупреждаем: молчаливая запись в чужое дерево — не сюрприз, а баг.
-        // userDirectory — строка, не File: у String свойства canonicalPath нет.
-        val edenRoot = runCatching { org.yuzu.yuzu_emu.utils.DirectoryInitialization.userDirectory }
-            .getOrNull()?.let { runCatching { java.io.File(it).canonicalPath }.getOrNull() }
-        val chosenPath = runCatching { dataRoot?.canonicalPath }.getOrNull()
-        if (edenRoot != null && chosenPath != null && chosenPath == edenRoot) {
-            root.addView(
-                banner(
-                    "Это папка Eden. Ядро возьмёт отсюда прошивку и ключи — переносить " +
-                        "ничего не нужно, — но свои журналы, профили и сейвы будет писать " +
-                        "сюда же. Не запускайте оба ядра одновременно.",
-                    SymbiosisTheme.AMBER
-                )
             )
-        }
-        root.addView(
-            outlineButton("Выбрать папку", SymbiosisTheme.CYAN) { showDataDirDialog() }
-        )
-        if (ownDir != null) {
+
+            val settingsCard = LinearLayout(ctx).apply {
+                orientation = LinearLayout.VERTICAL
+                background = rounded(SymbiosisTheme.SURFACE, 20, 1, SymbiosisTheme.OUTLINE)
+                setPadding(dp(4), dp(4), dp(4), dp(4))
+                val lp = LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT,
+                    LinearLayout.LayoutParams.WRAP_CONTENT
+                )
+                lp.bottomMargin = dp(10)
+                layoutParams = lp
+            }
+            EngineStore.rows(ctx).forEachIndexed { index, row ->
+                settingsCard.addView(settingRow(row, index))
+            }
+            root.addView(settingsCard)
+
+            // ── итог ────────────────────────────────────────────────────────
+            root.addView(banner("Второе ядро сейчас: " + EngineStore.summary(ctx), SymbiosisTheme.PINK))
             root.addView(
-                outlineButton("Вернуть папку внутри приложения", SymbiosisTheme.AMBER) {
-                    runCatching { KenjiBridge.setDataDir(ctx, null) }
-                    statusLine = "данные второго ядра снова внутри приложения"
+                outlineButton("Вернуть значения Eden", SymbiosisTheme.AMBER) {
+                    statusLine = EngineStore.resetFields(ctx)
                     render()
                 }
             )
+
+            // ── папка данных второго ядра ───────────────────────────────────
+            //
+            // Ядру передаётся одна папка, и внутри неё оно заводит своё дерево
+            // (bis/system/Contents/registered — прошивка, system — ключи,
+            // Games, Profiles, Logs). Так устроен Kenji: человек выбирает папку,
+            // а не импортирует данные. Пока папка была жёстко приватной, отдать
+            // ядру прошивку можно было только копированием сотен мегабайт.
+            root.addView(sectionTitle("Папка данных второго ядра", SymbiosisTheme.CYAN))
+            val dataRoot = runCatching { KenjiBridge.dataDir(ctx) }.getOrNull()
+            val ownDir = runCatching { KenjiBridge.configuredDataDir(ctx) }.getOrNull()
+            root.addView(
+                TextView(ctx).apply {
+                    text = buildString {
+                        append(if (ownDir != null) "Своя папка: " else "Внутри приложения: ")
+                        append(dataRoot?.absolutePath ?: "не определена")
+                        if (dataRoot != null) append("\n").append(KenjiData.describe(dataRoot))
+                        // РАСКЛАДКА, КОТОРУЮ ЧИТАЕТ ЯДРО, А НЕ ТА, ЧТО ПРИВЫЧНА.
+                        // Kenji читает подпапки в «registered» и плоские .nca в
+                        // «Contents»; файлы, лежащие плоско в «registered», он не
+                        // видит вовсе. Об этом экран и говорит — иначе человек
+                        // кладёт прошивку «как в Eden» и получает чёрный экран.
+                        append("\nПрошивка ищется в «bis/system/Contents» (и в подпапках «registered») ")
+                        append("внутри этой папки — так читает само ядро. Если она там уже лежит, ")
+                        append("переносить ничего не нужно.")
+                    }
+                    textSize = 13f
+                    setTextColor(if (ownDir != null) SymbiosisTheme.MINT else SymbiosisTheme.TEXT_DIM)
+                    setPadding(0, 0, 0, dp(10))
+                }
+            )
+            // Если выбрана папка самого Eden — это работает (прошивка, ключи, сейвы
+            // общие), но ядро будет писать туда же свои журналы и профили. Честно
+            // предупреждаем: молчаливая запись в чужое дерево — не сюрприз, а баг.
+            // userDirectory — строка, не File: у String свойства canonicalPath нет.
+            val edenRoot = runCatching { org.yuzu.yuzu_emu.utils.DirectoryInitialization.userDirectory }
+                .getOrNull()?.let { runCatching { java.io.File(it).canonicalPath }.getOrNull() }
+            val chosenPath = runCatching { dataRoot?.canonicalPath }.getOrNull()
+            if (edenRoot != null && chosenPath != null && chosenPath == edenRoot) {
+                root.addView(
+                    banner(
+                        "Это папка Eden. Ядро возьмёт отсюда прошивку и ключи — переносить " +
+                            "ничего не нужно, — но свои журналы, профили и сейвы будет писать " +
+                            "сюда же. Не запускайте оба ядра одновременно.",
+                        SymbiosisTheme.AMBER
+                    )
+                )
+            }
+            root.addView(
+                outlineButton("Выбрать папку", SymbiosisTheme.CYAN) { showDataDirDialog() }
+            )
+            if (ownDir != null) {
+                root.addView(
+                    outlineButton("Вернуть папку внутри приложения", SymbiosisTheme.AMBER) {
+                        runCatching { KenjiBridge.setDataDir(ctx, null) }
+                        statusLine = "данные второго ядра снова внутри приложения"
+                        render()
+                    }
+                )
+            }
+        } else {
+            root.addView(sectionTitle("Настройки Eden", SymbiosisTheme.CYAN))
+            root.addView(banner(
+                "Выбран Eden. Настройки Kenji скрыты и сохраняются при переключении. " +
+                    "Ядро для отдельной игры можно выбрать в библиотеке.",
+                SymbiosisTheme.MINT
+            ))
+            root.addView(outlineButton("Открыть настройки Eden", SymbiosisTheme.CYAN) {
+                findNavController().navigate(
+                    HomeNavigationDirections.actionGlobalSettingsActivity(
+                        null, Settings.MenuTag.SECTION_ROOT
+                    )
+                )
+            })
         }
     }
 
