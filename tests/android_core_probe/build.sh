@@ -9,8 +9,18 @@ WORK=${PROBE_WORK:?set PROBE_WORK to a disposable directory}
 SDK="$ANDROID_HOME"
 BT="$SDK/build-tools/35.0.0"
 ANDROID_JAR="$SDK/platforms/android-35/android.jar"
-CXX="$SDK/ndk/28.2.13676358/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android28-clang++"
+# API 27 is allowed only for the experimental software-ARM test harness; it
+# is not a supported API level for the application or a release configuration.
+PROBE_MIN_API=${PROBE_MIN_API:-28}
+case "$PROBE_MIN_API" in 27|28) ;; *) echo 'unsupported probe API' >&2; exit 1 ;; esac
+CXX="$SDK/ndk/28.2.13676358/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android${PROBE_MIN_API}-clang++"
 mkdir -p "$WORK"/{common/symbiosis,classes,dex,apk/lib/arm64-v8a}
+MANIFEST="$ROOT/tests/android_core_probe/AndroidManifest.xml"
+if [ "$PROBE_MIN_API" = 27 ]; then
+  sed 's/android:minSdkVersion="28"/android:minSdkVersion="27"/' "$MANIFEST" > "$WORK/AndroidManifest.xml"
+  grep -q 'android:minSdkVersion="27"' "$WORK/AndroidManifest.xml"
+  MANIFEST="$WORK/AndroidManifest.xml"
+fi
 cp "$ROOT/patch/symbiosis/got_patch.h" "$WORK/common/symbiosis/got_patch.h"
 curl -fsSL --retry 3 -o "$WORK/core_sym.so" https://github.com/sj0404-collab/symbiosis/releases/download/engine-kenji/libkenji.so
 curl -fsSL --retry 3 -o "$WORK/symbek.apk" https://github.com/sj0404-collab/SymbEK/releases/download/v1.0.121/Kenji-Space-1.0.121.apk
@@ -20,6 +30,9 @@ unzip -p "$WORK/symbek.apk" lib/arm64-v8a/libkenjinx.so > "$WORK/core_space.so"
 echo 'd781048671e4cef1cde2ec15db8fe29b949df9949d83569ceaf776ad12901590  '"$WORK/core_space.so" | sha256sum -c -
 cp "$WORK/core_sym.so" "$WORK/apk/lib/arm64-v8a/libcore_sym.so"
 cp "$WORK/core_space.so" "$WORK/apk/lib/arm64-v8a/libcore_space.so"
+# Match the production runtime's bundled TLS dependencies. The real cores can
+# fail at a later stage without these even if CPU validation succeeds.
+cp "$ROOT/patch/libs/arm64-v8a/libcrypto.so" "$ROOT/patch/libs/arm64-v8a/libssl.so" "$WORK/apk/lib/arm64-v8a/"
 # Reference JNI and its C++ runtime stay exclusively in the disposable test APK.
 unzip -p "$WORK/symbek.apk" lib/arm64-v8a/libkenjinxjni.so > "$WORK/apk/lib/arm64-v8a/libreference_kenji_jni.so"
 echo '71de6400f5f8e2e9cba272405431e7cc497bd96631449dd3e7af35a6618e18a8  '"$WORK/apk/lib/arm64-v8a/libreference_kenji_jni.so" | sha256sum -c -
@@ -49,9 +62,9 @@ javac -encoding UTF-8 -source 8 -target 8 -bootclasspath "$ANDROID_JAR" -d "$WOR
   "$ROOT/tests/android_core_probe/src/dev/symbiosis/coreprobe/ProbeActivity.java" \
   "$ROOT/tests/android_core_probe/src/dev/symbiosis/coreprobe/GraphicsProbeActivity.java"
 mapfile -d '' CLASSES < <(find "$WORK/classes" -name '*.class' -print0)
-"$BT/d8" --min-api 28 --lib "$ANDROID_JAR" --output "$WORK/dex" \
+"$BT/d8" --min-api "$PROBE_MIN_API" --lib "$ANDROID_JAR" --output "$WORK/dex" \
   "${CLASSES[@]}" "$KOTLINC_HOME/lib/kotlin-stdlib.jar"
-"$BT/aapt2" link -I "$ANDROID_JAR" --manifest "$ROOT/tests/android_core_probe/AndroidManifest.xml" \
+"$BT/aapt2" link -I "$ANDROID_JAR" --manifest "$MANIFEST" \
   -o "$WORK/unsigned.apk"
 cp "$WORK/dex/classes.dex" "$WORK/apk/classes.dex"
 (cd "$WORK/apk" && zip -q -X -r -9 "$WORK/unsigned.apk" classes.dex lib)

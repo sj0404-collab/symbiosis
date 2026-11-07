@@ -3,6 +3,10 @@
 set -euo pipefail
 : "${PROBE_WORK:?}"
 APP=dev.symbiosis.coreprobe
+PROBE_WAIT_SECONDS=${PROBE_WAIT_SECONDS:-45}
+if ! [[ "$PROBE_WAIT_SECONDS" =~ ^[0-9]+$ ]] || [ "$PROBE_WAIT_SECONDS" -lt 1 ] || [ "$PROBE_WAIT_SECONDS" -gt 600 ]; then
+  echo 'invalid diagnostic wait limit' >&2; exit 1
+fi
 adb wait-for-device
 printf 'Android properties (environment, not proof of ARM support):\n'
 adb shell getprop ro.build.version.sdk
@@ -19,7 +23,7 @@ adb logcat -T 1 -v time > "$ui_log" 2>&1 &
 ui_logpid=$!
 adb shell am start -n "$APP/.UiProbeActivity" || true
 ui_outcome=timeout
-for ((i=0; i<45; i++)); do
+for ((i=0; i<PROBE_WAIT_SECONDS; i++)); do
   if grep -qE 'UI_PROBE_FAIL|FATAL EXCEPTION' "$ui_log"; then ui_outcome=fail; break; fi
   if grep -q 'UI_PROBE_OK' "$ui_log"; then
     # A success marker before an asynchronous crash is not a pass.
@@ -44,7 +48,7 @@ adb logcat -T 1 -v time > "$graphics_log" 2>&1 &
 graphics_logpid=$!
 adb shell am start -n "$APP/.GraphicsProbeActivity" || true
 graphics_outcome=timeout
-for ((i=0; i<45; i++)); do
+for ((i=0; i<PROBE_WAIT_SECONDS; i++)); do
   if grep -qE 'GRAPHICS_PROBE_FAIL|FATAL EXCEPTION|Fatal signal' "$graphics_log"; then graphics_outcome=fail; break; fi
   if grep -q 'GRAPHICS_PROBE_OK' "$graphics_log"; then
     sleep 2
@@ -70,7 +74,7 @@ for core in mock sym space; do
   logpid=$!
   adb shell am start -n "$APP/.ProbeActivity" --es core "$core" || true
   outcome=timeout
-  for ((i=0; i<90; i++)); do
+  for ((i=0; i<PROBE_WAIT_SECONDS*2; i++)); do
     if grep -q "PROBE_OK core=$core " "$log"; then outcome=pass; break; fi
     if grep -q 'PROBE_FAIL' "$log"; then outcome=fail; break; fi
     if grep -q 'Fatal signal.*iosis.coreprobe' "$log"; then outcome=native-crash; break; fi

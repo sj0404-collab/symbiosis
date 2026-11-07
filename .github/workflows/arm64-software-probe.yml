@@ -1,0 +1,72 @@
+name: Experimental ARM64 software probe (not an APK release)
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  software-arm64:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      PROBE_WORK: /tmp/sym-arm-soft
+      KOTLINC_HOME: /tmp/kotlinc
+      PROBE_MIN_API: '27'
+      PROBE_WAIT_SECONDS: '180'
+      ANDROID_AVD_HOME: /tmp/sym-arm-avd
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v4
+      - name: Install disposable probe toolchain and ARM64 image
+        run: |
+          set -euo pipefail
+          sdkmanager --install 'ndk;28.2.13676358' 'platforms;android-35' 'build-tools;35.0.0' 'system-images;android-27;google_apis;arm64-v8a'
+          curl -fsSL --retry 3 -o /tmp/kc.zip https://github.com/JetBrains/kotlin/releases/download/v2.0.21/kotlin-compiler-2.0.21.zip
+          unzip -q /tmp/kc.zip -d /tmp
+          curl -fsSL --retry 3 -o /tmp/arm-emulator.zip https://dl.google.com/android/repository/emulator-linux_x64-12038310.zip
+          echo '621c9384efa919ecf42d94b29e47abbc097261fa7bff667adf4bddb9a35f7254  /tmp/arm-emulator.zip' | sha256sum -c -
+          unzip -q /tmp/arm-emulator.zip -d /tmp/arm-emulator
+          /tmp/arm-emulator/emulator/emulator -version
+      - name: Build disposable API 27 diagnostic APK only
+        run: bash tests/android_core_probe/build.sh
+      - name: Run software-emulated ARM64 diagnostic, no games or keys
+        run: |
+          set -euo pipefail
+          mkdir -p "$ANDROID_AVD_HOME" "$PROBE_WORK"
+          echo no | avdmanager create avd --force -n soft_arm64 -k 'system-images;android-27;google_apis;arm64-v8a' --abi arm64-v8a --device 'pixel_2'
+          /tmp/arm-emulator/emulator/emulator -avd soft_arm64 \
+            -no-window -no-audio -no-boot-anim -no-snapshot -accel off \
+            -gpu swiftshader_indirect -memory 4096 -cores 2 \
+            -qemu -machine virt -cpu max > "$PROBE_WORK/emulator.log" 2>&1 &
+          emu_pid=$!
+          trap 'kill "$emu_pid" 2>/dev/null || true; adb kill-server || true' EXIT
+          deadline=$((SECONDS + 900))
+          booted=0
+          while (( SECONDS < deadline )); do
+            if ! kill -0 "$emu_pid" 2>/dev/null; then echo 'ARM software emulator exited'; tail -100 "$PROBE_WORK/emulator.log"; exit 1; fi
+            if [ "$(adb shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" = 1 ]; then booted=1; break; fi
+            sleep 5
+          done
+          if [ "$booted" != 1 ]; then echo 'ARM software emulator did not boot within diagnostic limit'; tail -100 "$PROBE_WORK/emulator.log"; exit 1; fi
+          adb shell uname -a
+          adb shell cat /proc/cpuinfo | head -120
+          bash tests/android_core_probe/run.sh
+      - name: Save diagnostic logs only
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: software-arm64-probe-logs
+          path: |
+            /tmp/sym-arm-soft/emulator.log
+            /tmp/sym-arm-soft/*-logcat.txt
+            /tmp/sym-arm-soft/*-probe-crash.txt
+            /tmp/sym-arm-soft/*-kenji-stdout.txt
+            /tmp/sym-arm-soft/*-kenji-jni.txt
+          if-no-files-found: warn
+          retention-days: 3
