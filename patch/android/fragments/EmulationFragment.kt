@@ -99,6 +99,7 @@ import org.yuzu.yuzu_emu.utils.GpuDriverHelper
 import org.yuzu.yuzu_emu.utils.InputHandler
 import org.yuzu.yuzu_emu.utils.CloudSync
 import org.yuzu.yuzu_emu.utils.ExitTrace
+import org.yuzu.yuzu_emu.utils.GameSessionLock
 import org.yuzu.yuzu_emu.utils.Log
 import org.yuzu.yuzu_emu.utils.NativeConfig
 import org.yuzu.yuzu_emu.utils.NativeSymbiosis
@@ -402,7 +403,17 @@ class EmulationFragment : Fragment(), SurfaceHolder.Callback {
             Log.warning("[EmulationFragment] Failed to load Freedreno config: ${e.message}")
         }
 
-        emulationState = EmulationState(game!!.path) {
+        emulationState = EmulationState(
+            game!!.path,
+            File(requireContext().filesDir, GameSessionLock.FILE_NAME),
+            onSessionUnavailable = { busy ->
+                activity?.runOnUiThread {
+                    val message = if (busy) "Другая игра ещё работает или завершает работу. Подождите и попробуйте снова."
+                        else "Не удалось защитить игровой сеанс. Проверьте доступ к данным приложения."
+                    activity?.let { Toast.makeText(it, message, Toast.LENGTH_LONG).show(); it.finish() }
+                }
+            }
+        ) {
             return@EmulationState driverViewModel.isInteractionAllowed.value &&
                 !isStoppingForRomSwap
         }
@@ -2739,10 +2750,13 @@ class EmulationFragment : Fragment(), SurfaceHolder.Callback {
 
     private class EmulationState(
         private val gamePath: String,
+        private val lockFile: File,
+        private val onSessionUnavailable: (Boolean) -> Unit,
         private val emulationCanStart: () -> Boolean
     ) {
         private var state: State
         private var surface: Surface? = null
+        private var nativeSurfaceOwned = false
         lateinit var emulationThread: Thread
 
         init {
@@ -2824,20 +2838,43 @@ class EmulationFragment : Fragment(), SurfaceHolder.Callback {
             }
 
             NativeLibrary.surfaceChanged(currentSurface)
+            nativeSurfaceOwned = true
             Log.debug("[EmulationFragment] Resuming emulation.")
             NativeLibrary.unpauseEmulation()
             NativeLibrary.playTimeManagerStart()
             state = State.RUNNING
         }
 
+        private fun sessionLease(): GameSessionLock? = when (val result = GameSessionLock.tryAcquire(lockFile)) {
+            is GameSessionLock.Result.Acquired -> result.lease
+            GameSessionLock.Result.Busy -> { onSessionUnavailable(true); null }
+            is GameSessionLock.Result.Failed -> { onSessionUnavailable(false); null }
+        }
+
+        // The native callback can announce stop before NativeLibrary.run has
+        // returned. Release only in the thread's finally, never in that callback.
+        private fun runWithLease(lease: GameSessionLock, programIndex: Int, fresh: Boolean) {
+            try {
+                emulationThread = Thread({
+                    try {
+                        Log.debug("[EmulationFragment] Starting emulation thread.")
+                        NativeLibrary.run(gamePath, programIndex, fresh)
+                    } finally {
+                        lease.close()
+                    }
+                }, "NativeEmulation")
+                emulationThread.start()
+            } catch (t: Throwable) {
+                lease.close()
+                throw t
+            }
+        }
+
         @Synchronized
         fun changeProgram(programIndex: Int) {
             emulationThread.join()
-            emulationThread = Thread({
-                Log.debug("[EmulationFragment] Starting emulation thread.")
-                NativeLibrary.run(gamePath, programIndex, false)
-            }, "NativeEmulation")
-            emulationThread.start()
+            val lease = sessionLease() ?: return
+            runWithLease(lease, programIndex, false)
         }
 
         // Surface callbacks
@@ -2853,6 +2890,7 @@ class EmulationFragment : Fragment(), SurfaceHolder.Callback {
         fun updateSurface() {
             if (surface != null && state == State.RUNNING) {
                 NativeLibrary.surfaceChanged(surface)
+                nativeSurfaceOwned = true
             }
         }
 
@@ -2861,6 +2899,7 @@ class EmulationFragment : Fragment(), SurfaceHolder.Callback {
             this.surface = surface
             if (this.surface != null && state == State.RUNNING) {
                 NativeLibrary.surfaceChanged(this.surface)
+                nativeSurfaceOwned = true
             }
         }
 
@@ -2872,7 +2911,10 @@ class EmulationFragment : Fragment(), SurfaceHolder.Callback {
                 if (state == State.RUNNING) {
                     pause()
                 }
-                NativeLibrary.surfaceDestroyed()
+                // A denied session never attached its surface; don't detach
+                // the surface belonging to another Eden Activity.
+                if (nativeSurfaceOwned) NativeLibrary.surfaceDestroyed()
+                nativeSurfaceOwned = false
                 surface = null
                 Log.debug("[EmulationFragment] Surface destroyed.")
                 when (state) {
@@ -2899,12 +2941,18 @@ class EmulationFragment : Fragment(), SurfaceHolder.Callback {
 
             when (state) {
                 State.STOPPED -> {
-                    NativeLibrary.surfaceChanged(currentSurface)
-                    emulationThread = Thread({
-                        Log.debug("[EmulationFragment] Starting emulation thread.")
-                        NativeLibrary.run(gamePath, programIndex, true)
-                    }, "NativeEmulation")
-                    emulationThread.start()
+                    // The prior native thread may still be winding down even
+                    // though stop() changed the Kotlin state to STOPPED.
+                    if (this::emulationThread.isInitialized && emulationThread.isAlive) return
+                    val lease = sessionLease() ?: return
+                    try {
+                        NativeLibrary.surfaceChanged(currentSurface)
+                        nativeSurfaceOwned = true
+                        runWithLease(lease, programIndex, true)
+                    } catch (t: Throwable) {
+                        lease.close()
+                        throw t
+                    }
                     state = State.RUNNING
                 }
 

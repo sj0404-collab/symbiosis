@@ -426,43 +426,51 @@ class KenjiProbeService : Service() {
             if (msg.what != MSG_PROBE) return
             val reply = msg.replyTo ?: return
 
-            // Everything below runs in :kenji. If it dies, it dies alone.
-            // Отчёт включается ДО первого касания ядра: файл переживёт смерть
-            // процесса, и в нём останется шаг, на котором всё оборвалось.
-            //
-            // И PID — тоже до. Отчёт потом собирает основной процесс, а этот к
-            // тому времени мёртв; без записи журнал фильтровался по номеру
-            // лаунчера и не находил ни одной строки ядра.
-            runCatching {
-                KenjiBridge.pidFile(this@KenjiProbeService).writeText("${Process.myPid()}")
+            val lease = when (val result = GameSessionLock.tryAcquire(
+                File(filesDir, GameSessionLock.FILE_NAME)
+            )) {
+                is GameSessionLock.Result.Acquired -> result.lease
+                else -> {
+                    val out = Message.obtain(null, MSG_RESULT)
+                    out.data.putBoolean(KEY_OK, false)
+                    out.data.putString(KEY_MESSAGE, if (result is GameSessionLock.Result.Busy)
+                        "Проверка недоступна, пока другая игра или проверка ядра не завершится."
+                    else "Не удалось защитить проверку ядра. Проверьте доступ к данным приложения.")
+                    runCatching { reply.send(out) }
+                    return
+                }
             }
-            KenjiBridge.armCrashReport(this@KenjiProbeService)
-            val status = runCatching { KenjiBridge.start(this@KenjiProbeService) }
-                .getOrElse { KenjiBridge.Status(false, "исключение: ${it.message ?: it.javaClass.simpleName}") }
-
-            if (status.ok) {
-                runCatching { KenjiBridge.crashReportFile(this@KenjiProbeService).delete() }
+            // The probe shares :kenji and JNI state with the player. Keep the
+            // same lease until its core has actually been unloaded.
+            var status = KenjiBridge.Status(false, "не удалось проверить ядро")
+            try {
+                runCatching {
+                    KenjiBridge.pidFile(this@KenjiProbeService).writeText("${Process.myPid()}")
+                }
+                KenjiBridge.armCrashReport(this@KenjiProbeService)
+                status = runCatching { KenjiBridge.start(this@KenjiProbeService) }
+                    .getOrElse { KenjiBridge.Status(false, "Ошибка проверки ядра. Подробности в отчёте.") }
+                if (status.ok) {
+                    runCatching { KenjiBridge.crashReportFile(this@KenjiProbeService).delete() }
+                }
+            } finally {
+                if (KenjiBridge.unload()) lease.close()
+                else status = KenjiBridge.Status(false, "Проверка завершилась, но ядро ещё не удалось освободить.")
             }
-
             val out = Message.obtain(null, MSG_RESULT)
             out.data.putBoolean(KEY_OK, status.ok)
             out.data.putString(KEY_MESSAGE, status.message)
             out.data.putInt(KEY_SYMBOLS, status.symbols)
             runCatching { reply.send(out) }
 
-            // Unload before the process is reused: leaving a core mapped means
-            // a second probe would report the stale result of the first.
-            KenjiBridge.unload()
         }
     })
 
     override fun onBind(intent: Intent?): IBinder = messenger.binder
 
     override fun onDestroy() {
-        KenjiBridge.unload()
+        // The player may now be using the same :kenji process. Probe cleanup
+        // happens while it owns its lease; never unload or kill from here.
         super.onDestroy()
-        // The process exists only to hold the core. Letting it linger keeps
-        // 55 MB mapped for nothing.
-        Process.killProcess(Process.myPid())
     }
 }

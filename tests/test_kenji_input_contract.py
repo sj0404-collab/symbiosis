@@ -40,8 +40,10 @@ class InputContract(unittest.TestCase):
         stop = ACTIVITY.split('private fun requestStop(): Thread', 1)[1].split('@Deprecated', 1)[0]
         self.assertLess(stop.index('updater?.join()'), stop.index('KenjiBridge.stopPlay()'))
         destroy = ACTIVITY.split('override fun onDestroy()', 1)[1].split('private fun leave()', 1)[0]
-        self.assertIn('!stopper.isAlive', destroy)
-        self.assertIn('thread?.isAlive != true', destroy)
+        self.assertLess(destroy.index('stopper.join()'), destroy.index('thread?.join()'))
+        self.assertLess(destroy.index('thread?.join()'), destroy.index('KenjiBridge.unload()'))
+        self.assertLess(destroy.index('KenjiBridge.unload()'), destroy.index('lease.close()'))
+        self.assertNotIn('join(3000)', destroy)
 
     def test_error_is_scrollable_and_does_not_expire(self):
         fail = ACTIVITY.split('private fun fail(msg: String)', 1)[1].split('private fun openRom', 1)[0]

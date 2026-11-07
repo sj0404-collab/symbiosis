@@ -398,9 +398,11 @@ object KenjiBridge {
     fun lastError(): String =
         if (!bridgeLoaded) (bridgeError ?: "") else runCatching { nativeLastError() }.getOrDefault("")
 
-    fun unload() {
-        if (bridgeLoaded) runCatching { nativeUnload() }
-    }
+    /** False means callers must not release a session lease as if teardown completed. */
+    fun unload(): Boolean = if (!bridgeLoaded) true else runCatching {
+        nativeUnload()
+        true
+    }.getOrDefault(false)
 
     fun seedKeys(context: Context) {
         val dest = dataDir(context).apply { mkdirs() }

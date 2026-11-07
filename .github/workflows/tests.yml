@@ -94,6 +94,7 @@ jobs:
           export PATH="/tmp/kotlinc/bin:$PATH"
           python3 fork/tests/test_core_settings_screen.py
           python3 fork/tests/test_kenji_input_contract.py
+          python3 fork/tests/test_game_session_contract.py
           git -C eden show HEAD:src/android/app/src/main/java/org/yuzu/yuzu_emu/overlay/InputOverlay.kt > /tmp/original-eden-overlay.kt
           EDEN_OVERLAY_SOURCE=/tmp/original-eden-overlay.kt python3 fork/tests/test_eden_kenji_overlay.py
           bash fork/tools/run_tests.sh --eden "$GITHUB_WORKSPACE/eden" --max-skip 3

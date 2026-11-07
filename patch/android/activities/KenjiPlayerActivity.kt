@@ -31,6 +31,7 @@ import org.yuzu.yuzu_emu.utils.EngineLoader
 import org.yuzu.yuzu_emu.utils.KenjiBridge
 import org.yuzu.yuzu_emu.utils.KenjiOverlaySnapshot
 import org.yuzu.yuzu_emu.utils.KenjiSurfaceStartGate
+import org.yuzu.yuzu_emu.utils.GameSessionLock
 import org.yuzu.yuzu_emu.overlay.InputOverlay
 import org.yuzu.yuzu_emu.overlay.model.OverlayLayout
 import org.yuzu.yuzu_emu.features.input.NativeInput
@@ -77,6 +78,7 @@ class KenjiPlayerActivity : Activity(), SurfaceHolder.Callback {
     }
 
     private var pfd: ParcelFileDescriptor? = null
+    private var sessionLease: GameSessionLock? = null
     private var loopThread: Thread? = null
     @Volatile private var inputRunning = false
     private var inputThread: Thread? = null
@@ -205,6 +207,25 @@ class KenjiPlayerActivity : Activity(), SurfaceHolder.Callback {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        when (val result = GameSessionLock.tryAcquire(File(filesDir, GameSessionLock.FILE_NAME))) {
+            is GameSessionLock.Result.Acquired -> sessionLease = result.lease
+            else -> {
+                // Do not call fail()/requestStop(): the busy session may be a
+                // different Activity in this very process, using the same JNI.
+                val message = if (result is GameSessionLock.Result.Busy)
+                    "Другая игра ещё работает или завершает работу. Подождите и попробуйте снова."
+                else "Не удалось защитить игровой сеанс. Проверьте доступ к данным приложения."
+                val screen = LinearLayout(this).apply {
+                    orientation = LinearLayout.VERTICAL
+                    setPadding(dp(16), dp(16), dp(16), dp(16))
+                    setBackgroundColor(Color.rgb(22, 24, 29))
+                    addView(TextView(context).apply { text = message; textSize = 18f; setTextColor(Color.WHITE) })
+                    addView(darkButton("Вернуться в библиотеку") { finish() })
+                }
+                setContentView(screen)
+                return
+            }
+        }
         val path = intent.getStringExtra(EXTRA_PATH).orEmpty()
         val title = intent.getStringExtra(EXTRA_TITLE).orEmpty().ifBlank { "игра" }
 
@@ -912,7 +933,7 @@ class KenjiPlayerActivity : Activity(), SurfaceHolder.Callback {
 
     @Deprecated("Deprecated in Java")
     override fun onBackPressed() {
-        leave()
+        if (sessionLease == null) finish() else leave()
     }
 
     /**
@@ -924,11 +945,17 @@ class KenjiPlayerActivity : Activity(), SurfaceHolder.Callback {
      * цикл не отдал ни одного кадра. Экран при этом уже снят — снаружи это
      * выглядит как «вышел и всё зависло».
      *
-     * Теперь окно закрывается сразу, а остановка и выгрузка идут отдельным
-     * потоком со своими сроками: ждать нативного покаяния до бесконечности
-     * незачем.
+     * Окно закрывается сразу, а остановка и выгрузка идут в отдельном потоке.
+     * Блокировку сеанса нельзя отпускать по таймеру: если ядро ещё работает,
+     * следующую игру запускать небезопасно.
      */
     override fun onDestroy() {
+        val lease = sessionLease
+        if (lease == null) {
+            super.onDestroy()
+            return
+        }
+        sessionLease = null
         detailsDialog?.dismiss()
         detailsDialog = null
         detailsText = null
@@ -943,12 +970,18 @@ class KenjiPlayerActivity : Activity(), SurfaceHolder.Callback {
         pfd = null
         val stopper = requestStop()
         Thread({
-            runCatching { stopper.join(3000) }
-            runCatching { thread?.join(3000) }
-            // Не выгружаем библиотеку, если в ней ещё работает поток.
-            if (!stopper.isAlive && thread?.isAlive != true) {
-                runCatching { KenjiBridge.unload() }
-                runCatching { descriptor?.close() }
+            // Wait in the background for real completion, not a timeout. If a
+            // native call hangs, keep the lease: allowing another game would
+            // violate exclusivity. Process death releases the OS lock.
+            try {
+                stopper.join()
+                thread?.join()
+                if (KenjiBridge.unload()) {
+                    runCatching { descriptor?.close() }
+                    lease.close()
+                }
+            } catch (_: InterruptedException) {
+                Thread.currentThread().interrupt()
             }
         }, "kenji-teardown").start()
         super.onDestroy()
