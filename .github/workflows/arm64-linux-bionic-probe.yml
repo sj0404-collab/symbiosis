@@ -41,18 +41,29 @@ jobs:
         with:
           name: arm64-bionic-standalone-loader
           path: /tmp/arm-native-probe
-      - uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: '17'
-      - uses: android-actions/setup-android@v4
-      - name: Install Android ARM64 system image only
+      - name: Obtain the official ARM64 Android 8.1 system image
         run: |
           set -euo pipefail
           test "$(uname -m)" = aarch64
           sudo apt-get update -qq
           sudo apt-get install -y --no-install-recommends android-sdk-libsparse-utils
-          sdkmanager --install 'system-images;android-27;google_apis;arm64-v8a'
+          # sdkmanager cannot satisfy its emulator dependency on an ARM host.
+          # Use the exact official system-image archive instead; SHA-1 comes
+          # from Google's sys-img2-1.xml package metadata for revision 3.
+          W=/tmp/arm-native-probe
+          curl -fsSL --retry 3 -o "$W/system-image.zip" \
+            https://dl.google.com/android/repository/sys-img/google_apis/arm64-v8a-27_r03.zip
+          echo "54dd140e1dd2db0fb7879beecf1068bf476ad171  $W/system-image.zip" | sha1sum -c -
+          python3 - "$W/system-image.zip" "$W/system.img" <<'PY'
+          import shutil, sys, zipfile
+          with zipfile.ZipFile(sys.argv[1]) as archive:
+              found = [p for p in archive.namelist() if p == 'system.img' or p.endswith('/system.img')]
+              if len(found) != 1:
+                  raise SystemExit('expected exactly one system.img')
+              with archive.open(found[0]) as source, open(sys.argv[2], 'wb') as dest:
+                  shutil.copyfileobj(source, dest, 1024 * 1024)
+          PY
+          rm "$W/system-image.zip"
       - name: Check pinned cores and load directly on ARM64 Linux with Android Bionic
         run: |
           set -euo pipefail
@@ -67,7 +78,7 @@ jobs:
           rm "$W/symbek.apk"
           cp patch/libs/arm64-v8a/libcrypto.so patch/libs/arm64-v8a/libssl.so "$W/"
           chmod +x "$W/standalone-core-probe"
-          IMAGE="$ANDROID_HOME/system-images/android-27/google_apis/arm64-v8a/system.img"
+          IMAGE="$W/system.img"
           file "$IMAGE"
           # Sparse images are not mountable until converted; raw ext4 needs no conversion.
           if file "$IMAGE" | grep -qi 'sparse'; then
