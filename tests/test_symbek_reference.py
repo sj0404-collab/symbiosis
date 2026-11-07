@@ -21,6 +21,7 @@ SYMBIOSIS_CORE_HASH = '969431b3962408dd02ce38bd2cd4b2a954d11e5212ddef3f65c80a0b4
 REQUIRED_EXPORTS = {
     'javaInitialize', 'deviceInitialize', 'graphicsInitialize',
     'graphicsInitializeRenderer', 'deviceLoadDescriptor', 'graphicsRendererRunLoop',
+    'deviceSignalEmulationClose', 'deviceCloseEmulation',
     'inputInitialize', 'inputConnectGamepad', 'inputUpdate',
     'inputSetButtonPressed', 'inputSetStickAxis', 'loggingSetEnabled',
 }
@@ -172,6 +173,8 @@ class ReferenceArtifacts(unittest.TestCase):
             (native, 'graphicsInitialize', '(FFZZZZZZI)Z'),
             (native, 'graphicsInitializeRenderer', '([Ljava/lang/String;IJ)Z'),
             (native, 'deviceLoadDescriptor', '(III)Z'),
+            (native, 'deviceSignalEmulationClose', '()V'),
+            (native, 'deviceCloseEmulation', '()V'),
             (native, 'inputConnectGamepad', '(I)I'),
             (native, 'inputInitialize', '(II)V'),
             (native, 'inputUpdate', '()V'),

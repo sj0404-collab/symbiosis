@@ -31,6 +31,7 @@ import org.yuzu.yuzu_emu.utils.EngineLoader
 import org.yuzu.yuzu_emu.utils.KenjiBridge
 import org.yuzu.yuzu_emu.utils.KenjiOverlaySnapshot
 import org.yuzu.yuzu_emu.utils.KenjiSurfaceStartGate
+import org.yuzu.yuzu_emu.utils.KenjiStartupCoordinator
 import org.yuzu.yuzu_emu.utils.GameSessionLock
 import org.yuzu.yuzu_emu.overlay.InputOverlay
 import org.yuzu.yuzu_emu.overlay.model.OverlayLayout
@@ -85,6 +86,10 @@ class KenjiPlayerActivity : Activity(), SurfaceHolder.Callback {
     private var stopThread: Thread? = null
 
     private val surfaceStart = KenjiSurfaceStartGate()
+    private val startup = KenjiStartupCoordinator()
+    private val watchdogLock = Any()
+    @Volatile private var requireIsolatedProcessExit = false
+    @Volatile private var runLoopReturnedSuccessfully = false
     /** Запуск оборвался с названной причиной — она должна остаться в отчёте. */
     private var failed = false
     /** Кадров на прошлом тике: разница показывает текущую скорость. */
@@ -176,21 +181,25 @@ class KenjiPlayerActivity : Activity(), SurfaceHolder.Callback {
     private var touchPointer = -1
     private val overlaySink = object : InputOverlay.InputSink {
         override fun button(button: NativeButton, action: Int) {
+            if (startup.isCancelled()) return
             KenjiBridge.inputButton(button.int, action == NativeInput.ButtonState.PRESSED)
         }
         override fun stick(stick: NativeAnalog, x: Float, y: Float) {
+            if (startup.isCancelled()) return
             // Eden's realYAxis is already positive upward, as Kenji expects.
             KenjiBridge.inputStick(stick.int, x, y)
         }
         override fun touchDown(id: Int, x: Float, y: Float) {
-            if (touchPointer != -1) return
+            if (startup.isCancelled() || touchPointer != -1) return
             touchPointer = id
             KenjiBridge.inputTouch(x.toInt(), y.toInt(), true)
         }
         override fun touchMove(id: Int, x: Float, y: Float) {
+            if (startup.isCancelled()) return
             if (touchPointer == id) KenjiBridge.inputTouch(x.toInt(), y.toInt(), true)
         }
         override fun touchUp(id: Int) {
+            if (startup.isCancelled()) return
             if (touchPointer == id) {
                 touchPointer = -1
                 KenjiBridge.inputTouch(0, 0, false)
@@ -198,7 +207,7 @@ class KenjiPlayerActivity : Activity(), SurfaceHolder.Callback {
         }
         override fun cancel() {
             touchPointer = -1
-            KenjiBridge.cancelInputEvents()
+            if (!startup.isCancelled()) KenjiBridge.cancelInputEvents()
         }
     }
     private fun overlayLayout(): OverlayLayout =
@@ -319,6 +328,7 @@ class KenjiPlayerActivity : Activity(), SurfaceHolder.Callback {
           // возможных ответов. Ловим всё и называем причину на экране и в
           // отчёте; ядро при этом уже загружено, поэтому выходим штатно.
           try {
+            if (startup.isCancelled()) return@Thread
             // Отчёт о падении включается ДО первого касания ядра: файл и
             // обработчики сигналов переживут смерть процесса, и в отчёте
             // останется шаг, на котором всё оборвалось. Раньше это делала
@@ -336,12 +346,14 @@ class KenjiPlayerActivity : Activity(), SurfaceHolder.Callback {
             KenjiReport.markStart(appContext)
             org.kenjinx.android.KenjinxNative.resetStats()
 
+            if (startup.isCancelled()) return@Thread
             val nw = KenjiBridge.nativeWindow(holder.surface)
             org.kenjinx.android.KenjinxNative.nativeSurface = nw
             org.kenjinx.android.KenjinxNative.nativeWindow = nw
             runOnUiThread { updateStatus("Второе ядро · подготовка · подробнее", "Готовлю ядро и прошивку") }
             KenjiBridge.noteStep("1/6 · загрузка ядра")
             val prep = KenjiBridge.preparePlay(appContext, config)
+            if (startup.isCancelled()) return@Thread
             if (!prep.ok) {
                 runOnUiThread { fail(prep.message) }
                 return@Thread
@@ -358,8 +370,10 @@ class KenjiPlayerActivity : Activity(), SurfaceHolder.Callback {
             // рендерер → устройство → игра. Устройство без рендерера ядро
             // создать отказывается (его InitializeContext проверяет
             // Renderer != null), а рендерер без поверхности создавать нечего.
+            if (startup.isCancelled()) return@Thread
             KenjiBridge.noteStep("2/6 · рендерер")
             val surf = KenjiBridge.attachSurface(holder.surface, w, h)
+            if (startup.isCancelled()) return@Thread
             if (!surf.ok) {
                 runOnUiThread { fail(surf.message) }
                 return@Thread
@@ -367,6 +381,7 @@ class KenjiPlayerActivity : Activity(), SurfaceHolder.Callback {
 
             KenjiBridge.noteStep("3/6 · устройство")
             val dev = onMainAndWait { KenjiBridge.deviceInit() }
+            if (startup.isCancelled()) return@Thread
             if (!dev.ok) {
                 runOnUiThread { fail(dev.message) }
                 return@Thread
@@ -378,6 +393,7 @@ class KenjiPlayerActivity : Activity(), SurfaceHolder.Callback {
             KenjiBridge.noteStep("5/6 · ввод")
             KenjiBridge.setWindowHandle(nw)
             val input = onMainAndWait { KenjiBridge.inputInit(w, h) }
+            if (startup.isCancelled()) return@Thread
             if (!input.ok) {
                 runOnUiThread { fail(input.message) }
                 return@Thread
@@ -387,6 +403,7 @@ class KenjiPlayerActivity : Activity(), SurfaceHolder.Callback {
             // обновляем ввод в отдельном потоке, как делает Android-хост Kenji.
             // По одному возврату API нельзя доказать, что гость его принял.
             val padId = KenjiBridge.connectVirtualPad()
+            if (startup.isCancelled()) return@Thread
             runCatching { KenjiReport.watch(appContext, "виртуальный контроллер: " +
                 if (padId >= 0) "зарегистрирован, id $padId" else "ядро не подключило") }
             if (padId < 0) {
@@ -400,9 +417,11 @@ class KenjiPlayerActivity : Activity(), SurfaceHolder.Callback {
                 return@Thread
             }
 
+            if (startup.isCancelled()) return@Thread
             runOnUiThread { updateStatus("Второе ядро · загрузка · подробнее", "Загружаю игру") }
             KenjiBridge.noteStep("4/6 · игра")
             val load = KenjiBridge.loadGame(fd, KenjiBridge.fileTypeOf(path))
+            if (startup.isCancelled()) return@Thread
             if (!load.ok) {
                 runOnUiThread { fail(load.message) }
                 return@Thread
@@ -426,6 +445,7 @@ class KenjiPlayerActivity : Activity(), SurfaceHolder.Callback {
             // Строка настроек рядом со статусом: «ядро запустилось» без них
             // ничего не говорит о том, с чем именно оно запустилось.
             runOnUiThread {
+                if (startup.isCancelled() || isFinishing || isDestroyed || failed) return@runOnUiThread
                 updateStatus("Второе ядро · запущено · подробнее", prep.message)
                 // Уведомление поднимает приоритет процесса: без него система
                 // выгружает :kenji первой, как только кончается память, и игра
@@ -442,6 +462,7 @@ class KenjiPlayerActivity : Activity(), SurfaceHolder.Callback {
             // размер, растяжение, пересоздание цепочки буферов, разрешение
             // показа. Без этого Vulkan может рисовать в старую цепочку —
             // цикл идёт, а на экране ничего.
+            if (startup.isCancelled()) return@Thread
             KenjiBridge.noteStep("6/7 · рендерер")
             // Журнал графики ядра — до пинка: пинок и его последствия должны
             // быть в журнале, а не только в наших словах.
@@ -455,13 +476,20 @@ class KenjiPlayerActivity : Activity(), SurfaceHolder.Callback {
             // и abort() через SIGABRT. Режим синхронизации и так уходит в
             // `deviceInitialize` (параметр vSyncMode), этого достаточно.
             val kick = KenjiBridge.rendererKick(surfaceWidth, surfaceHeight, displayRotation())
+            if (startup.isCancelled()) return@Thread
             if (!kick.ok) {
                 runOnUiThread { fail(kick.message) }
                 return@Thread
             }
 
             KenjiBridge.noteStep("7/7 · цикл отрисовки")
-            KenjiBridge.runLoop()
+            if (!startup.beginLoop()) return@Thread
+            val loop = KenjiBridge.runLoop()
+            runLoopReturnedSuccessfully = loop.ok
+            if (!loop.ok && !startup.isCancelled()) {
+                runOnUiThread { fail(loop.message) }
+                return@Thread
+            }
             KenjiBridge.noteStep("цикл завершён")
             runOnUiThread {
                 if (!guestFailed && !failed) checkGuestFailure(appContext)
@@ -475,8 +503,15 @@ class KenjiPlayerActivity : Activity(), SurfaceHolder.Callback {
             runOnUiThread {
                 fail("Внутренняя ошибка плеера. Подробности сохранены в отчёте.")
             }
+          } finally {
+            startup.initializationEnded()
           }
-        }, "kenji-loop").also { it.start() }
+        }, "kenji-loop").also {
+            try { it.start() } catch (t: Throwable) {
+                startup.initializationEnded()
+                throw t
+            }
+        }
     }
 
     /**
@@ -493,7 +528,10 @@ class KenjiPlayerActivity : Activity(), SurfaceHolder.Callback {
         val beganAt = android.os.SystemClock.elapsedRealtime()
         val tick = object : Runnable {
             override fun run() {
-                if (isFinishing || isDestroyed || failed) return
+                synchronized(watchdogLock) { tickOnce() }
+            }
+            private fun tickOnce() {
+                if (startup.isCancelled() || isFinishing || isDestroyed || failed) return
                 val seconds = (android.os.SystemClock.elapsedRealtime() - beganAt) / 1000
                 val frames = org.kenjinx.android.KenjinxNative.frames.get()
                 val rate = frames - lastFrames
@@ -858,15 +896,21 @@ class KenjiPlayerActivity : Activity(), SurfaceHolder.Callback {
         var result = KenjiBridge.Status(false, "шаг не выполнился")
         val latch = java.util.concurrent.CountDownLatch(1)
         runOnUiThread {
-            result = runCatching(block)
-                .getOrElse { KenjiBridge.Status(false, it.message ?: "шаг") }
-            latch.countDown()
+            try {
+                result = if (startup.isCancelled()) KenjiBridge.Status(false, "запуск отменён")
+                    else runCatching(block).getOrElse { KenjiBridge.Status(false, it.message ?: "шаг") }
+            } finally {
+                latch.countDown()
+            }
         }
-        latch.await(180, java.util.concurrent.TimeUnit.SECONDS)
+        // A timed-out task could still execute later, after native teardown.
+        // Wait off the UI thread until it has actually run or been cancelled.
+        latch.await()
         return result
     }
 
     override fun surfaceChanged(holder: SurfaceHolder, format: Int, width: Int, height: Int) {
+        if (sessionLease == null || startup.isCancelled()) return
         if (width > 0 && height > 0) {
             surfaceWidth = width
             surfaceHeight = height
@@ -897,7 +941,12 @@ class KenjiPlayerActivity : Activity(), SurfaceHolder.Callback {
 
     override fun surfaceDestroyed(holder: SurfaceHolder) {
         // A transient surface lost before startup is not a running session.
-        if (surfaceStart.destroyed()) requestStop()
+        if (surfaceStart.destroyed()) {
+            requestStop()
+            if (!failed && !isFinishing && !isDestroyed) {
+                fail("Поверхность игры закрыта системой. Перезапустите игру из библиотеки.")
+            }
+        }
     }
 
     @Synchronized
@@ -919,15 +968,46 @@ class KenjiPlayerActivity : Activity(), SurfaceHolder.Callback {
     @Synchronized
     private fun requestStop(): Thread {
         surfaceStart.stop()
+        startup.cancel()
         stopThread?.let { return it }
         inputRunning = false
         KenjiBridge.disableInputEvents()
         val updater = inputThread
+        val worker = loopThread
         updater?.interrupt()
         return Thread({
-            runCatching { updater?.join() }
-            runCatching { KenjiBridge.drainInputEvents() }
-            runCatching { KenjiBridge.stopPlay() }
+            try {
+                // Never close or unload while an initialization step is active.
+                val decision = worker?.let { startup.awaitDecision() }
+                updater?.join()
+                KenjiBridge.drainInputEvents()
+                // A watchdog tick can call the core from the UI thread. Wait
+                // for any tick already in progress before signal/close/unload.
+                synchronized(watchdogLock) { }
+                when (decision) {
+                    KenjiStartupCoordinator.Decision.ABORTED_BEFORE_LOOP -> {
+                        // The binary's partial-init cleanup contract is unknown.
+                        // Keep the lock and terminate only this isolated process
+                        // after the activity has gone and the worker has exited.
+                        requireIsolatedProcessExit = true
+                    }
+                    KenjiStartupCoordinator.Decision.ENTERING_LOOP -> {
+                        // Signal is separate from close: the latter must wait for
+                        // the actual loop thread, even if stop raced its entry.
+                        val signalled = KenjiBridge.signalPlayStop()
+                        worker?.join()
+                        if (!signalled || !runLoopReturnedSuccessfully || !KenjiBridge.closePlay()) {
+                            requireIsolatedProcessExit = true
+                        }
+                    }
+                    null -> Unit // no native initialization was started
+                }
+            } catch (_: InterruptedException) {
+                Thread.currentThread().interrupt()
+                requireIsolatedProcessExit = true
+            } catch (_: Throwable) {
+                requireIsolatedProcessExit = true
+            }
         }, "kenji-stop").also { stopThread = it; it.start() }
     }
 
@@ -976,6 +1056,13 @@ class KenjiPlayerActivity : Activity(), SurfaceHolder.Callback {
             try {
                 stopper.join()
                 thread?.join()
+                if (requireIsolatedProcessExit) {
+                    // Partial core initialization has no proven safe close API.
+                    // The main Hybrid process remains alive; the OS releases the
+                    // isolated process's lock and native resources on exit.
+                    android.os.Process.killProcess(android.os.Process.myPid())
+                    return@Thread
+                }
                 if (KenjiBridge.unload()) {
                     runCatching { descriptor?.close() }
                     lease.close()
@@ -993,7 +1080,7 @@ class KenjiPlayerActivity : Activity(), SurfaceHolder.Callback {
         runCatching {
             status.text = "выход из второго ядра…"
         }
-        // stopPlay() уходит в натив: на телефоне, где цикл стоит, этот вызов
+        // Сигнал остановки уходит в натив: на телефоне, где цикл стоит, этот вызов
         // ждёт ответа ядра. Поэтому он тоже вне главного потока — иначе окно
         // не закроется до его возврата.
         requestStop()

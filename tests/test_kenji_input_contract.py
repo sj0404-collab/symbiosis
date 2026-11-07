@@ -15,9 +15,11 @@ class InputContract(unittest.TestCase):
         stop = ACTIVITY.split('private fun requestStop(): Thread', 1)[1].split('@Deprecated', 1)[0]
         self.assertIn('surfaceStart.created()', created)
         self.assertNotIn('startGame(', created)
+        self.assertIn('if (sessionLease == null || startup.isCancelled()) return', changed)
         self.assertIn('surfaceStart.changed(width, height, holder.surface.isValid)', changed)
         self.assertIn('startGame(holder, width, height)', changed)
-        self.assertIn('if (surfaceStart.destroyed()) requestStop()', destroyed)
+        self.assertIn('if (surfaceStart.destroyed())', destroyed)
+        self.assertIn('requestStop()', destroyed)
         self.assertIn('surfaceStart.stop()', stop)
         self.assertIn('KenjiBridge.rendererKick(surfaceWidth, surfaceHeight, displayRotation())', ACTIVITY)
         self.assertNotIn('surfaceFrame.width().coerceAtLeast(128)', ACTIVITY)
@@ -27,6 +29,26 @@ class InputContract(unittest.TestCase):
             'KenjiBridge.inputInit(w, h)', 'KenjiBridge.connectVirtualPad()',
             'startInputUpdates(padId)', 'KenjiBridge.loadGame(fd', 'KenjiBridge.runLoop()')]
         self.assertEqual(positions, sorted(positions))
+
+    def test_startup_cancellation_prevents_late_native_calls(self):
+        init = ACTIVITY.split('private fun startGame(', 1)[1].split('private fun startWatchdog(', 1)[0]
+        self.assertGreaterEqual(init.count('if (startup.isCancelled()) return@Thread'), 8)
+        self.assertLess(init.index('if (!startup.beginLoop()) return@Thread'), init.index('KenjiBridge.runLoop()'))
+        self.assertIn('startup.initializationEnded()', init)
+        main = ACTIVITY.split('private fun onMainAndWait(', 1)[1].split('override fun surfaceChanged', 1)[0]
+        self.assertIn('if (startup.isCancelled())', main)
+        self.assertIn('latch.await()', main)
+        self.assertNotIn('latch.await(180', main)
+
+    def test_signal_and_close_are_distinct_native_calls(self):
+        signal = BRIDGE.split('KenjiBridge_nativeSignalPlayStop', 1)[1].split('JNIEXPORT', 1)[0]
+        close = BRIDGE.split('KenjiBridge_nativeClosePlay', 1)[1].split('JNIEXPORT', 1)[0]
+        self.assertIn('"deviceSignalEmulationClose"', signal)
+        self.assertNotIn('"deviceCloseEmulation"', signal)
+        self.assertIn('"deviceCloseEmulation"', close)
+        self.assertNotIn('"deviceSignalEmulationClose"', close)
+        self.assertIn('using Fn = void (*)()', signal)
+        self.assertIn('using Fn = void (*)()', close)
 
     def test_core_exports_have_exact_expected_signatures(self):
         connect = BRIDGE.split('KenjiBridge_nativeConnectPad', 1)[1].split('JNIEXPORT', 1)[0]
@@ -38,10 +60,21 @@ class InputContract(unittest.TestCase):
 
     def test_stop_joins_input_before_stopping_core(self):
         stop = ACTIVITY.split('private fun requestStop(): Thread', 1)[1].split('@Deprecated', 1)[0]
-        self.assertLess(stop.index('updater?.join()'), stop.index('KenjiBridge.stopPlay()'))
+        self.assertLess(stop.index('startup.cancel()'), stop.index('startup.awaitDecision()'))
+        self.assertLess(stop.index('startup.awaitDecision()'), stop.index('updater?.join()'))
+        self.assertLess(stop.index('updater?.join()'), stop.index('KenjiBridge.signalPlayStop()'))
+        self.assertLess(stop.index('KenjiBridge.signalPlayStop()'), stop.index('worker?.join()'))
+        self.assertLess(stop.index('worker?.join()'), stop.index('KenjiBridge.closePlay()'))
+        self.assertLess(stop.index('synchronized(watchdogLock)'), stop.index('KenjiBridge.signalPlayStop()'))
+        self.assertIn('synchronized(watchdogLock) { tickOnce() }', ACTIVITY)
+        aborted = stop.split('Decision.ABORTED_BEFORE_LOOP ->', 1)[1].split('Decision.ENTERING_LOOP ->', 1)[0]
+        self.assertIn('requireIsolatedProcessExit = true', aborted)
+        self.assertNotIn('KenjiBridge.closePlay()', aborted)
         destroy = ACTIVITY.split('override fun onDestroy()', 1)[1].split('private fun leave()', 1)[0]
         self.assertLess(destroy.index('stopper.join()'), destroy.index('thread?.join()'))
         self.assertLess(destroy.index('thread?.join()'), destroy.index('KenjiBridge.unload()'))
+        self.assertLess(destroy.index('thread?.join()'), destroy.index('android.os.Process.killProcess('))
+        self.assertLess(destroy.index('android.os.Process.killProcess('), destroy.index('KenjiBridge.unload()'))
         self.assertLess(destroy.index('KenjiBridge.unload()'), destroy.index('lease.close()'))
         self.assertNotIn('join(3000)', destroy)
 
@@ -51,7 +84,7 @@ class InputContract(unittest.TestCase):
         self.assertIn('setContentView(screen)', fail)
         self.assertIn('requestStop()', fail)
         self.assertNotIn('postDelayed', fail)
-        self.assertIn('if (isFinishing || isDestroyed || failed) return', ACTIVITY)
+        self.assertIn('if (startup.isCancelled() || isFinishing || isDestroyed || failed) return', ACTIVITY)
 
     def test_game_controls_are_below_status_bar(self):
         setup = ACTIVITY.split('override fun onCreate', 1)[1].split('override fun surfaceCreated', 1)[0]

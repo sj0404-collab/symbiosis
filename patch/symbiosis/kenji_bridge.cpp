@@ -2097,25 +2097,40 @@ Java_org_yuzu_yuzu_1emu_utils_KenjiBridge_nativeRunLoop(JNIEnv* env, jobject) {
     return env->NewStringUTF("");
 }
 
-JNIEXPORT void JNICALL
-Java_org_yuzu_yuzu_1emu_utils_KenjiBridge_nativePlayStop(JNIEnv*, jobject) {
+// Stop and close are deliberately separate. Closing the device before the
+// run-loop thread returns can destroy resources it is still using.
+JNIEXPORT jboolean JNICALL
+Java_org_yuzu_yuzu_1emu_utils_KenjiBridge_nativeSignalPlayStop(JNIEnv*, jobject) {
     void* core = nullptr;
     {
         std::lock_guard<std::mutex> guard(g_lock);
         core = g_core;
     }
-    if (core == nullptr) return;
-    using SigFn = void (*)();
-    if (auto s = reinterpret_cast<SigFn>(dlsym(core, "deviceSignalEmulationClose"))) {
-        g_inCore = 1;
-        s();
-        g_inCore = 0;
+    if (core == nullptr) return JNI_FALSE;
+    using Fn = void (*)();
+    auto fn = reinterpret_cast<Fn>(dlsym(core, "deviceSignalEmulationClose"));
+    if (fn == nullptr) return JNI_FALSE;
+    g_inCore = 1;
+    fn();
+    g_inCore = 0;
+    return JNI_TRUE;
+}
+
+JNIEXPORT jboolean JNICALL
+Java_org_yuzu_yuzu_1emu_utils_KenjiBridge_nativeClosePlay(JNIEnv*, jobject) {
+    void* core = nullptr;
+    {
+        std::lock_guard<std::mutex> guard(g_lock);
+        core = g_core;
     }
-    if (auto c = reinterpret_cast<SigFn>(dlsym(core, "deviceCloseEmulation"))) {
-        g_inCore = 1;
-        c();
-        g_inCore = 0;
-    }
+    if (core == nullptr) return JNI_FALSE;
+    using Fn = void (*)();
+    auto fn = reinterpret_cast<Fn>(dlsym(core, "deviceCloseEmulation"));
+    if (fn == nullptr) return JNI_FALSE;
+    g_inCore = 1;
+    fn();
+    g_inCore = 0;
+    return JNI_TRUE;
 }
 
 

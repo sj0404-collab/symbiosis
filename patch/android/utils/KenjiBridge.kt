@@ -129,7 +129,8 @@ object KenjiBridge {
     private external fun nativeGameFrameRate(): Double
     private external fun nativeLoadGame(fd: Int, type: Int): String
     private external fun nativeRunLoop(): String
-    private external fun nativePlayStop()
+    private external fun nativeSignalPlayStop(): Boolean
+    private external fun nativeClosePlay(): Boolean
     private external fun nativeWindowOf(surface: android.view.Surface): Long
 
     /**
@@ -1028,7 +1029,11 @@ object KenjiBridge {
         return if (err.isEmpty()) Status(true, "цикл завершён") else Status(false, err)
     }
 
-    fun stopPlay() {
-        if (bridgeLoaded) runCatching { nativePlayStop() }
-    }
+    /** Signal first; do not close the device until the render thread exits. */
+    fun signalPlayStop(): Boolean = bridgeLoaded &&
+        runCatching { nativeSignalPlayStop() }.getOrDefault(false)
+
+    /** Only after the loop worker has actually returned. */
+    fun closePlay(): Boolean = bridgeLoaded &&
+        runCatching { nativeClosePlay() }.getOrDefault(false)
 }

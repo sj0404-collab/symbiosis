@@ -49,7 +49,8 @@ class OverlayContract(unittest.TestCase):
         stop = ACTIVITY.split('private fun requestStop(): Thread', 1)[1].split('@Deprecated', 1)[0]
         self.assertLess(stop.index('disableInputEvents'), stop.index('updater?.join()'))
         self.assertLess(stop.index('updater?.join()'), stop.index('drainInputEvents'))
-        self.assertLess(stop.index('drainInputEvents'), stop.index('stopPlay'))
+        self.assertLess(stop.index('drainInputEvents'), stop.index('signalPlayStop'))
+        self.assertLess(stop.index('worker?.join()'), stop.index('closePlay'))
         self.assertIn('stopThread != null || !KenjiBridge.activateInputEvents(padId)', ACTIVITY)
         self.assertIn('synchronized(eventLock)', BRIDGE)
 
