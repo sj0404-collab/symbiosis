@@ -581,8 +581,12 @@ object KenjiCrash {
     fun consoleLines(dump: String, limit: Int = 12): List<String> {
         val picked = exceptionLines(dump, limit)
         if (picked.isNotEmpty()) {
-            if (picked.any { it.contains("The required instruction sets are not supported by the current CPU", ignoreCase = true) }) {
-                return (listOf("Рантайм ядра сообщает: процессор или среда запуска не поддерживает необходимые инструкции.") + picked).take(limit)
+            val isaMessage = picked.lastOrNull {
+                it.contains("The required instruction sets are not supported by the current CPU", ignoreCase = true)
+            }
+            if (isaMessage != null) {
+                val explanation = "Рантайм ядра сообщает: процессор или среда запуска не поддерживает необходимые инструкции."
+                return (listOf(explanation, isaMessage) + picked.filterNot { it == isaMessage }.takeLast((limit - 2).coerceAtLeast(0))).take(limit)
             }
             return picked
         }

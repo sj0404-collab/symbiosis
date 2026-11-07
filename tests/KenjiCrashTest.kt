@@ -557,6 +557,8 @@ fun main() {
     check("отказ инструкций объяснён по-русски без домыслов о телефоне",
         isaConsole.any { it.contains("процессор или среда запуска") } && isaConsole.any { it == isa }, isaConsole.toString())
     check("лимит сообщения CPU соблюдается", KenjiCrash.consoleLines(isa, 1).size == 1)
+    val crowdedConsole = KenjiCrash.consoleLines((1..11).joinToString("\n") { "exception: noise $it" } + "\n$isa", 12)
+    check("при переполнении буфера настоящая причина CPU сохранена", crowdedConsole.any { it == isa }, crowdedConsole.toString())
     check("обёртка названа в состоянии", initReport.trapState.any { it.contains("init guard") },
         initReport.trapState.toString())
 
