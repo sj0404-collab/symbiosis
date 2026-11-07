@@ -98,6 +98,29 @@ class OrchestrationTest(unittest.TestCase):
             self.assertTrue(any('libcore_space.so' in c for c in commands))
             self.assertFalse(any('install' in str(c) for c in calls))
 
+    def test_adb_setup_failure_retains_real_error(self):
+        spec = importlib.util.spec_from_file_location('standalone_run', ROOT / 'tests/standalone_core_probe/run.py')
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        with tempfile.TemporaryDirectory() as tmp:
+            work = Path(tmp)
+            for name in ('standalone-core-probe', 'core_sym.so', 'core_space.so',
+                         'libstandalonejni.so', 'standalone.jar',
+                         'apk/lib/arm64-v8a/libkenjinxjni.so',
+                         'apk/lib/arm64-v8a/libcrypto.so', 'apk/lib/arm64-v8a/libssl.so'):
+                path = work / name
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.touch()
+
+            def fake_adb(*args, **kwargs):
+                if args[0] == 'push':
+                    raise subprocess.CalledProcessError(1, args, output='adb: device offline\n')
+                return subprocess.CompletedProcess(args, 0, '')
+
+            with mock.patch.object(module, 'adb', side_effect=fake_adb), mock.patch.object(sys, 'argv', ['run.py', tmp]):
+                self.assertEqual(module.main(), 2)
+            self.assertIn('adb: device offline', (work / 'standalone-setup.txt').read_text())
+
 
 if __name__ == '__main__':
     unittest.main()

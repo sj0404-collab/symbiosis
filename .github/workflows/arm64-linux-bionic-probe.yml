@@ -89,7 +89,11 @@ jobs:
           sudo mkdir -p /system "$W/system-mount"
           cleanup() { sudo umount /system 2>/dev/null || true; sudo umount "$W/system-mount" 2>/dev/null || true; }
           trap cleanup EXIT
-          sudo mount -o loop,ro "$IMAGE" "$W/system-mount"
+          # The pinned image is a GPT disk, not a bare ext4 filesystem.
+          # Validate the GPT CRCs and use the unique system partition offset.
+          OFFSET=$(python3 tests/standalone_core_probe/gpt_offset.py "$IMAGE")
+          echo "validated system partition offset=$OFFSET"
+          sudo mount -o "loop,ro,offset=$OFFSET" "$IMAGE" "$W/system-mount"
           if test -x "$W/system-mount/bin/linker64"; then ROOT="$W/system-mount";
           elif test -x "$W/system-mount/system/bin/linker64"; then ROOT="$W/system-mount/system";
           else echo 'BIONIC_SETUP_FAIL linker64 missing'; exit 1; fi

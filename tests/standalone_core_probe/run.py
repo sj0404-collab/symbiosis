@@ -96,7 +96,12 @@ def main():
             outcomes.append(passed)
         return 0 if all(outcomes) else 1
     except (OSError, subprocess.SubprocessError) as exc:
-        print(f'STANDALONE_SETUP_FAIL {exc}', file=sys.stderr)
+        detail = getattr(exc, 'stdout', '') or ''
+        if isinstance(detail, bytes):
+            detail = detail.decode('utf-8', errors='replace')
+        message = f'STANDALONE_SETUP_FAIL {exc}\n{detail}'
+        (work / 'standalone-setup.txt').write_text(message, encoding='utf-8')
+        print(message, file=sys.stderr)
         return 2
     finally:
         try:
