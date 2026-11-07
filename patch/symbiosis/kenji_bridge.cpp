@@ -1941,6 +1941,100 @@ Java_org_yuzu_yuzu_1emu_utils_KenjiBridge_nativeSetWindowHandle(JNIEnv*, jobject
     }
 }
 
+/**
+ * Включить собственный журнал графики ядра.
+ *
+ * ЗАЧЕМ. Когда кадров нет, снаружи видно только наш счётчик. Что именно
+ * делает Vulkan — не знает никто, кроме самого ядра, а его журнал по
+ * умолчанию про графику молчит. `loggingEnabledGraphicsLog` включает в нём
+ * отдельный графический лог: выбор устройства, создание поверхности и
+ * цепочки буферов, ошибки показа. Это единственный способ назвать причину, не
+ * угадывая по адресам.
+ *
+ * Подпись сверена не по догадке: в официальном `KenjinxNative` это
+ * `loggingEnabledGraphicsLog(enabled: Boolean)`, то есть `void(bool)`.
+ */
+JNIEXPORT void JNICALL
+Java_org_yuzu_yuzu_1emu_utils_KenjiBridge_nativeGraphicsLog(JNIEnv*, jobject, jboolean on) {
+    if (g_core == nullptr) return;
+    using Fn = void (*)(bool);
+    if (auto fn = reinterpret_cast<Fn>(dlsym(g_core, "loggingEnabledGraphicsLog"))) {
+        g_inCore = 1;
+        fn(on == JNI_TRUE);
+        g_inCore = 0;
+    }
+}
+
+/**
+ * Синхронизация рендерера: `graphicsRendererSetVsync(int)` в API ядра.
+ *
+ * ПОЧЕМУ ОТДЕЛЬНО ОТ `deviceInitialize`. `deviceInitialize` получает
+ * `vSyncMode`, но это режим устройства; у самого рендерера есть свой вызов, и
+ * официальное приложение зовёт его отдельно. Если рендерер ждёт вертикальную
+ * синхронизацию, которой на этой поверхности не бывает, кадр не показывается
+ * никогда — а гость при этом живёт и ждёт кадр, что мы и видим на телефоне.
+ */
+JNIEXPORT void JNICALL
+Java_org_yuzu_yuzu_1emu_utils_KenjiBridge_nativeRendererVsync(JNIEnv*, jobject, jint mode) {
+    if (g_core == nullptr) return;
+    using Fn = void (*)(int);
+    if (auto fn = reinterpret_cast<Fn>(dlsym(g_core, "graphicsRendererSetVsync"))) {
+        g_inCore = 1;
+        fn(static_cast<int>(mode));
+        g_inCore = 0;
+    }
+}
+
+/**
+ * Интервал обмена буферов у самой поверхности Android.
+ *
+ * ЧТО ЭТО. `ANativeWindow_setSwapInterval(win, 0)` — «не ждать вертикальную
+ * синхронизацию». Официальное приложение делает это сразу после получения
+ * окна (`_nativeWindow.swapInterval = 0`) и повторяет после каждой перезаписи
+ * окна. Мы этот вызов не делали ни разу.
+ *
+ * ПОЧЕМУ ЭТО МОЖЕТ БЫТЬ ПРИЧИНОЙ. Пока интервал не выставлен, `queueBuffer`
+ * ждёт синхронизации дисплея; на части драйверов Mali (наш случай, MT6789)
+ * первая же очередь буфера не возвращается, и поток показа стоит навсегда —
+ * гость не получает кадр, ждёт его и в конце концов останавливает себя.
+ *
+ * @return 0, если система приняла интервал; -1, если окна нет
+ */
+JNIEXPORT jint JNICALL
+Java_org_yuzu_yuzu_1emu_utils_KenjiBridge_nativeSwapInterval(JNIEnv* env, jobject, jobject surface,
+                                                             jint interval) {
+    if (surface == nullptr) return -1;
+    ANativeWindow* win = ANativeWindow_fromSurface(env, surface);
+    if (win == nullptr) return -1;
+    const int rc = ANativeWindow_setSwapInterval(win, interval);
+    // Ссылку не отпускаем: указатель уходит в ядро и должен жить до конца
+    // поверхности. Один лишний refcount на запуск — цена того, что окно не
+    // умрёт под ногами у рендерера.
+    return rc == 0 ? 0 : -1;
+}
+
+/**
+ * Сколько кадров в секунду считает САМО ядро (`deviceGetGameFrameRate`).
+ *
+ * ЗАЧЕМ. Наш счётчик растёт от колбэка `frameEnded()`; если имя колбэка в
+ * ядре другое, он молчит даже когда картинка идёт. Счётчик ядра не зависит от
+ * колбэка вовсе — это его собственный FPS. Два числа рядом отвечают на
+ * вопрос, который иначе не решается: кадров нет на самом деле, или их не
+ * видит только наш счётчик.
+ */
+JNIEXPORT jdouble JNICALL
+Java_org_yuzu_yuzu_1emu_utils_KenjiBridge_nativeGameFrameRate(JNIEnv*, jobject) {
+    if (g_core == nullptr) return 0.0;
+    using Fn = double (*)();
+    if (auto fn = reinterpret_cast<Fn>(dlsym(g_core, "deviceGetGameFrameRate"))) {
+        g_inCore = 1;
+        const double fps = fn();
+        g_inCore = 0;
+        return fps;
+    }
+    return 0.0;
+}
+
 JNIEXPORT jstring JNICALL
 Java_org_yuzu_yuzu_1emu_utils_KenjiBridge_nativeLoadGame(JNIEnv* env, jobject, jint fd, jint type) {
     NoteStep("deviceLoadDescriptor");

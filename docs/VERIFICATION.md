@@ -3869,3 +3869,72 @@ MD5.
 Сверено по собранному APK: в dex есть «Что ядро говорит про отрисовку»,
 «отрисовка: » и «игра остановила себя изнутри» — то есть и новое сообщение, и
 новый разбор доехали.
+
+## §64. Снимки 258: презентация включена, кадров нет; сверка с официальным GameHost
+
+### 64.1. Что дали снимки
+
+На экране появилась строка самого ядра (ради неё всё и делалось):
+
+```
+00:00:09.943 |T| Application JniGraphicsSetPresentEnabled: [JNI] graphicsSetPresentEnabled(True)
+00:00:17.110 |E| HLE.GuestThread.28 KernelSvc Break: SvcBreak reason=0x0 pid=109 … tid=28
+00:00:17.129 |I| HLE.OsThread.11 AudioRenderer ReleaseSessionId: Unregistered output (0)
+```
+
+То есть: наш пинк до ядра **дошёл** и показ разрешён; и всё равно **ни одного
+кадра**; звук тоже не открылся (`Unregistered output (0)`); гость через 2.8 с
+после бесконечного ожидания останавливает себя.
+
+### 64.2. Сверка с официальным `GameHost` (Kenji-NX Android)
+
+Прочитан `GameHost.kt` и `KenjinxNative.kt` официального приложения
+(`thiagooo0/EHRyujinx2`, `src/KenjinxAndroid/...`). Что там есть, а у нас — нет:
+
+| В официальном | У нас |
+|---|---|
+| `NativeWindow.swapInterval = 0` сразу после получения окна и после каждой перезаписи | **не выставлялось ни разу** |
+| `graphicsRendererSetVsync(int)` — отдельный вызов рендерера | не вызывался |
+| `loggingEnabledGraphicsLog(enabled: Boolean)` — журнал графики ядра | не включался |
+| `deviceGetGameFrameRate()` — собственный FPS ядра | не спрашивали (верили только своему колбэку) |
+| `graphicsRendererRecreateSurface`, `reattachWindowIfReady` | не вызывались |
+
+Полный список того, что ядро вообще экспортирует (по живому
+`libkenji.so` из релиза `engine-kenji`): `deviceInitialize`,
+`deviceSetWindowHandle`, `deviceRecreateSwapchain`, `deviceSetSurfaceRotation`,
+`graphicsInitialize`, `graphicsInitializeRenderer`, `graphicsRendererRunLoop`,
+`graphicsRendererSetSize`, `graphicsRendererSetVsync`,
+`graphicsRendererRecreateSurface`, `graphicsRendererSetPresent`,
+`graphicsSetPresentEnabled`, `graphicsSetFullscreenStretch`, `reattachWindowIfReady`,
+`detachWindow`, `loggingSetEnabled`, `loggingEnabledGraphicsLog`,
+`deviceGetGameFrameRate`, `deviceGetGameFrameTime`, `deviceGetGameFifo`,
+`deviceReinitEmulation`, `deviceReloadFilesystem`, `audioSetMuted`,
+`audioSetPaused`, `inputUpdate` и остальные.
+
+### 64.3. Что добавлено
+
+- `KenjiBridge.setSwapInterval(surface, 0)` → `ANativeWindow_setSwapInterval`.
+  Ставится сразу после получения окна, до всякой инициализации; результат
+  пишется в отчёт («интервал обмена буферов: 0 (без синхронизации)» или «не
+  принят»).
+- `KenjiBridge.setRendererVsync(mode)` → `graphicsRendererSetVsync(int)` — тем
+  же числом, что уходит в `deviceInitialize`.
+- `KenjiBridge.enableGraphicsLog()` → `loggingEnabledGraphicsLog(true)` —
+  включается до пинка рендерера, чтобы причина молчания оказалась в журнале.
+- `KenjiBridge.gameFrameRate()` → `deviceGetGameFrameRate()`; при ненулевом
+  значении в статусе появляется «ядро считает кадров/с: N». Это отделяет
+  «картинки нет вовсе» от «картинка есть, а наш колбэк `frameEnded` не
+  приходит» — две разные поломки.
+
+Подписи не угаданы: три из четырёх взяты из интерфейса
+`KenjinxNativeJna` официального приложения (`loggingEnabledGraphicsLog(Boolean)`,
+`graphicsRendererSetVsync(Int)`, `graphicsInitializeRenderer(String[], Int, Long)`),
+четвёртая — `deviceGetGameFrameRate(): Double`. `tools/check_jni_names.py`
+сверяет имена и типы возврата: 88 объявлений, 0 расхождений.
+
+### 64.4. Чего это не доказывает
+
+Причина «нет кадров» пока не названа окончательно: пункты выше — либо
+исправление (интервал обмена), либо инструмент, который причину назовёт
+(журнал графики, FPS ядра). Обещать «починил» без подтверждения с устройства
+нельзя.

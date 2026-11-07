@@ -197,6 +197,21 @@ class KenjiPlayerActivity : Activity(), SurfaceHolder.Callback {
             val nw = KenjiBridge.nativeWindow(holder.surface)
             org.kenjinx.android.KenjinxNative.nativeSurface = nw
             org.kenjinx.android.KenjinxNative.nativeWindow = nw
+            // НЕ ЖДАТЬ ВЕРТИКАЛЬНУЮ СИНХРОНИЗАЦИЮ НА ПОВЕРХНОСТИ.
+            //
+            // Официальное приложение выставляет это сразу после получения окна
+            // (`swapInterval = 0`) и повторяет после каждой перезаписи окна.
+            // Мы не делали этого ни разу. На части драйверов Mali первая же
+            // очередь буфера не возвращается, поток показа стоит, гость ждёт
+            // кадр — и через несколько секунд останавливает себя сам.
+            val swap = runCatching { KenjiBridge.setSwapInterval(holder.surface, 0) }
+                .getOrDefault(false)
+            runCatching {
+                KenjiReport.watch(
+                    appContext,
+                    "интервал обмена буферов: " + if (swap) "0 (без синхронизации)" else "не принят"
+                )
+            }
 
             runOnUiThread { status.text = "второе ядро · готовлю ядро и прошивку" }
             KenjiBridge.noteStep("1/6 · загрузка ядра")
@@ -278,6 +293,12 @@ class KenjiPlayerActivity : Activity(), SurfaceHolder.Callback {
             // показа. Без этого Vulkan может рисовать в старую цепочку —
             // цикл идёт, а на экране ничего.
             KenjiBridge.noteStep("6/7 · рендерер")
+            // Журнал графики ядра — до пинка: пинок и его последствия должны
+            // быть в журнале, а не только в наших словах.
+            KenjiBridge.enableGraphicsLog()
+            // Синхронизация рендерера отдельным вызовом: в API ядра она своя,
+            // и официальное приложение зовёт её так же.
+            runCatching { KenjiBridge.setRendererVsync(EngineStore.config(appContext).vSyncMode) }
             val kick = KenjiBridge.rendererKick(w, h, displayRotation())
             if (!kick.ok) {
                 runOnUiThread { fail(kick.message) }
@@ -370,6 +391,11 @@ class KenjiPlayerActivity : Activity(), SurfaceHolder.Callback {
                     append("второе ядро · играет · ").append(seconds).append(" с")
                     append('\n').append(KenjiBridge.lastConfig)
                     append('\n').append(verdict)
+                    // Счётчик самого ядра рядом с нашим: если он растёт, а наш
+                    // стоит — картинка есть, а колбэк `frameEnded` до нас не
+                    // доходит. Это разные поломки с разными причинами.
+                    val coreFps = runCatching { KenjiBridge.gameFrameRate() }.getOrDefault(0.0)
+                    if (coreFps > 0.0) append("\nядро считает кадров/с: ").append((coreFps * 10).toInt() / 10.0)
                     if (KenjiBridge.lastUser.isEmpty()) {
                         append("\nпрофиль не открыт — сервис учётной записи может упасть")
                     }

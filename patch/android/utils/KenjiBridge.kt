@@ -115,6 +115,14 @@ object KenjiBridge {
     /** Поворот, размер, растяжение и пересоздание цепочки буферов. */
     private external fun nativeRendererKick(width: Int, height: Int, rotation: Int): String
     private external fun nativeSetWindowHandle(handle: Long)
+    /** Собственный журнал графики ядра: без него причина молчания не видна. */
+    private external fun nativeGraphicsLog(on: Boolean)
+    /** Синхронизация рендерера: у него свой вызов, отдельный от устройства. */
+    private external fun nativeRendererVsync(mode: Int)
+    /** Интервал обмена буферов у поверхности Android (0 — не ждать синхронизации). */
+    private external fun nativeSwapInterval(surface: android.view.Surface, interval: Int): Int
+    /** Сколько кадров в секунду считает само ядро — не наш колбэк. */
+    private external fun nativeGameFrameRate(): Double
     private external fun nativeLoadGame(fd: Int, type: Int): String
     private external fun nativeRunLoop(): String
     private external fun nativePlayStop()
@@ -914,6 +922,38 @@ object KenjiBridge {
     }
 
     /** Отдать ядру окно Android — по нему оно считает поворот и размер. */
+    /**
+     * Включить журнал графики ядра — один раз на запуск.
+     *
+     * Цена: несколько строк в его журнал. Польза: если кадров нет, в журнале
+     * будет сказано, на чём остановился Vulkan, а не только наше «кадров нет».
+     */
+    fun enableGraphicsLog() {
+        if (bridgeLoaded) runCatching { nativeGraphicsLog(true) }
+    }
+
+    /** Синхронизация рендерера — тем же числом, что ушло в устройство. */
+    fun setRendererVsync(mode: Int) {
+        if (bridgeLoaded) runCatching { nativeRendererVsync(mode) }
+    }
+
+    /**
+     * Не ждать вертикальную синхронизацию на поверхности.
+     *
+     * Официальное приложение делает это сразу после получения окна и повторяет
+     * после каждой перезаписи окна (`_nativeWindow.swapInterval = 0`).
+     *
+     * @return true, если система приняла значение
+     */
+    fun setSwapInterval(surface: android.view.Surface, interval: Int = 0): Boolean {
+        if (!bridgeLoaded) return false
+        return runCatching { nativeSwapInterval(surface, interval) == 0 }.getOrDefault(false)
+    }
+
+    /** Сколько кадров в секунду считает само ядро (0 — не считает или не рисует). */
+    fun gameFrameRate(): Double =
+        if (!bridgeLoaded) 0.0 else runCatching { nativeGameFrameRate() }.getOrDefault(0.0)
+
     fun setWindowHandle(handle: Long) {
         if (bridgeLoaded) runCatching { nativeSetWindowHandle(handle) }
     }
