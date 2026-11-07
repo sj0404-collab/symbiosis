@@ -14,6 +14,10 @@ static std::mutex record_lock;
 static std::string record;
 static bool accepted_value = false;
 static std::atomic<int> calls{0};
+static std::atomic<bool> synthetic_guest_released{false};
+static void release_synthetic_guest(bool, const char*) {
+    synthetic_guest_released = true;
+}
 static std::promise<void>* arrived = nullptr;
 static std::shared_future<void> release_response;
 
@@ -80,6 +84,22 @@ int main() {
     release.set_value();
     response.join(); closer.join();
     assert(disabled && !gate.send(third, true, "late"));
+
+    // Counterexample, not a fix: if a synthetic guest asks after disable,
+    // it cannot receive cancellation. Thus draining the gate proves library
+    // lifetime safety, but does NOT prove a guest can finish during close.
+    // No blocking wait or real core behaviour is assumed here.
+    synthetic_guest_released = false;
+    const auto late = gate.activate(release_synthetic_guest);
+    gate.disable();
+    assert(!gate.send(late, false, ""));
+    assert(!synthetic_guest_released.load());
+    // A still-open channel would let this particular synthetic guest finish;
+    // this does not prove responses are safe during a real core's Dispose.
+    const auto open = gate.activate(release_synthetic_guest);
+    assert(gate.send(open, false, ""));
+    assert(synthetic_guest_released.load());
+    gate.disable();
 
     // The gate accepts either order of response and disable, never a call
     // through a pointer after disable has returned.
