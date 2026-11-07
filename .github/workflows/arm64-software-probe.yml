@@ -27,6 +27,9 @@ jobs:
       - name: Install disposable probe toolchain and ARM64 image
         run: |
           set -euo pipefail
+          # The archived emulator still links PulseAudio even with -no-audio.
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends libpulse0
           sdkmanager --install 'ndk;28.2.13676358' 'platforms;android-35' 'build-tools;35.0.0' 'system-images;android-27;google_apis;arm64-v8a'
           curl -fsSL --retry 3 -o /tmp/kc.zip https://github.com/JetBrains/kotlin/releases/download/v2.0.21/kotlin-compiler-2.0.21.zip
           unzip -q /tmp/kc.zip -d /tmp

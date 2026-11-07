@@ -231,5 +231,4 @@ jobs:
   # branch, so branch-local changes can invoke this reusable workflow.
   software-arm64-probe:
     if: github.event_name == 'workflow_dispatch' && inputs.run_android_probe == true
-    needs: tests
     uses: ./.github/workflows/arm64-software-probe.yml
