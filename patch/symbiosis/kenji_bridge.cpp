@@ -79,10 +79,10 @@ namespace {
 
 // ── what the core imports from us ───────────────────────────────────
 //
-// Defined before anything else, because the core reaches for them during its
-// own initialisation. Empty bodies are correct: on the Kenji build these hook
-// a debugger and a window transform, neither of which applies here. What
-// matters is that dlsym finds them instead of failing.
+// Defined before anything else because the core can resolve them during its
+// own initialisation. The rendering-thread and window-transform callbacks are
+// NOT implemented yet; merely exporting their names does not provide their
+// behaviour. The release guard blocks the APK until these are verified.
 
 std::mutex g_lock;
 Symbiosis::KenjiUiResponseGate g_uiResponse;
@@ -541,11 +541,10 @@ void TapSetLogPath(const char* crashPath) {
 
 extern "C" {
 
-// Called by the core on its render thread. Kenji uses it to mark the thread
-// for its own bookkeeping; there is nothing to do here, but the symbol must
-// exist or deviceInitialize aborts.
+// Unimplemented: the reference JNI records pthread_self and a time point.
+// Its consumers and the necessary equivalent in this bridge are not proven.
+// The release guard intentionally rejects this empty body.
 JNIEXPORT void setRenderingThread() {
-    // Intentionally empty - see the note above.
 }
 
 // Called by the core at points it considers worth breaking on, including from
@@ -560,8 +559,8 @@ JNIEXPORT void debug_break(int code) {
     if (n > 0) AppendCrashLine(line);
 }
 
-// Window rotation. Without a surface attached there is nothing to rotate, but
-// again: the symbol has to resolve.
+// Unimplemented window transformation. Merely resolving this symbol is not
+// sufficient; release remains blocked until its Android behaviour is verified.
 JNIEXPORT void setCurrentTransform(long native_window, int transform) {
     (void)native_window;
     (void)transform;

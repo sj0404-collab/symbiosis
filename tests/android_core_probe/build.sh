@@ -19,6 +19,10 @@ unzip -p "$WORK/symbek.apk" lib/arm64-v8a/libkenjinx.so > "$WORK/core_space.so"
 echo 'd781048671e4cef1cde2ec15db8fe29b949df9949d83569ceaf776ad12901590  '"$WORK/core_space.so" | sha256sum -c -
 cp "$WORK/core_sym.so" "$WORK/apk/lib/arm64-v8a/libcore_sym.so"
 cp "$WORK/core_space.so" "$WORK/apk/lib/arm64-v8a/libcore_space.so"
+# Reference JNI and its C++ runtime stay exclusively in the disposable test APK.
+unzip -p "$WORK/symbek.apk" lib/arm64-v8a/libkenjinxjni.so > "$WORK/apk/lib/arm64-v8a/libreference_kenji_jni.so"
+echo '71de6400f5f8e2e9cba272405431e7cc497bd96631449dd3e7af35a6618e18a8  '"$WORK/apk/lib/arm64-v8a/libreference_kenji_jni.so" | sha256sum -c -
+unzip -p "$WORK/symbek.apk" lib/arm64-v8a/libc++_shared.so > "$WORK/apk/lib/arm64-v8a/libc++_shared.so"
 for lib in symbiosis_kenji kenjinxjni; do
   "$CXX" -std=c++17 -O2 -shared -fPIC -static-libstdc++ -Wl,-z,max-page-size=16384 \
     -Wl,-soname,"lib$lib.so" -I"$WORK" \
@@ -29,6 +33,9 @@ done
 "$CXX" -std=c++17 -O2 -shared -fPIC -static-libstdc++ -Wl,-z,max-page-size=16384 \
   -Wl,-soname,libcore_mock.so "$ROOT/tests/android_core_probe/mock_core.cpp" \
   -llog -o "$WORK/apk/lib/arm64-v8a/libcore_mock.so"
+"$CXX" -std=c++17 -O2 -shared -fPIC -static-libstdc++ -Wl,-z,max-page-size=16384 \
+  -Wl,-soname,libgraphics_reference_probe.so "$ROOT/tests/android_core_probe/graphics_reference_probe.cpp" \
+  -llog -ldl -landroid -lnativewindow -o "$WORK/apk/lib/arm64-v8a/libgraphics_reference_probe.so"
 "$KOTLINC_HOME/bin/kotlinc" "$ROOT/patch/android/kenjinx/KenjinxNative.kt" \
   "$ROOT/patch/android/utils/KenjiUiText.kt" \
   "$ROOT/patch/android/utils/KenjiUiCoordinator.kt" \
@@ -37,7 +44,8 @@ done
   -jvm-target 17 -classpath "$ANDROID_JAR" -d "$WORK/classes"
 javac -encoding UTF-8 -source 8 -target 8 -bootclasspath "$ANDROID_JAR" -d "$WORK/classes" \
   "$ROOT/tests/android_core_probe/src/org/yuzu/yuzu_emu/utils/KenjiBridge.java" \
-  "$ROOT/tests/android_core_probe/src/dev/symbiosis/coreprobe/ProbeActivity.java"
+  "$ROOT/tests/android_core_probe/src/dev/symbiosis/coreprobe/ProbeActivity.java" \
+  "$ROOT/tests/android_core_probe/src/dev/symbiosis/coreprobe/GraphicsProbeActivity.java"
 mapfile -d '' CLASSES < <(find "$WORK/classes" -name '*.class' -print0)
 "$BT/d8" --min-api 28 --lib "$ANDROID_JAR" --output "$WORK/dex" \
   "${CLASSES[@]}" "$KOTLINC_HOME/lib/kotlin-stdlib.jar"

@@ -36,6 +36,30 @@ printf '\n=== synthetic Android UI outcome: %s ===\n' "$ui_outcome"
 grep -E 'SymUiProbe|FATAL EXCEPTION|AndroidRuntime' "$ui_log" | tail -80 || true
 if [ "$ui_outcome" != pass ]; then failed=1; fi
 
+# Compare the pinned SymbEK binary's private transform callback with an
+# independent table on a test fake, then exercise the public API on a Surface.
+adb shell am force-stop "$APP"
+graphics_log="$PROBE_WORK/graphics-logcat.txt"
+adb logcat -T 1 -v time > "$graphics_log" 2>&1 &
+graphics_logpid=$!
+adb shell am start -n "$APP/.GraphicsProbeActivity" || true
+graphics_outcome=timeout
+for ((i=0; i<45; i++)); do
+  if grep -qE 'GRAPHICS_PROBE_FAIL|FATAL EXCEPTION|Fatal signal' "$graphics_log"; then graphics_outcome=fail; break; fi
+  if grep -q 'GRAPHICS_PROBE_OK' "$graphics_log"; then
+    sleep 2
+    if grep -qE 'GRAPHICS_PROBE_FAIL|FATAL EXCEPTION|Fatal signal' "$graphics_log"; then graphics_outcome=fail; else graphics_outcome=pass; fi
+    break
+  fi
+  sleep 1
+done
+adb shell am force-stop "$APP" || true
+kill "$graphics_logpid" 2>/dev/null || true
+wait "$graphics_logpid" 2>/dev/null || true
+printf '\n=== pinned graphics reference outcome: %s ===\n' "$graphics_outcome"
+grep -E 'SymGraphicsProbe|FATAL EXCEPTION|Fatal signal|AndroidRuntime' "$graphics_log" | tail -80 || true
+if [ "$graphics_outcome" != pass ]; then failed=1; fi
+
 for core in mock sym space; do
   adb shell am force-stop "$APP"
   # These belong only to the disposable probe, not the user's core journal.
