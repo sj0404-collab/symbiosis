@@ -14,6 +14,7 @@ import org.yuzu.yuzu_emu.utils.KenjiUiCoordinator
 import org.yuzu.yuzu_emu.utils.KenjiUiRequest
 import java.nio.charset.StandardCharsets
 import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicBoolean
 
 /** Disposable test app only. This is not a game, core or release screen. */
 class UiProbeActivity : Activity() {
@@ -21,7 +22,12 @@ class UiProbeActivity : Activity() {
     private lateinit var presenter: KenjiUiPresenter
     private lateinit var coordinator: KenjiUiCoordinator
     private val replies = AtomicInteger()
-    private fun markFail(message: String) { Log.e("SymUiProbe", "UI_PROBE_FAIL $message") }
+    private val destroyed = AtomicBoolean(false)
+    private val failed = AtomicBoolean(false)
+    private fun markFail(message: String) {
+        failed.set(true)
+        Log.e("SymUiProbe", "UI_PROBE_FAIL $message")
+    }
     private fun request() = KenjiUiRequest("Тест", "Сообщение", "Подсказка", 2,
         1, 12, 0, "Подзаголовок", "Имя")
     private fun inputIn(view: View): EditText? {
@@ -42,7 +48,7 @@ class UiProbeActivity : Activity() {
         super.onCreate(savedInstanceState)
         presenter = KenjiUiPresenter(this) { id, accepted, value -> coordinator.answer(id, accepted, value) }
         coordinator = KenjiUiCoordinator(
-            postMain = { task -> main.post(task) },
+            postMain = { task -> main.post { if (!destroyed.get()) task() } },
             present = { id, item ->
                 presenter.show(id, item)
                 val number = replies.get() + 1
@@ -75,13 +81,25 @@ class UiProbeActivity : Activity() {
                 val number = replies.incrementAndGet()
                 val text = String(bytes, StandardCharsets.UTF_8)
                 when {
-                    number == 1 && accepted && text == "Привет🎮" -> main.post { coordinator.request(request()) }
-                    number == 2 && !accepted && text.isEmpty() -> main.post { coordinator.request(request()) }
-                    number == 3 && !accepted && text.isEmpty() -> main.post {
-                        Log.i("SymUiProbe", "UI_PROBE_OK dialogs=3 buttons=true unicode=true stop=true")
-                        Thread { coordinator.closeAfterGuestStopped() }.start()
-                        finish()
+                    number == 1 && accepted && text == "Привет🎮" -> main.post {
+                        if (!destroyed.get()) coordinator.request(request())
                     }
+                    number == 2 && !accepted && text.isEmpty() -> main.post {
+                        if (!destroyed.get()) coordinator.request(request())
+                    }
+                    number == 3 && !accepted && text.isEmpty() -> Thread {
+                        try {
+                            coordinator.closeAfterGuestStopped()
+                            main.postDelayed({
+                                if (!destroyed.get() && !failed.get()) {
+                                    Log.i("SymUiProbe", "UI_PROBE_OK dialogs=3 buttons=true unicode=true stop=true")
+                                    finish()
+                                }
+                            }, 500)
+                        } catch (_: Throwable) {
+                            markFail("coordinator did not close cleanly")
+                        }
+                    }.start()
                     else -> markFail("unexpected response $number")
                 }
                 true
@@ -89,5 +107,19 @@ class UiProbeActivity : Activity() {
             onError = { markFail(it) },
         )
         coordinator.request(request())
+    }
+
+    override fun onDestroy() {
+        destroyed.set(true)
+        main.removeCallbacksAndMessages(null)
+        if (::presenter.isInitialized) presenter.dismiss()
+        if (::coordinator.isInitialized) {
+            coordinator.stop()
+            Thread {
+                try { coordinator.closeAfterGuestStopped() }
+                catch (_: Throwable) { markFail("cleanup failed") }
+            }.start()
+        }
+        super.onDestroy()
     }
 }

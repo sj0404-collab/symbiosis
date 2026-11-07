@@ -20,8 +20,13 @@ ui_logpid=$!
 adb shell am start -n "$APP/.UiProbeActivity" || true
 ui_outcome=timeout
 for ((i=0; i<45; i++)); do
-  if grep -q 'UI_PROBE_OK' "$ui_log"; then ui_outcome=pass; break; fi
   if grep -qE 'UI_PROBE_FAIL|FATAL EXCEPTION' "$ui_log"; then ui_outcome=fail; break; fi
+  if grep -q 'UI_PROBE_OK' "$ui_log"; then
+    # A success marker before an asynchronous crash is not a pass.
+    sleep 2
+    if grep -qE 'UI_PROBE_FAIL|FATAL EXCEPTION' "$ui_log"; then ui_outcome=fail; else ui_outcome=pass; fi
+    break
+  fi
   sleep 1
 done
 adb shell am force-stop "$APP" || true
