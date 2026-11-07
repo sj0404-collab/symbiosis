@@ -447,9 +447,10 @@ class KenjiProbeService : Service() {
                 runCatching {
                     KenjiBridge.pidFile(this@KenjiProbeService).writeText("${Process.myPid()}")
                 }
-                KenjiBridge.armCrashReport(this@KenjiProbeService)
-                status = runCatching { KenjiBridge.start(this@KenjiProbeService) }
-                    .getOrElse { KenjiBridge.Status(false, "Ошибка проверки ядра. Подробности в отчёте.") }
+                status = runCatching {
+                    KenjiBridge.armCrashReport(this@KenjiProbeService)
+                    KenjiBridge.start(this@KenjiProbeService)
+                }.getOrElse { KenjiBridge.Status(false, "Ошибка проверки ядра. Подробности в отчёте.") }
                 if (status.ok) {
                     runCatching { KenjiBridge.crashReportFile(this@KenjiProbeService).delete() }
                 }

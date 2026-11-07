@@ -43,6 +43,7 @@ class GameSessionContract(unittest.TestCase):
         work = PROBE.split('val lease = when (val result = GameSessionLock.tryAcquire(', 1)[1]
         self.assertLess(work.index('KenjiBridge.start('), work.index('KenjiBridge.unload()'))
         self.assertLess(work.index('KenjiBridge.unload()'), work.index('lease.close()'))
+        self.assertIn('status = runCatching {\n                    KenjiBridge.armCrashReport', work)
         destroy = PROBE.split('override fun onDestroy()', 1)[1]
         self.assertNotIn('KenjiBridge.unload()', destroy)
         self.assertNotIn('Process.killProcess(', destroy)
