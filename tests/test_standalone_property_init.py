@@ -40,11 +40,12 @@ extern "C" int __system_property_add(const char*, unsigned, const char*, unsigne
         return subprocess.run([str(self.probe), str(source)], capture_output=True, text=True, env=env)
 
     def test_uses_image_properties_not_other_values(self):
-        result = self.run_probe('ro.product.cpu.abilist64=arm64-v8a\nro.build.version.sdk=27\nfoo=ignored\n')
+        result = self.run_probe('ro.product.cpu.abilist64=arm64-v8a\nro.build.version.sdk=27\nro.build.version.all_codenames=REL\nfoo=ignored\n')
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn('IMAGE_PROPERTY ro.product.cpu.abilist64=arm64-v8a', result.stdout)
+        self.assertIn('IMAGE_PROPERTY ro.build.version.all_codenames=REL', result.stdout)
         self.assertNotIn('foo=', result.stdout)
-        self.assertIn('PROPERTY_IMAGE_VALUES_ADDED=2', result.stdout)
+        self.assertIn('PROPERTY_IMAGE_VALUES_ADDED=3', result.stdout)
 
     def test_fsetxattr_warning_is_not_silent(self):
         result = self.run_probe('ro.product.cpu.abilist64=arm64-v8a\nro.build.version.sdk=27\n', MOCK_INIT_WARN='1')

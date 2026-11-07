@@ -31,8 +31,7 @@ int main(int argc, char** argv) {
         equal[std::strcspn(equal, "\r\n")] = '\0';
         const bool selected = !std::strncmp(line, "ro.product.cpu.", 15) ||
                               !std::strncmp(line, "dalvik.vm.", 10) ||
-                              !std::strcmp(line, "ro.build.version.sdk") ||
-                              !std::strcmp(line, "ro.build.version.release") ||
+                              !std::strncmp(line, "ro.build.version.", 17) ||
                               !std::strcmp(line, "persist.sys.dalvik.vm.lib.2");
         if (!selected) continue;
         if (std::strlen(equal) >= PROP_VALUE_MAX) { std::fprintf(stderr, "PROPERTY_VALUE_TOO_LONG %s\n", line); std::fclose(file); return 6; }

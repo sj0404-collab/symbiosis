@@ -5109,3 +5109,15 @@ ASIMDRDM. Попытка JNI через `app_process` завершилась в�
 конфликт поиска библиотек, но причинность надо проверить. Для следующего теста
 пути для ART и standalone Android изменены на `/system/lib64:$W`, и добавлено
 сравнение обоих порядков в отдельных процессах. Никакие ядра не подменяются.
+
+[Run 42408612584](https://github.com/sj0404-collab/symbiosis/actions/runs/42408612584),
+код `a0344b5`: на одном ARM runner отдельный `dlopen` показал `BN_num_bytes`
+с private-first и успех с system-first. ART с system-first прошёл этап
+`libjavacore` и дошёл до Java `RuntimeInit`, но до нашего `Main` и вызова ядра
+оборвался `ExceptionInInitializerError` в `Build.VERSION` с пустым массивом;
+позднее при обработке ошибки указал на отсутствие Binder. Это не отказ ядра.
+Согласно AOSP Android 8.1 `Build.VERSION` обращается к первому элементу свойства
+`ro.build.version.all_codenames`; его ранее не включали в набор, поэтому теперь
+эксперимент читает все `ro.build.version.*` исключительно из того же образа.
+Это проверяемая гипотеза, а не подтверждённое устранение ошибки. Настоящий log:
+[artifact 13588567373](https://github.com/sj0404-collab/symbiosis/actions/runs/42408612584/artifacts/13588567373).
