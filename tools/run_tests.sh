@@ -209,6 +209,7 @@ if command -v kotlinc >/dev/null 2>&1; then
       # Разбор отчёта о падении второго ядра: файл пишет обработчик сигнала,
       # читает обычный код после смерти процесса.
       KenjiCrashTest) echo "$HERE/patch/android/utils/KenjiCrash.kt" ;;
+      KenjiUiTextTest) echo "$HERE/patch/android/utils/KenjiUiText.kt" ;;
       KenjiInputMapTest) echo "$HERE/patch/android/utils/KenjiInputMap.kt" ;;
       KenjiSurfaceStartGateTest) echo "$HERE/patch/android/utils/KenjiSurfaceStartGate.kt" ;;
       KenjiStartupCoordinatorTest) echo "$HERE/patch/android/utils/KenjiStartupCoordinator.kt" ;;
