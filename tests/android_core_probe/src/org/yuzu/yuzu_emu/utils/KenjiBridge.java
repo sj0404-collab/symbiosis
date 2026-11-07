@@ -6,4 +6,8 @@ public final class KenjiBridge {
     public native String nativeLoad(String path);
     public native int nativeSymbolCount();
     public native String nativeInitialize(String dataPath);
+    public native long nativeUiActivate();
+    public native boolean nativeUiSetup();
+    public native boolean nativeUiRespond(long generation, boolean accepted, byte[] bytes);
+    public native void nativeUnload();
 }

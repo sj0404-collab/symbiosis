@@ -31,7 +31,7 @@ printf '\n=== synthetic Android UI outcome: %s ===\n' "$ui_outcome"
 grep -E 'SymUiProbe|FATAL EXCEPTION|AndroidRuntime' "$ui_log" | tail -80 || true
 if [ "$ui_outcome" != pass ]; then failed=1; fi
 
-for core in sym space; do
+for core in mock sym space; do
   adb shell am force-stop "$APP"
   # These belong only to the disposable probe, not the user's core journal.
   adb shell run-as "$APP" rm -f files/probe-crash.txt files/kenji-stdout.txt files/kenji-jni.txt
@@ -57,8 +57,14 @@ for core in sym space; do
   done
   kill "$logpid" 2>/dev/null || true
   wait "$logpid" 2>/dev/null || true
+  if [ "$core" = mock ] && [ "$outcome" = pass ]; then
+    if ! grep -q 'MOCK_UI_SETUP_OK' "$log" ||
+       ! grep -q 'MOCK_UI_RESPONSE_OK accepted=1' "$log" ||
+       ! grep -q 'MOCK_UI_RESPONSE_OK accepted=0' "$log" ||
+       grep -q 'MOCK_UI_RESPONSE_FAIL' "$log"; then outcome=fail; fi
+  fi
   printf '\n=== %s outcome: %s ===\n' "$core" "$outcome"
-  grep -E 'SymCoreProbe|SymbiosisKenji|RyujinxLog|FATAL EXCEPTION|Fatal signal|linker.*(error|cannot)' "$log" | tail -120 || true
+  grep -E 'SymCoreProbe|SymMockCore|SymbiosisKenji|RyujinxLog|FATAL EXCEPTION|Fatal signal|linker.*(error|cannot)' "$log" | tail -120 || true
   if [ "$outcome" != pass ]; then failed=1; fi
 done
 exit "$failed"

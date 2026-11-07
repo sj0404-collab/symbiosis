@@ -17,7 +17,7 @@ public final class ProbeActivity extends Activity {
     @Override public void onCreate(Bundle state) {
         super.onCreate(state);
         String flavor = getIntent().getStringExtra("core");
-        if (!"sym".equals(flavor) && !"space".equals(flavor)) {
+        if (!"sym".equals(flavor) && !"space".equals(flavor) && !"mock".equals(flavor)) {
             fail("invalid core selector");
             return;
         }
@@ -63,6 +63,24 @@ public final class ProbeActivity extends Activity {
             if (result == null || !result.isEmpty()) {
                 fail("javaInitialize returned: " + result);
                 return;
+            }
+            if ("mock".equals(flavor)) {
+                // Actual production JNI functions; only the dynamically loaded
+                // core is a disposable mock. No games or firmware are involved.
+                long generation = bridge.nativeUiActivate();
+                if (generation <= 0 || !bridge.nativeUiSetup() ||
+                    !bridge.nativeUiRespond(generation, true,
+                        "Привет🎮".getBytes(java.nio.charset.StandardCharsets.UTF_8)) ||
+                    !bridge.nativeUiRespond(generation, false, new byte[0])) {
+                    fail("mock core UI setup or response rejected");
+                    return;
+                }
+                bridge.nativeUnload();
+                if (bridge.nativeUiRespond(generation, true, new byte[0])) {
+                    fail("response allowed after unload");
+                    return;
+                }
+                Log.i(TAG, "MOCK_JNI_UI_OK");
             }
             Log.i(TAG, "PROBE_OK core=" + flavor + " javaInitialize=returned-success");
         } catch (Throwable t) {

@@ -25,13 +25,17 @@ for lib in symbiosis_kenji kenjinxjni; do
     "$ROOT/patch/symbiosis/kenji_bridge.cpp" "$ROOT/patch/symbiosis/got_patch.cpp" \
     -llog -ldl -landroid -o "$WORK/apk/lib/arm64-v8a/lib$lib.so"
 done
+# Synthetic test fixture is packaged only into this disposable probe APK.
+"$CXX" -std=c++17 -O2 -shared -fPIC -static-libstdc++ -Wl,-z,max-page-size=16384 \
+  -Wl,-soname,libcore_mock.so "$ROOT/tests/android_core_probe/mock_core.cpp" \
+  -llog -o "$WORK/apk/lib/arm64-v8a/libcore_mock.so"
 "$KOTLINC_HOME/bin/kotlinc" "$ROOT/patch/android/kenjinx/KenjinxNative.kt" \
   "$ROOT/patch/android/utils/KenjiUiText.kt" \
   "$ROOT/patch/android/utils/KenjiUiCoordinator.kt" \
   "$ROOT/patch/android/activities/KenjiUiPresenter.kt" \
   "$ROOT/tests/android_core_probe/src/dev/symbiosis/coreprobe/UiProbeActivity.kt" \
   -jvm-target 17 -classpath "$ANDROID_JAR" -d "$WORK/classes"
-javac -source 8 -target 8 -bootclasspath "$ANDROID_JAR" -d "$WORK/classes" \
+javac -encoding UTF-8 -source 8 -target 8 -bootclasspath "$ANDROID_JAR" -d "$WORK/classes" \
   "$ROOT/tests/android_core_probe/src/org/yuzu/yuzu_emu/utils/KenjiBridge.java" \
   "$ROOT/tests/android_core_probe/src/dev/symbiosis/coreprobe/ProbeActivity.java"
 mapfile -d '' CLASSES < <(find "$WORK/classes" -name '*.class' -print0)
