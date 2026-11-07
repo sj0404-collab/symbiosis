@@ -14,6 +14,10 @@ on:
         description: "Run disposable real-core Android emulator probe after host tests"
         type: boolean
         default: false
+      run_arm_linux_probe:
+        description: "Run experimental ARM64 Linux/Bionic loader probe (not Android)"
+        type: boolean
+        default: false
   push:
     branches: [main]
     paths:
@@ -237,3 +241,8 @@ jobs:
   software-arm64-probe:
     if: github.event_name == 'workflow_dispatch' && inputs.run_android_probe == true
     uses: ./.github/workflows/arm64-software-probe.yml
+
+  # Native ARM64 Linux + authentic Android Bionic, strictly loader-only.
+  direct-arm-linux-probe:
+    if: github.event_name == 'workflow_dispatch' && inputs.run_arm_linux_probe == true
+    uses: ./.github/workflows/arm64-linux-bionic-probe.yml

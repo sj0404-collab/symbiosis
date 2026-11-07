@@ -1,0 +1,106 @@
+name: Experimental ARM64 Linux + Android Bionic loader (not a release)
+
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  compile:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v4
+      - name: Compile only the small Android native loader probe
+        run: |
+          set -euo pipefail
+          sdkmanager --install 'ndk;28.2.13676358'
+          CXX="$ANDROID_HOME/ndk/28.2.13676358/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android27-clang++"
+          "$CXX" -std=c++17 -Wall -Wextra -Werror -O2 -static-libstdc++ -Wl,-z,max-page-size=16384 \
+            tests/standalone_core_probe/probe.cpp -ldl -o /tmp/standalone-core-probe
+          file /tmp/standalone-core-probe
+      - uses: actions/upload-artifact@v4
+        with:
+          name: arm64-bionic-standalone-loader
+          path: /tmp/standalone-core-probe
+          retention-days: 1
+
+  native-arm64-linux:
+    needs: compile
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: arm64-bionic-standalone-loader
+          path: /tmp/arm-native-probe
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v4
+      - name: Install Android ARM64 system image only
+        run: |
+          set -euo pipefail
+          test "$(uname -m)" = aarch64
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends android-sdk-libsparse-utils
+          sdkmanager --install 'system-images;android-27;google_apis;arm64-v8a'
+      - name: Check pinned cores and load directly on ARM64 Linux with Android Bionic
+        run: |
+          set -euo pipefail
+          W=/tmp/arm-native-probe
+          mkdir -p "$W/logs"
+          curl -fsSL --retry 3 -o "$W/sym.so" https://github.com/sj0404-collab/symbiosis/releases/download/engine-kenji/libkenji.so
+          curl -fsSL --retry 3 -o "$W/symbek.apk" https://github.com/sj0404-collab/SymbEK/releases/download/v1.0.121/Kenji-Space-1.0.121.apk
+          echo "969431b3962408dd02ce38bd2cd4b2a954d11e5212ddef3f65c80a0b419918b8  $W/sym.so" | sha256sum -c -
+          echo "f9eb3ecfaf5700df1b5d575984ab1588848c0eb6a70b2acb19b9e6243705f95e  $W/symbek.apk" | sha256sum -c -
+          unzip -p "$W/symbek.apk" lib/arm64-v8a/libkenjinx.so > "$W/space.so"
+          echo "d781048671e4cef1cde2ec15db8fe29b949df9949d83569ceaf776ad12901590  $W/space.so" | sha256sum -c -
+          rm "$W/symbek.apk"
+          cp patch/libs/arm64-v8a/libcrypto.so patch/libs/arm64-v8a/libssl.so "$W/"
+          chmod +x "$W/standalone-core-probe"
+          IMAGE="$ANDROID_HOME/system-images/android-27/google_apis/arm64-v8a/system.img"
+          file "$IMAGE"
+          # Sparse images are not mountable until converted; raw ext4 needs no conversion.
+          if file "$IMAGE" | grep -qi 'sparse'; then
+            simg2img "$IMAGE" "$W/system-raw.img"
+            IMAGE="$W/system-raw.img"
+          fi
+          test ! -e /system
+          sudo mkdir -p /system "$W/system-mount"
+          cleanup() { sudo umount /system 2>/dev/null || true; sudo umount "$W/system-mount" 2>/dev/null || true; }
+          trap cleanup EXIT
+          sudo mount -o loop,ro "$IMAGE" "$W/system-mount"
+          if test -x "$W/system-mount/bin/linker64"; then ROOT="$W/system-mount";
+          elif test -x "$W/system-mount/system/bin/linker64"; then ROOT="$W/system-mount/system";
+          else echo 'BIONIC_SETUP_FAIL linker64 missing'; exit 1; fi
+          sudo mount --bind "$ROOT" /system
+          printf 'Host is ARM64 Linux with a mounted Android system image, not an Android device.\n' | tee "$W/logs/environment.txt"
+          uname -a | tee -a "$W/logs/environment.txt"
+          ls -l /system/bin/linker64 /system/lib64/libc.so | tee -a "$W/logs/environment.txt"
+          set +e
+          for core in sym space; do
+            echo "=== $core, direct Linux/Bionic dlopen, no JNI ===" | tee "$W/logs/$core.txt"
+            timeout 90s env LD_LIBRARY_PATH="$W:/system/lib64" "$W/standalone-core-probe" "$W/$core.so" 2>&1 | tee -a "$W/logs/$core.txt"
+            rc=${PIPESTATUS[0]}
+            echo "EXIT_CODE=$rc" | tee -a "$W/logs/$core.txt"
+            if [ "$rc" != 0 ]; then failed=1; fi
+          done
+          set -e
+          exit "${failed:-0}"
+      - name: Save logs (no APK, core, or system image)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: arm64-linux-bionic-probe-logs
+          path: /tmp/arm-native-probe/logs/*.txt
+          if-no-files-found: warn
+          retention-days: 3
