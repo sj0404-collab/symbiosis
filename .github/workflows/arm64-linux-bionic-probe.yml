@@ -17,18 +17,24 @@ jobs:
           distribution: temurin
           java-version: '17'
       - uses: android-actions/setup-android@v4
-      - name: Compile only the small Android native loader probe
+      - name: Compile diagnostic loader and real-ART JNI entry (no APK)
+        env:
+          KOTLINC_HOME: /tmp/kotlinc
+          STANDALONE_WORK: /tmp/bionic-assets
         run: |
           set -euo pipefail
-          sdkmanager --install 'ndk;28.2.13676358'
-          CXX="$ANDROID_HOME/ndk/28.2.13676358/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android27-clang++"
-          "$CXX" -std=c++17 -Wall -Wextra -Werror -O2 -static-libstdc++ -Wl,-z,max-page-size=16384 \
-            tests/standalone_core_probe/probe.cpp -ldl -o /tmp/standalone-core-probe
-          file /tmp/standalone-core-probe
+          sdkmanager --install 'ndk;28.2.13676358' 'platforms;android-35' 'build-tools;35.0.0'
+          curl -fsSL --retry 3 -o /tmp/kotlin.zip https://github.com/JetBrains/kotlin/releases/download/v2.0.21/kotlin-compiler-2.0.21.zip
+          unzip -q /tmp/kotlin.zip -d /tmp
+          bash tests/standalone_core_probe/build_assets.sh
       - uses: actions/upload-artifact@v4
         with:
           name: arm64-bionic-standalone-loader
-          path: /tmp/standalone-core-probe
+          path: |
+            /tmp/bionic-assets/standalone-core-probe
+            /tmp/bionic-assets/libstandalonejni.so
+            /tmp/bionic-assets/libkenjinxjni.so
+            /tmp/bionic-assets/standalone.jar
           retention-days: 1
 
   native-arm64-linux:
@@ -54,14 +60,22 @@ jobs:
           curl -fsSL --retry 3 -o "$W/system-image.zip" \
             https://dl.google.com/android/repository/sys-img/google_apis/arm64-v8a-27_r03.zip
           echo "54dd140e1dd2db0fb7879beecf1068bf476ad171  $W/system-image.zip" | sha1sum -c -
-          python3 - "$W/system-image.zip" "$W/system.img" <<'PY'
-          import shutil, sys, zipfile
+          python3 - "$W/system-image.zip" "$W/system.img" "$W/bootclasspath.txt" <<'PY'
+          import gzip, re, shutil, sys, zipfile
           with zipfile.ZipFile(sys.argv[1]) as archive:
-              found = [p for p in archive.namelist() if p == 'system.img' or p.endswith('/system.img')]
-              if len(found) != 1:
-                  raise SystemExit('expected exactly one system.img')
-              with archive.open(found[0]) as source, open(sys.argv[2], 'wb') as dest:
+              def unique(name):
+                  paths = [p for p in archive.namelist() if p == name or p.endswith('/' + name)]
+                  if len(paths) != 1: raise SystemExit('expected exactly one ' + name)
+                  return paths[0]
+              with archive.open(unique('system.img')) as source, open(sys.argv[2], 'wb') as dest:
                   shutil.copyfileobj(source, dest, 1024 * 1024)
+              ramdisk = gzip.decompress(archive.read(unique('ramdisk.img')))
+              values = re.findall(rb'(?m)^[ \t]*export BOOTCLASSPATH ([^\r\n]+)$', ramdisk)
+              if len(values) != 1: raise SystemExit('expected one BOOTCLASSPATH in init ramdisk')
+              paths = values[0].decode('ascii').split(':')
+              if not all(re.fullmatch(r'/system/framework/[A-Za-z0-9_.-]+\.jar', p) for p in paths):
+                  raise SystemExit('unexpected BOOTCLASSPATH value')
+              with open(sys.argv[3], 'w') as dest: dest.write(':'.join(paths))
           PY
           rm "$W/system-image.zip"
       - name: Check pinned cores and load directly on ARM64 Linux with Android Bionic
@@ -110,6 +124,29 @@ jobs:
             if [ "$rc" != 0 ]; then failed=1; fi
           done
           set -e
+          # Try the real Android ART app_process, not a fabricated JNIEnv. This
+          # is exploratory: Linux lacks Android daemons/devices and ART may not
+          # start. Report each stage without treating a loader pass as JNI pass.
+          BCP=$(cat "$W/bootclasspath.txt")
+          IFS=: read -ra BOOT_JARS <<< "$BCP"
+          for jar in "${BOOT_JARS[@]}"; do
+            if [ ! -f "$jar" ]; then echo "MISSING_BOOT_JAR $jar" | tee -a "$W/logs/environment.txt"; failed=1; fi
+          done
+          mkdir -p "$W/android-data/dalvik-cache/arm64"
+          for core in sym space; do
+            data="$W/data-$core"
+            mkdir -p "$data"/{Logs,Games,Profiles,Keys}
+            echo "=== $core, real Android ART/JNI attempt on ARM Linux; no APK, no game ===" | tee "$W/logs/jni-$core.txt"
+            set +e
+            timeout 120s env ANDROID_ROOT=/system ANDROID_DATA="$W/android-data" BOOTCLASSPATH="$BCP" \
+              CLASSPATH="$W/standalone.jar" LD_LIBRARY_PATH="$W:/system/lib64" DOTNET_GCRegionRange=400000000 \
+              /system/bin/app_process /system/bin dev.symbiosis.standalone.Main \
+              "$W/libstandalonejni.so" "$W/$core.so" "$data" 2>&1 | tee -a "$W/logs/jni-$core.txt"
+            rc=${PIPESTATUS[0]}
+            set -e
+            echo "EXIT_CODE=$rc" | tee -a "$W/logs/jni-$core.txt"
+            if [ "$rc" != 0 ] || ! grep -q 'JNI_RESULT javaInitialize=true' "$W/logs/jni-$core.txt"; then failed=1; fi
+          done
           exit "${failed:-0}"
       - name: Save logs (no APK, core, or system image)
         if: always()
