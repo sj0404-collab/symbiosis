@@ -49,6 +49,28 @@ class InputContract(unittest.TestCase):
         self.assertIn('KenjiCrash.mergeHidOperations(hidCalls, fresh)', ACTIVITY)
         self.assertIn('контекст, не доказательство причины', ACTIVITY)
 
+    def test_open_status_dialog_dismissed_on_failure(self):
+        fail = ACTIVITY.split('private fun fail(msg: String)', 1)[1].split('private fun openRom', 1)[0]
+        self.assertLess(fail.index('detailsDialog?.dismiss()'), fail.index('setContentView(screen)'))
+        self.assertIn('detailsText?.text = details', ACTIVITY)
+        self.assertIn('if (!guestFailed && !failed) checkGuestFailure(appContext)', ACTIVITY)
+
+    def test_no_frame_callback_does_not_stop_game(self):
+        block = ACTIVITY.split('if (!noFramesWarned && frames == 0L', 1)[1].split('if (!guestFailed) checkGuestFailure', 1)[0]
+        self.assertIn('noFramesWarned = true', block)
+        self.assertNotIn('requestStop()', block)
+        self.assertNotIn('setCoreFor', block)
+        self.assertNotIn('fail(', block)
+        self.assertNotIn('giveUpOnFrames', ACTIVITY)
+
+    def test_stub_logging_is_requested_after_core_initialized_before_game(self):
+        self.assertLess(ACTIVITY.index('KenjiBridge.preparePlay(appContext, config)'), ACTIVITY.index('KenjiBridge.enableHidStubLog()'))
+        self.assertLess(ACTIVITY.index('KenjiBridge.enableHidStubLog()'), ACTIVITY.index('KenjiBridge.loadGame(fd'))
+        call = BRIDGE.split('KenjiBridge_nativeEnableHidStubLog', 1)[1].split('JNIEXPORT', 1)[0]
+        self.assertIn('"loggingSetEnabled"', call)
+        self.assertIn('void (*)(int, bool)', call)
+        self.assertIn('fn(1, true)', call)
+
     def test_failed_connect_is_not_reported_as_success(self):
         self.assertIn('if (padId < 0)', ACTIVITY)
         self.assertIn('ядро не подключило', ACTIVITY)

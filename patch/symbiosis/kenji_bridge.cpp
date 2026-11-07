@@ -2014,6 +2014,19 @@ Java_org_yuzu_yuzu_1emu_utils_KenjiBridge_nativeSetWindowHandle(JNIEnv*, jobject
  * Подпись сверена не по догадке: в официальном `KenjinxNative` это
  * `loggingEnabledGraphicsLog(enabled: Boolean)`, то есть `void(bool)`.
  */
+// Related Android host exposes loggingSetEnabled(int logLevel, bool enabled).
+// LogLevel.Stub is ordinal 1 in that source; the binary's export is verified.
+JNIEXPORT jboolean JNICALL
+Java_org_yuzu_yuzu_1emu_utils_KenjiBridge_nativeEnableHidStubLog(JNIEnv*, jobject) {
+    std::lock_guard<std::mutex> guard(g_lock);
+    if (g_core == nullptr) return JNI_FALSE;
+    using Fn = void (*)(int, bool);
+    auto fn = reinterpret_cast<Fn>(dlsym(g_core, "loggingSetEnabled"));
+    if (fn == nullptr) return JNI_FALSE;
+    fn(1, true);
+    return JNI_TRUE;
+}
+
 JNIEXPORT void JNICALL
 Java_org_yuzu_yuzu_1emu_utils_KenjiBridge_nativeGraphicsLog(JNIEnv*, jobject, jboolean on) {
     if (g_core == nullptr) return;

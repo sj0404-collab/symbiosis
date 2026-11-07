@@ -276,6 +276,10 @@ fun main() {
     check("шум JniUpdateInput не попал в HID", KenjiCrash.hidOperations(hidTrace).none { it.contains("JniUpdateInput") })
     check("ограничение истории", KenjiCrash.mergeHidOperations(emptyMap(), hidTrace, 1).size == 1)
     check("нулевой предел", KenjiCrash.mergeHidOperations(emptyMap(), hidTrace, 0).isEmpty())
+    val stub = "00:00:06.994 |S| {Hid} ServiceHid SetSupportedNpadIdType: Stubbed. 2 Players: Player1,Handheld"
+    check("параметры поддерживаемых игроков сохраняются", KenjiCrash.hidOperations(stub).single().contains("Player1"))
+    val params = KenjiCrash.mergeHidOperations(ops, stub)
+    check("параметры не подменяются строкой вызова", params.values.any { it.contains("2 Players") })
 
     println()
     println("passed=$passed failed=$failed")

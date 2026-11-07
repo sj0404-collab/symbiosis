@@ -106,7 +106,7 @@ class KenjiPlayerActivity : Activity(), SurfaceHolder.Callback {
     private val noFramesLimitSeconds = 30
 
     /** Уже сдались по кадрам: второй раз сообщение не показываем. */
-    private var noFramesGivenUp = false
+    private var noFramesWarned = false
     /** Сколько байт журнала ядра уже прочитано: ищем только новое. */
     private var coreLogOffset = 0L
     private var coreLogPath: String? = null
@@ -120,6 +120,8 @@ class KenjiPlayerActivity : Activity(), SurfaceHolder.Callback {
     private var playStartedAt = 0L
     private lateinit var status: TextView
     private var statusDetails = ""
+    private var detailsDialog: AlertDialog? = null
+    private var detailsText: TextView? = null
     private fun dp(value: Int): Int = (value * resources.displayMetrics.density + .5f).toInt()
     private fun darkButton(textLabel: String, action: () -> Unit): Button = Button(this).apply {
         text = textLabel
@@ -135,6 +137,7 @@ class KenjiPlayerActivity : Activity(), SurfaceHolder.Callback {
         if (failed) return
         status.text = summary
         statusDetails = details
+        detailsText?.text = details
     }
     private fun showStatusDetails() {
         if (statusDetails.isBlank() || isFinishing) return
@@ -149,11 +152,21 @@ class KenjiPlayerActivity : Activity(), SurfaceHolder.Callback {
             setBackgroundColor(Color.rgb(25, 27, 33))
             addView(textView)
         }
-        AlertDialog.Builder(this, android.R.style.Theme_Material_Dialog_Alert)
+        val dialog = AlertDialog.Builder(this, android.R.style.Theme_Material_Dialog_Alert)
             .setTitle("Состояние второго ядра")
             .setView(scroll)
             .setPositiveButton("Закрыть", null)
-            .show()
+            .create()
+        detailsDialog?.dismiss()
+        detailsText = textView
+        detailsDialog = dialog
+        dialog.setOnDismissListener {
+            if (detailsDialog === dialog) {
+                detailsDialog = null
+                detailsText = null
+            }
+        }
+        dialog.show()
     }
     private lateinit var overlay: InputOverlay
     // Kenji's current API exposes only one touchscreen pointer.
@@ -310,6 +323,13 @@ class KenjiPlayerActivity : Activity(), SurfaceHolder.Callback {
                 return@Thread
             }
 
+            // Enable the core's own stub log to capture the guest's requested
+            // Npad IDs/styles. The available sibling source calls this level 1;
+            // this is diagnostic and its binary compatibility remains untested.
+            val stubLog = KenjiBridge.enableHidStubLog()
+            runCatching { KenjiReport.watch(appContext,
+                if (stubLog) "отправлен запрос на журнал параметров служб" else "запрос журнала параметров служб недоступен") }
+
             // Порядок как в официальном Kenji: конфигурация графики →
             // рендерер → устройство → игра. Устройство без рендерера ядро
             // создать отказывается (его InitializeContext проверяет
@@ -419,7 +439,10 @@ class KenjiPlayerActivity : Activity(), SurfaceHolder.Callback {
             KenjiBridge.noteStep("7/7 · цикл отрисовки")
             KenjiBridge.runLoop()
             KenjiBridge.noteStep("цикл завершён")
-            runOnUiThread { if (!guestFailed && !noFramesGivenUp) leave() }
+            runOnUiThread {
+                if (!guestFailed && !failed) checkGuestFailure(appContext)
+                if (!guestFailed && !failed) leave()
+            }
           } catch (t: Throwable) {
             runCatching {
                 KenjiBridge.crashReportFile(appContext).appendText(
@@ -477,24 +500,18 @@ class KenjiPlayerActivity : Activity(), SurfaceHolder.Callback {
                         )
                     }
                 }
-                // Ни одного кадра за полминуты — это не «ещё грузится».
-                //
-                // 06.11 на Mali-G57 игра загрузилась внутри ядра
-                // («Application Loaded: Vault of Power»), поверхность была
-                // создана, а кадров не появилось и за минуту. Человек всё это
-                // время смотрел на чёрный экран и ждал.
-                //
-                // Ждать бесконечно нельзя: через тридцать секунд говорим
-                // прямо, что второе ядро на этом устройстве кадры не отдаёт,
-                // и запоминаем игру за Eden — чтобы следующий запуск пошёл
-                // сразу рабочим путём, без чёрного экрана.
-                if (!noFramesGivenUp && frames == 0L &&
+                // Отсутствие колбэков не доказывает отсутствие кадров.
+                // Показываем предупреждение, но не останавливаем игру и не
+                // переключаем её на другое ядро по одному счётчику.
+                if (!noFramesWarned && frames == 0L &&
                     org.kenjinx.android.KenjinxNative.surfaceAsked.get() > 0L &&
                     seconds >= noFramesLimitSeconds
                 ) {
-                    noFramesGivenUp = true
-                    giveUpOnFrames(appContext)
-                    return
+                    checkGuestFailure(appContext)
+                    if (guestFailed) return
+                    noFramesWarned = true
+                    runCatching { KenjiReport.watch(appContext,
+                        "30 с без callback кадров; это не доказывает отсутствие кадров") }
                 }
                 if (!guestFailed) checkGuestFailure(appContext)
                 // Игра встала внутри ядра: экран уже показывает причину, и
@@ -502,10 +519,17 @@ class KenjiPlayerActivity : Activity(), SurfaceHolder.Callback {
                 // именно объяснение.
                 if (guestFailed) return
                 val tail = coreLogTail(appContext, 2)
+                // The log may have advanced between the first check and tail().
+                if (tail.contains("SvcBreak", ignoreCase = true) ||
+                    tail.contains("Unhandled exception in guest thread", ignoreCase = true)) {
+                    checkGuestFailure(appContext)
+                    if (guestFailed) return
+                }
                 val details = buildString {
                     append("второе ядро · выполняется · ").append(seconds).append(" с")
                     append('\n').append(KenjiBridge.lastConfig)
                     append('\n').append(verdict)
+                    if (noFramesWarned && frames == 0L) append("\nНет callback кадров за 30 с; это не доказывает, что кадров нет. Игра не остановлена автоматически.")
                     // Счётчик самого ядра рядом с нашим: если он растёт, а наш
                     // стоит — картинка есть, а колбэк `frameEnded` до нас не
                     // доходит. Это разные поломки с разными причинами.
@@ -525,7 +549,9 @@ class KenjiPlayerActivity : Activity(), SurfaceHolder.Callback {
                             ?.let { line -> append('\n').append(line) }
                     }
                 }
-                updateStatus("Второе ядро · $seconds с · подробнее", details)
+                val summary = if (noFramesWarned && frames == 0L)
+                    "Второе ядро · нет callback · подробнее" else "Второе ядро · $seconds с · подробнее"
+                updateStatus(summary, details)
                 // Тот же текст — в отчёт. Человеку некогда делать скриншот на
                 // чёрном экране, поэтому всё, что видно, записывается само.
                 runCatching {
@@ -552,53 +578,6 @@ class KenjiPlayerActivity : Activity(), SurfaceHolder.Callback {
      * Починить это наше ядро не может — это его внутренняя ошибка. Зато
      * приложение запоминает игру и в следующий раз запускает её на Eden.
      */
-    /**
-     * Второе ядро не отдало ни кадра — сказать и перевести игру на Eden.
-     *
-     * Ни один шаг здесь не гадает: если поверхность создана и ядро записало
-     * «Application Loaded», а счётчик кадров стоит на нуле, значит рисование
-     * не состоялось. Починить это из приложения нельзя (рендерер чужой), зато
-     * можно не заставлять человека ждать и не повторять ту же попытку вслепую.
-     */
-    private fun giveUpOnFrames(appContext: android.content.Context) {
-        // СНАЧАЛА ЕЩЁ РАЗ ЖУРНАЛ, ПОТОМ СЧЁТЧИК.
-        //
-        // «Кадров нет» — это наш вывод, а игра могла уже сама остановиться и
-        // назвать причину. Приговор самой игры важнее нашего счётчика, поэтому
-        // перед ним читаем журнал ещё раз (на телефоне 06.11 паника была на
-        // 15.7 с, а сообщение о кадрах — на 30-й).
-        runCatching { checkGuestFailure(appContext) }
-        if (guestFailed) return
-        val renderer = runCatching { rendererTail(appContext, 3) }.getOrDefault(emptyList())
-        renderer.forEach { line ->
-            runCatching { KenjiReport.watch(appContext, "отрисовка: " + line) }
-        }
-        val remember = runCatching {
-            EngineStore.setCoreFor(appContext, romPath, EngineHybrid.Core.EDEN)
-        }.getOrDefault(false)
-        val message = buildString {
-            append("За ")
-            append(noFramesLimitSeconds).append(" с не было колбэков кадров от второго ядра. ")
-            append("Это не доказывает, что кадров совсем не было; причина неизвестна.")
-            if (renderer.isNotEmpty()) {
-                append("\n\nЧто ядро говорит про отрисовку:\n")
-                append(renderer.take(2).joinToString("\n"))
-            }
-            append(' ')
-            append(
-                if (remember) "Запомнил: эта игра теперь запускается на Eden."
-                else "Запустите её на Eden — выбор ядра на вкладке «Инструменты»."
-            )
-        }
-        runCatching {
-            KenjiReport.watch(appContext, "кадров нет за " + noFramesLimitSeconds + " с")
-            if (remember) KenjiReport.watch(appContext, "игра переведена на Eden")
-        }
-        runOnUiThread {
-            fail(message)
-        }
-    }
-
     private fun checkGuestFailure(appContext: android.content.Context) {
         val file = runCatching { KenjiBridge.coreLogFile(appContext) }.getOrNull() ?: return
         if (!file.isFile) return
@@ -766,11 +745,18 @@ class KenjiPlayerActivity : Activity(), SurfaceHolder.Callback {
         val next = if (remember) "Запомнил: эта игра теперь запускается на Eden."
         else "Запустите её на Eden — выбор ядра на вкладке «Инструменты»."
         val hint = KenjiCrash.panicResultHint(fresh).let { if (it.isEmpty()) "" else "\n\n" + it }
+        val parameters = operations.filter { line ->
+            line.contains("Stubbed", ignoreCase = true) &&
+                (line.contains("SetSupportedNpadIdType", ignoreCase = true) ||
+                 line.contains("SetSupportedNpadStyleSet", ignoreCase = true))
+        }.takeLast(4)
+        val paramText = if (parameters.isEmpty()) "" else
+            "\n\nПараметры, записанные ядром (не причина ошибки):\n" + parameters.joinToString("\n")
         val hidTail = if (operations.isEmpty()) "" else
             "\n\nПоследние разные вызовы HID (контекст, не доказательство причины):\n" +
-                operations.takeLast(8).joinToString("\n")
+                operations.takeLast(10).joinToString("\n")
         runOnUiThread {
-            fail("второе ядро остановилось. " + panic + hint + tail + hidTail + "\n\n" + next)
+            fail("второе ядро остановилось. " + panic + hint + tail + paramText + hidTail + "\n\n" + next)
         }
     }
 
@@ -935,6 +921,9 @@ class KenjiPlayerActivity : Activity(), SurfaceHolder.Callback {
      * незачем.
      */
     override fun onDestroy() {
+        detailsDialog?.dismiss()
+        detailsDialog = null
+        detailsText = null
         runCatching { KenjiPlayService.stop(applicationContext) }
         // Метка «вышли штатно» — до unload: если процесс умрёт ниже, отчёт
         // о падении должен остаться, а не превратиться в чистый выход.
@@ -974,6 +963,9 @@ class KenjiPlayerActivity : Activity(), SurfaceHolder.Callback {
     private fun fail(msg: String) {
         if (failed || isFinishing || isDestroyed) return
         failed = true
+        detailsDialog?.dismiss()
+        detailsDialog = null
+        detailsText = null
         requestStop()
         val screen = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL

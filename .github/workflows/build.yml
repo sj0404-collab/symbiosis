@@ -426,7 +426,7 @@ jobs:
               || { echo "  missing JNI export: $sym"; fail=1; }
           done
 
-          for sym in nativeSetCrashLog nativeSetStep nativeConnectPad nativeUpdateInput nativeInputEventsAvailable nativeInputButton nativeInputStick nativeInputTouch nativeInputSize; do
+          for sym in nativeSetCrashLog nativeSetStep nativeConnectPad nativeUpdateInput nativeInputEventsAvailable nativeInputButton nativeInputStick nativeInputTouch nativeInputSize nativeEnableHidStubLog; do
             "$NM" -D lib/arm64-v8a/libsymbiosis_kenji.so \
               | grep -q "Java_org_yuzu_yuzu_1emu_utils_KenjiBridge_$sym" \
               || { echo "  missing JNI export in the bridge: $sym"; fail=1; }
