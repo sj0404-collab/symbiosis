@@ -1,9 +1,21 @@
 // Disposable Android CI fixture. Not a real core and NEVER part of a release.
 #include <android/log.h>
 #include <cstring>
+#include <sys/auxv.h>
 
 extern "C" {
-bool javaInitialize(void*, void*) { return true; }
+bool javaInitialize(void*, void*) {
+    // Observe the environment through the same ARM ABI as the core; never
+    // intercept or alter getauxval. This is diagnostic output, not a CPU fix.
+    const unsigned long hwcap = getauxval(AT_HWCAP);
+    constexpr unsigned long required = (1ul << 1) | (1ul << 7) | (1ul << 8) | (1ul << 12);
+    __android_log_print(ANDROID_LOG_INFO, "SymMockCore",
+        "ARM_HWCAP value=0x%lx needed=0x%lx missing=0x%lx ASIMD=%d CRC32=%d ATOMICS=%d ASIMDRDM=%d",
+        hwcap, required, required & ~hwcap,
+        !!(hwcap & (1ul << 1)), !!(hwcap & (1ul << 7)),
+        !!(hwcap & (1ul << 8)), !!(hwcap & (1ul << 12)));
+    return true;
+}
 // These exports satisfy only the loader test; this fixture never executes them.
 void deviceInitialize() {}
 void deviceLoadDescriptor() {}

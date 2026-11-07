@@ -4891,3 +4891,30 @@ Android Emulator на x86 обычно запрещает ARM64 image API28+; AP
 результат проверки CPU. В workflow добавлена установка `libpulse0`, проба
 запускается повторно; она идёт отдельно и параллельно host-тестам, не является
 release build.
+
+### 84. Какие ARM-возможности проверяет NativeAOT
+
+В обоих SHA-pinned ARM64 ядрах проверена инструкция перехода на abort из
+полученных CI-стеков. Соответствующая функция вызывает `getauxval(AT_HWCAP)` и
+преобразует биты; маска требуемых внутренних признаков в обоих бинарниках —
+`0x95`. Для этих четырёх битов нужны HWCAP **ASIMD (бит 1), CRC32 (бит 7),
+ATOMICS/LSE (бит 8) и ASIMDRDM (бит 12)**. Числа сопоставлены с
+[Linux ARM64 HWCAP](https://github.com/torvalds/linux/blob/v6.1/arch/arm64/include/uapi/asm/hwcap.h).
+Проверка привязана к конкретным SHA и адресам, не обобщается на произвольные
+ядра. `tests/test_kenji_isa_reference.py` проверяет отпечатки инструкций,
+константы и synthetic bitsets. `tests/test_kenji_isa_unicorn.py` исполняет
+только функции распознавания обоих оригинальных бинарников в Unicorn на 547
+синтетических HWCAP значениях для каждого (1/1 локально). Подставляемые там
+значения — **только входы изолированного host-теста**; реальный бинарник,
+Android и проверка CPU в APK не изменяются и не обходятся.
+
+В mock-библиотеку disposable Android probe добавлен журнал настоящего
+`getauxval(AT_HWCAP)` из ARM64-кода, с перечислением отсутствующих четырёх
+флагов. Это только измерение диагностической среды, не измерение телефона и
+не исправление 710. Android результат этого нового измерения пока ожидается.
+
+На API35 x86 NativeBridge [run 42401525676](https://github.com/sj0404-collab/symbiosis/actions/runs/42401525676),
+код `32f06ea`, оба production TLS-файла реально найдены (`libcrypto.so=ok`,
+`libssl.so=ok`), но оба реальных ядра всё равно завершились на проверке ISA.
+UI, graphics и mock JNI в той же пробе прошли; общий Android job failure.
+[Логи](https://github.com/sj0404-collab/symbiosis/actions/runs/42401525676/artifacts/13584939772).
