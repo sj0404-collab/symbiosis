@@ -257,7 +257,7 @@ jobs:
           EDEN_OVERLAY_SOURCE=/tmp/original-eden-overlay.kt python3 fork/tests/test_eden_kenji_overlay.py
           bash fork/tools/run_tests.sh --eden "$GITHUB_WORKSPACE/eden" --max-skip 3
 
-      - name: Block release while known Kenji callbacks are empty
+      - name: Block release until known Kenji integration is verified
         run: python3 fork/tools/check_kenji_release_ready.py
 
       - name: Check the Russian localisation

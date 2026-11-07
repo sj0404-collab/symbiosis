@@ -3,6 +3,7 @@
 from pathlib import Path
 import importlib.util
 import unittest
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 spec = importlib.util.spec_from_file_location('release_guard', ROOT / 'tools/check_kenji_release_ready.py')
@@ -22,6 +23,16 @@ class ReleaseGuardTest(unittest.TestCase):
                  void setCurrentTransform(long p, int v) { if (p) { realTransform(p,v); } }'''
         kotlin = 'fun updateUiHandler(a: Long) { deliver(a) }'
         self.assertEqual(guard.check_sources(cpp, kotlin), [])
+
+    def test_nonempty_callback_does_not_remove_explicit_integration_blockers(self):
+        cpp = 'void setRenderingThread() { doWork(); } void setCurrentTransform() { doWork(); }'
+        kotlin = 'fun updateUiHandler() { partialWork() }'
+        self.assertEqual(guard.check_sources(cpp, kotlin), [])
+        self.assertTrue(any('UI ядра' in problem for problem in guard.UNRESOLVED_INTEGRATION))
+        self.assertTrue(any('графические callback' in problem for problem in guard.UNRESOLVED_INTEGRATION))
+        # Even if all shallow empty-body checks pass, main must fail closed.
+        with patch.object(guard, 'check_sources', return_value=[]), patch('sys.stderr'):
+            self.assertEqual(guard.main(), 1)
 
     def test_missing_functions_fail_closed(self):
         self.assertEqual(len(guard.check_sources('', '')), 3)
