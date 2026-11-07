@@ -19,6 +19,7 @@ failed=0
 # coordinator with synthetic requests. It does not call the real ARM cores.
 adb shell am force-stop "$APP"
 ui_log="$PROBE_WORK/ui-logcat.txt"
+adb logcat -c # disposable emulator only; do not clear the user's journal
 adb logcat -T 1 -v time > "$ui_log" 2>&1 &
 ui_logpid=$!
 adb shell am start -n "$APP/.UiProbeActivity" || true
@@ -44,6 +45,7 @@ if [ "$ui_outcome" != pass ]; then failed=1; fi
 # independent table on a test fake, then exercise the public API on a Surface.
 adb shell am force-stop "$APP"
 graphics_log="$PROBE_WORK/graphics-logcat.txt"
+adb logcat -c
 adb logcat -T 1 -v time > "$graphics_log" 2>&1 &
 graphics_logpid=$!
 adb shell am start -n "$APP/.GraphicsProbeActivity" || true
@@ -70,14 +72,22 @@ for core in mock sym space; do
   adb shell run-as "$APP" rm -f files/probe-crash.txt files/kenji-stdout.txt files/kenji-jni.txt
   # A fresh process is essential: two NativeAOT cores must not share state.
   log="$PROBE_WORK/$core-logcat.txt"
+  adb logcat -c
   adb logcat -T 1 -v time > "$log" 2>&1 &
   logpid=$!
   adb shell am start -n "$APP/.ProbeActivity" --es core "$core" || true
   outcome=timeout
   for ((i=0; i<PROBE_WAIT_SECONDS*2; i++)); do
-    if grep -q "PROBE_OK core=$core " "$log"; then outcome=pass; break; fi
-    if grep -q 'PROBE_FAIL' "$log"; then outcome=fail; break; fi
+    if grep -q 'PROBE_FAIL\|FATAL EXCEPTION' "$log"; then outcome=fail; break; fi
     if grep -q 'Fatal signal.*iosis.coreprobe' "$log"; then outcome=native-crash; break; fi
+    if grep -q "PROBE_OK core=$core " "$log"; then
+      # Never mark an early success followed immediately by an async crash.
+      sleep 2
+      if grep -q 'PROBE_FAIL\|FATAL EXCEPTION' "$log"; then outcome=fail
+      elif grep -q 'Fatal signal.*iosis.coreprobe' "$log"; then outcome=native-crash
+      else outcome=pass; fi
+      break
+    fi
     sleep 1
   done
   adb shell am force-stop "$APP" || true
