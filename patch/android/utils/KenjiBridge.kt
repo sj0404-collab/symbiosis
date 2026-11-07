@@ -77,6 +77,16 @@ object KenjiBridge {
     private external fun nativeIsLoaded(): Boolean
     private external fun nativeLastError(): String
     private external fun nativeUnload()
+    private external fun nativeUiActivate(): Long
+    private external fun nativeUiSetup(): Boolean
+    private external fun nativeUiRespond(generation: Long, accepted: Boolean, bytes: ByteArray): Boolean
+
+    /** These are available only during one isolated player session. */
+    fun activateUi(): Long = if (!bridgeLoaded) 0 else runCatching { nativeUiActivate() }.getOrDefault(0)
+    fun setupUi(): Boolean = bridgeLoaded && runCatching { nativeUiSetup() }.getOrDefault(false)
+    fun respondUi(generation: Long, accepted: Boolean, bytes: ByteArray): Boolean =
+        bridgeLoaded && runCatching { nativeUiRespond(generation, accepted, bytes) }.getOrDefault(false)
+
     private external fun nativeDeviceInit(
         memoryManagerMode: Int,
         useNce: Boolean,

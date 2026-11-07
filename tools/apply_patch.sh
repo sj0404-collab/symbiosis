@@ -182,6 +182,7 @@ fi
 # deviceInitialize, so a missing libkenjinxjni.so aborts the process on the
 # first device call. Same source, built twice, a few kilobytes each.
 cp "$P"/symbiosis/kenji_bridge.cpp "$A/jni/symbiosis_kenji_bridge.cpp"
+cp "$P"/symbiosis/kenji_ui_response_gate.h "$A/jni/kenji_ui_response_gate.h"
 CM="$A/jni/CMakeLists.txt"
 if ! grep -q "symbiosis_kenji" "$CM"; then
   cat >> "$CM" <<'CMAKE'

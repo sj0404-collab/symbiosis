@@ -247,6 +247,7 @@ jobs:
           python3 fork/tests/test_kenji_window_ref.py
           python3 fork/tests/test_kenji_loader_error.py
           python3 fork/tests/test_kenji_ui_response_gate.py
+          python3 fork/tests/test_kenji_ui_native.py
           python3 fork/tests/test_kenji_release_guard.py
           python3 fork/tests/test_core_settings_screen.py
           python3 fork/tests/test_hid_remap_model.py

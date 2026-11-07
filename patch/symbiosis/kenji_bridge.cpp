@@ -65,7 +65,9 @@
 #include <sys/system_properties.h>
 
 #include "common/symbiosis/got_patch.h"
+#include "kenji_ui_response_gate.h"
 #include <string>
+#include <vector>
 #include <mutex>
 #include <atomic>
 
@@ -83,6 +85,7 @@ namespace {
 // matters is that dlsym finds them instead of failing.
 
 std::mutex g_lock;
+Symbiosis::KenjiUiResponseGate g_uiResponse;
 void* g_core = nullptr;          // handle of the loaded core
 std::string g_lastError;
 
@@ -1494,6 +1497,8 @@ Java_org_yuzu_yuzu_1emu_utils_KenjiBridge_nativeInitialize(JNIEnv* env, jobject,
 /** Release the core. Safe to call when nothing is loaded. */
 JNIEXPORT void JNICALL
 Java_org_yuzu_yuzu_1emu_utils_KenjiBridge_nativeUnload(JNIEnv*, jobject) {
+    // Drain the response channel before any function pointer can be unmapped.
+    g_uiResponse.disable();
     std::lock_guard<std::mutex> guard(g_lock);
     if (g_core != nullptr) {
         dlclose(g_core);
@@ -1502,6 +1507,58 @@ Java_org_yuzu_yuzu_1emu_utils_KenjiBridge_nativeUnload(JNIEnv*, jobject) {
     }
 }
 
+
+// Independent of g_lock: loadGame can hold it while the guest waits for UI.
+JNIEXPORT jlong JNICALL
+Java_org_yuzu_yuzu_1emu_utils_KenjiBridge_nativeUiActivate(JNIEnv*, jobject) {
+    std::lock_guard<std::mutex> guard(g_lock);
+    if (!g_core || !dlsym(g_core, "uiHandlerSetup")) return 0;
+    auto response = reinterpret_cast<Symbiosis::KenjiUiResponseGate::Response>(
+        dlsym(g_core, "uiHandlerSetResponse"));
+    if (!response) return 0;
+    return static_cast<jlong>(g_uiResponse.activate(response));
+}
+
+JNIEXPORT jboolean JNICALL
+Java_org_yuzu_yuzu_1emu_utils_KenjiBridge_nativeUiSetup(JNIEnv*, jobject) {
+    std::lock_guard<std::mutex> guard(g_lock);
+    if (!g_core) return JNI_FALSE;
+    using Setup = void (*)();
+    auto setup = reinterpret_cast<Setup>(dlsym(g_core, "uiHandlerSetup"));
+    if (!setup) return JNI_FALSE;
+    setup();
+    return JNI_TRUE;
+}
+
+JNIEXPORT jboolean JNICALL
+Java_org_yuzu_yuzu_1emu_utils_KenjiBridge_nativeUiRespond(JNIEnv* env, jobject,
+        jlong generation, jboolean accepted, jbyteArray bytes) {
+    if (!bytes || generation <= 0) return JNI_FALSE;
+    const jsize length = env->GetArrayLength(bytes);
+    // Reject oversized responses rather than silently cutting user text.
+    if (length < 0 || length > 1024 * 1024) return JNI_FALSE;
+    std::vector<char> value(static_cast<size_t>(length) + 1, 0);
+    if (length) env->GetByteArrayRegion(bytes, 0, length,
+                                        reinterpret_cast<jbyte*>(value.data()));
+    if (env->ExceptionCheck()) return JNI_FALSE;
+    if (std::memchr(value.data(), 0, static_cast<size_t>(length))) return JNI_FALSE;
+    return g_uiResponse.send(static_cast<uint64_t>(generation), accepted == JNI_TRUE,
+                             value.data()) ? JNI_TRUE : JNI_FALSE;
+}
+
+// Called synchronously inside the core callback: these pointers are temporary.
+// Return bytes, not NewStringUTF: JNI's modified UTF-8 differs from UTF-8.
+JNIEXPORT jbyteArray JNICALL
+Java_org_kenjinx_android_KenjinxNative_nativeCopyUiText(JNIEnv* env, jclass, jlong pointer) {
+    const char* source = reinterpret_cast<const char*>(static_cast<uintptr_t>(pointer));
+    constexpr size_t maxBytes = 1024 * 1024;
+    const size_t length = source ? ::strnlen(source, maxBytes + 1) : 0;
+    if (length > maxBytes) return nullptr;
+    jbyteArray result = env->NewByteArray(static_cast<jsize>(length));
+    if (result && length) env->SetByteArrayRegion(result, 0, static_cast<jsize>(length),
+                                                    reinterpret_cast<const jbyte*>(source));
+    return result;
+}
 
 /**
  * Версия установленной прошивки — словами самого ядра.
@@ -1964,6 +2021,8 @@ Java_org_yuzu_yuzu_1emu_utils_KenjiBridge_nativeSignalPlayStop(JNIEnv*, jobject)
 
 JNIEXPORT jboolean JNICALL
 Java_org_yuzu_yuzu_1emu_utils_KenjiBridge_nativeClosePlay(JNIEnv*, jobject) {
+    // No response may enter the device while its state is being destroyed.
+    g_uiResponse.disable();
     void* core = nullptr;
     {
         std::lock_guard<std::mutex> guard(g_lock);
