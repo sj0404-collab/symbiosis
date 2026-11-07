@@ -29,6 +29,26 @@ class InputContract(unittest.TestCase):
         self.assertIn('!stopper.isAlive', destroy)
         self.assertIn('thread?.isAlive != true', destroy)
 
+    def test_error_is_scrollable_and_does_not_expire(self):
+        fail = ACTIVITY.split('private fun fail(msg: String)', 1)[1].split('private fun openRom', 1)[0]
+        self.assertIn('ScrollView(this)', fail)
+        self.assertIn('setContentView(screen)', fail)
+        self.assertIn('requestStop()', fail)
+        self.assertNotIn('postDelayed', fail)
+        self.assertIn('if (isFinishing || isDestroyed || failed) return', ACTIVITY)
+
+    def test_game_controls_are_below_status_bar(self):
+        setup = ACTIVITY.split('override fun onCreate', 1)[1].split('override fun surfaceCreated', 1)[0]
+        self.assertIn('root.addView(bar', setup)
+        self.assertIn('gameArea.addView(surface', setup)
+        self.assertIn('gameArea.addView(overlay', setup)
+        self.assertIn('root.addView(gameArea', setup)
+        self.assertIn('setOnClickListener { showStatusDetails() }', setup)
+
+    def test_hid_calls_are_context_not_result(self):
+        self.assertIn('KenjiCrash.mergeHidOperations(hidCalls, fresh)', ACTIVITY)
+        self.assertIn('контекст, не доказательство причины', ACTIVITY)
+
     def test_failed_connect_is_not_reported_as_success(self):
         self.assertIn('if (padId < 0)', ACTIVITY)
         self.assertIn('ядро не подключило', ACTIVITY)

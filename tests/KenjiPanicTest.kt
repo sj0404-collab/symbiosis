@@ -261,6 +261,22 @@ fun main() {
         KenjiCrash.hostCrash("SvcBreak reason=0x0 tid=1").isEmpty()
     )
 
+    val hidTrace = """
+        |00:00:01.100 |T| {Hid} KernelIpc CallCmifMethod: IHidServer: SetSupportedNpadStyleSet
+        |00:00:03.000 |T| Application JniUpdateInput: Jni Function Call
+        |00:00:02.000 |T| {Hid} KernelIpc CallCmifMethod: IHidServer: ActivateNpad
+        |00:00:04.000 |T| {Hid} KernelIpc CallCmifMethod: IHidServer: SetSupportedNpadStyleSet
+    """.trimMargin()
+    val ops = KenjiCrash.mergeHidOperations(emptyMap(), hidTrace)
+    check("HID вызовы собраны, повтор схлопнут", ops.size == 2, ops.toString())
+    check("последний вызов сохранён", ops.values.last().startsWith("00:00:04"), ops.toString())
+    val oldRead = "00:00:01.200 |T| {Hid} KernelIpc CallCmifMethod: IHidServer: SetSupportedNpadStyleSet"
+    val afterOld = KenjiCrash.mergeHidOperations(ops, oldRead)
+    check("старое чтение не затёрло новый вызов", afterOld.values.last().startsWith("00:00:04"), afterOld.toString())
+    check("шум JniUpdateInput не попал в HID", KenjiCrash.hidOperations(hidTrace).none { it.contains("JniUpdateInput") })
+    check("ограничение истории", KenjiCrash.mergeHidOperations(emptyMap(), hidTrace, 1).size == 1)
+    check("нулевой предел", KenjiCrash.mergeHidOperations(emptyMap(), hidTrace, 0).isEmpty())
+
     println()
     println("passed=$passed failed=$failed")
     if (failed > 0) kotlin.system.exitProcess(1)

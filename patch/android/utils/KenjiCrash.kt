@@ -990,6 +990,53 @@ object KenjiCrash {
         .filter { it.isNotEmpty() }
         .distinct().toList().takeLast(limit)
 
+    /** HID service calls are context, not proof that a call returned the error. */
+    fun hidOperations(text: String): List<String> = text.lineSequence()
+        .filter { line ->
+            !line.contains("JniUpdateInput", ignoreCase = true) &&
+                (line.contains("IHidServer:", ignoreCase = true) ||
+                 line.contains("IHidSystemServer:", ignoreCase = true) ||
+                 line.contains("IAppletResource:", ignoreCase = true) ||
+                 line.contains("ServiceHid", ignoreCase = true) ||
+                 line.contains("{Hid}", ignoreCase = true))
+        }
+        .map { it.trim().take(360) }.filter { it.isNotEmpty() }.toList()
+
+    /** Group repeated trace calls by operation; service stub payload is retained. */
+    fun hidOperationKey(line: String): String {
+        val call = Regex("""(?i)(IHidServer|IHidSystemServer|IAppletResource):\s*([A-Za-z0-9_]+)""")
+            .find(line)
+        if (call != null) return call.value.lowercase()
+        val service = line.indexOf("ServiceHid", ignoreCase = true)
+        if (service >= 0) return line.substring(service).lowercase()
+        val hid = line.indexOf("{Hid}", ignoreCase = true)
+        return if (hid >= 0) line.substring(hid).lowercase() else line.lowercase()
+    }
+
+    /** Merge trace chunks by operation and timestamp, retaining only the newest
+     * instance of each. A delayed incremental read cannot replace newer data. */
+    fun mergeHidOperations(existing: Map<String, String>, text: String, limit: Int = 24): LinkedHashMap<String, String> {
+        val lines = LinkedHashMap(existing)
+        val stamp = Regex("""\d{2}:\d{2}:\d{2}\.\d{3}""")
+        hidOperations(text).forEach { line ->
+            val key = hidOperationKey(line)
+            val old = lines[key]
+            val before = old?.let { stamp.find(it)?.value }
+            val after = stamp.find(line)?.value
+            val newer = old == null || (after != null && before != null && after > before)
+            if (newer) {
+                lines.remove(key)
+                lines[key] = line
+            }
+        }
+        // Sort by time after merging old and fresh reads, keeping insertion order
+        // for missing timestamps; hide older rows only when capacity is reached.
+        val sorted = lines.entries.sortedBy { stamp.find(it.value)?.value ?: "" }
+        val out = LinkedHashMap<String, String>()
+        sorted.takeLast(limit.coerceAtLeast(0)).forEach { out[it.key] = it.value }
+        return out
+    }
+
     /** Диагностические строки рядом с последним SvcBreak, без вывода причин наугад. */
     fun panicEvidence(text: String): List<String> {
         val lines = text.lines()

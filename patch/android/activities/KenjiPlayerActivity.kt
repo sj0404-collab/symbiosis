@@ -8,6 +8,8 @@ import android.content.Context
 import android.content.Intent
 import android.content.res.Configuration
 import android.graphics.Color
+import android.graphics.drawable.GradientDrawable
+import android.app.AlertDialog
 import android.net.Uri
 import android.os.Bundle
 import android.os.ParcelFileDescriptor
@@ -17,6 +19,8 @@ import android.view.SurfaceView
 import android.view.ViewGroup
 import android.widget.Button
 import android.widget.FrameLayout
+import android.widget.LinearLayout
+import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
 import java.io.File
@@ -107,6 +111,7 @@ class KenjiPlayerActivity : Activity(), SurfaceHolder.Callback {
     private var coreLogOffset = 0L
     private var coreLogPath: String? = null
     private val hidHistory = java.util.ArrayDeque<String>()
+    private var hidCalls = java.util.LinkedHashMap<String, String>()
     /** Игра уже встала внутри ядра — второй раз не сообщаем. */
     private var guestFailed = false
     /** Путь игры: по нему основной процесс переведёт её на Eden. */
@@ -114,6 +119,42 @@ class KenjiPlayerActivity : Activity(), SurfaceHolder.Callback {
     /** Когда начали: журнал старше этого времени — от прошлого запуска. */
     private var playStartedAt = 0L
     private lateinit var status: TextView
+    private var statusDetails = ""
+    private fun dp(value: Int): Int = (value * resources.displayMetrics.density + .5f).toInt()
+    private fun darkButton(textLabel: String, action: () -> Unit): Button = Button(this).apply {
+        text = textLabel
+        isAllCaps = false
+        setTextColor(Color.WHITE)
+        background = GradientDrawable().apply {
+            setColor(Color.rgb(45, 48, 57))
+            cornerRadius = dp(10).toFloat()
+        }
+        setOnClickListener { action() }
+    }
+    private fun updateStatus(summary: String, details: String = summary) {
+        if (failed) return
+        status.text = summary
+        statusDetails = details
+    }
+    private fun showStatusDetails() {
+        if (statusDetails.isBlank() || isFinishing) return
+        val textView = TextView(this).apply {
+            text = statusDetails
+            setTextColor(Color.WHITE)
+            textSize = 15f
+            setPadding(dp(20), dp(16), dp(20), dp(16))
+            setTextIsSelectable(true)
+        }
+        val scroll = ScrollView(this).apply {
+            setBackgroundColor(Color.rgb(25, 27, 33))
+            addView(textView)
+        }
+        AlertDialog.Builder(this, android.R.style.Theme_Material_Dialog_Alert)
+            .setTitle("Состояние второго ядра")
+            .setView(scroll)
+            .setPositiveButton("Закрыть", null)
+            .show()
+    }
     private lateinit var overlay: InputOverlay
     // Kenji's current API exposes only one touchscreen pointer.
     private var touchPointer = -1
@@ -153,18 +194,35 @@ class KenjiPlayerActivity : Activity(), SurfaceHolder.Callback {
         val path = intent.getStringExtra(EXTRA_PATH).orEmpty()
         val title = intent.getStringExtra(EXTRA_TITLE).orEmpty().ifBlank { "игра" }
 
-        val root = FrameLayout(this).apply { setBackgroundColor(Color.BLACK) }
+        // Status/exit have their own strip and do not cover the game controls.
+        val root = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setBackgroundColor(Color.BLACK)
+        }
+        val bar = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setBackgroundColor(Color.rgb(25, 27, 33))
+            setPadding(dp(12), dp(4), dp(8), dp(4))
+        }
+        status = TextView(this).apply {
+            text = "Второе ядро · подготовка · подробнее"
+            setTextColor(Color.WHITE)
+            textSize = 14f
+            setPadding(dp(4), dp(4), dp(4), dp(4))
+            setOnClickListener { showStatusDetails() }
+        }
+        statusDetails = "Подготовка: $title"
+        bar.addView(status, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        bar.addView(darkButton("Выйти") { leave() },
+            LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(44)))
+        root.addView(bar, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,
+            ViewGroup.LayoutParams.WRAP_CONTENT))
+        val gameArea = FrameLayout(this).apply { setBackgroundColor(Color.BLACK) }
         val surface = SurfaceView(this)
         surface.holder.addCallback(this)
-        root.addView(
-            surface,
-            FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.MATCH_PARENT
-            )
-        )
-        // Refresh a snapshot from the launcher rather than reading stale
-        // process-local settings. Neither layout nor settings are saved here.
+        gameArea.addView(surface, FrameLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
         val overlayResult = runCatching {
             @Suppress("DEPRECATION")
             val snapshot = requireNotNull(intent.getBundleExtra(EXTRA_OVERLAY))
@@ -176,34 +234,10 @@ class KenjiPlayerActivity : Activity(), SurfaceHolder.Callback {
                 inputSink = overlaySink
                 layout = overlayLayout()
             }
-            root.addView(overlay, FrameLayout.LayoutParams(
+            gameArea.addView(overlay, FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
         }
-        status = TextView(this).apply {
-            text = "Symbiosis · второе ядро\n$title"
-            setTextColor(Color.WHITE)
-            textSize = 14f
-            setPadding(24, 48, 24, 16)
-        }
-        root.addView(
-            status,
-            FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT
-            )
-        )
-        val back = Button(this).apply {
-            text = "Выйти"
-            setOnClickListener { leave() }
-        }
-        root.addView(
-            back,
-            FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT,
-                Gravity.TOP or Gravity.CENTER_HORIZONTAL
-            ).apply { setMargins(8, 8, 8, 8) }
-        )
+        root.addView(gameArea, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
         setContentView(root)
 
         if (!overlayReady) {
@@ -268,7 +302,7 @@ class KenjiPlayerActivity : Activity(), SurfaceHolder.Callback {
             val nw = KenjiBridge.nativeWindow(holder.surface)
             org.kenjinx.android.KenjinxNative.nativeSurface = nw
             org.kenjinx.android.KenjinxNative.nativeWindow = nw
-            runOnUiThread { status.text = "второе ядро · готовлю ядро и прошивку" }
+            runOnUiThread { updateStatus("Второе ядро · подготовка · подробнее", "Готовлю ядро и прошивку") }
             KenjiBridge.noteStep("1/6 · загрузка ядра")
             val prep = KenjiBridge.preparePlay(appContext, config)
             if (!prep.ok) {
@@ -322,7 +356,7 @@ class KenjiPlayerActivity : Activity(), SurfaceHolder.Callback {
                 return@Thread
             }
 
-            runOnUiThread { status.text = "второе ядро · загружаю игру" }
+            runOnUiThread { updateStatus("Второе ядро · загрузка · подробнее", "Загружаю игру") }
             KenjiBridge.noteStep("4/6 · игра")
             val load = KenjiBridge.loadGame(fd, KenjiBridge.fileTypeOf(path))
             if (!load.ok) {
@@ -348,7 +382,7 @@ class KenjiPlayerActivity : Activity(), SurfaceHolder.Callback {
             // Строка настроек рядом со статусом: «ядро запустилось» без них
             // ничего не говорит о том, с чем именно оно запустилось.
             runOnUiThread {
-                status.text = "второе ядро · играет\n" + prep.message
+                updateStatus("Второе ядро · запущено · подробнее", prep.message)
                 // Уведомление поднимает приоритет процесса: без него система
                 // выгружает :kenji первой, как только кончается память, и игра
                 // пропадает вместе с плеером.
@@ -387,8 +421,12 @@ class KenjiPlayerActivity : Activity(), SurfaceHolder.Callback {
             KenjiBridge.noteStep("цикл завершён")
             runOnUiThread { if (!guestFailed && !noFramesGivenUp) leave() }
           } catch (t: Throwable) {
+            runCatching {
+                KenjiBridge.crashReportFile(appContext).appendText(
+                    "\nошибка плеера: " + t.javaClass.name + ": " + (t.message ?: "без сообщения") + "\n")
+            }
             runOnUiThread {
-                fail("внутренняя ошибка плеера: " + (t.message ?: t.javaClass.simpleName))
+                fail("Внутренняя ошибка плеера. Подробности сохранены в отчёте.")
             }
           }
         }, "kenji-loop").also { it.start() }
@@ -408,7 +446,7 @@ class KenjiPlayerActivity : Activity(), SurfaceHolder.Callback {
         val beganAt = android.os.SystemClock.elapsedRealtime()
         val tick = object : Runnable {
             override fun run() {
-                if (isFinishing || isDestroyed) return
+                if (isFinishing || isDestroyed || failed) return
                 val seconds = (android.os.SystemClock.elapsedRealtime() - beganAt) / 1000
                 val frames = org.kenjinx.android.KenjinxNative.frames.get()
                 val rate = frames - lastFrames
@@ -464,8 +502,8 @@ class KenjiPlayerActivity : Activity(), SurfaceHolder.Callback {
                 // именно объяснение.
                 if (guestFailed) return
                 val tail = coreLogTail(appContext, 2)
-                status.text = buildString {
-                    append("второе ядро · играет · ").append(seconds).append(" с")
+                val details = buildString {
+                    append("второе ядро · выполняется · ").append(seconds).append(" с")
                     append('\n').append(KenjiBridge.lastConfig)
                     append('\n').append(verdict)
                     // Счётчик самого ядра рядом с нашим: если он растёт, а наш
@@ -487,6 +525,7 @@ class KenjiPlayerActivity : Activity(), SurfaceHolder.Callback {
                             ?.let { line -> append('\n').append(line) }
                     }
                 }
+                updateStatus("Второе ядро · $seconds с · подробнее", details)
                 // Тот же текст — в отчёт. Человеку некогда делать скриншот на
                 // чёрном экране, поэтому всё, что видно, записывается само.
                 runCatching {
@@ -538,9 +577,9 @@ class KenjiPlayerActivity : Activity(), SurfaceHolder.Callback {
             EngineStore.setCoreFor(appContext, romPath, EngineHybrid.Core.EDEN)
         }.getOrDefault(false)
         val message = buildString {
-            append("второе ядро не отдало ни одного кадра за ")
-            append(noFramesLimitSeconds).append(" с: игра загрузилась внутри ядра, ")
-            append("но рисование не пошло.")
+            append("За ")
+            append(noFramesLimitSeconds).append(" с не было колбэков кадров от второго ядра. ")
+            append("Это не доказывает, что кадров совсем не было; причина неизвестна.")
             if (renderer.isNotEmpty()) {
                 append("\n\nЧто ядро говорит про отрисовку:\n")
                 append(renderer.take(2).joinToString("\n"))
@@ -556,10 +595,7 @@ class KenjiPlayerActivity : Activity(), SurfaceHolder.Callback {
             if (remember) KenjiReport.watch(appContext, "игра переведена на Eden")
         }
         runOnUiThread {
-            status.text = message
-            Toast.makeText(appContext, message, Toast.LENGTH_LONG).show()
-            // Дать прочитать причину, потом вернуть в библиотеку.
-            status.postDelayed({ runCatching { leave() } }, 4000)
+            fail(message)
         }
     }
 
@@ -612,6 +648,7 @@ class KenjiPlayerActivity : Activity(), SurfaceHolder.Callback {
                 hidHistory.addLast(line)
             }
         }
+        hidCalls = KenjiCrash.mergeHidOperations(hidCalls, fresh)
         // ДВЕ РАЗНЫЕ ОСТАНОВКИ, И РАНЬШЕ МЫ ВИДЕЛИ ТОЛЬКО ОДНУ.
         //
         //  1. Ядро уронило гостевой поток: в журнале
@@ -702,6 +739,17 @@ class KenjiPlayerActivity : Activity(), SurfaceHolder.Callback {
         evidence.forEach { line ->
             runCatching { KenjiReport.watch(appContext, "строка журнала: " + line.take(200)) }
         }
+        val operations = hidCalls.values.toList()
+        // watch() retains only twelve lines, so keep the full bounded HID
+        // context in the persistent crash report as well; never clear the log.
+        if (operations.isNotEmpty()) runCatching {
+            KenjiBridge.crashReportFile(appContext).appendText(
+                "\nвызовы HID (контекст, не результат и не доказательство причины):\n" +
+                    operations.joinToString("\n") + "\n")
+        }
+        operations.takeLast(4).forEach { line ->
+            runCatching { KenjiReport.watch(appContext, "вызов HID (контекст): " + line.take(300)) }
+        }
         context.forEach { line ->
             runCatching { KenjiReport.watch(appContext, "перед паникой: " + line.take(140)) }
         }
@@ -718,8 +766,11 @@ class KenjiPlayerActivity : Activity(), SurfaceHolder.Callback {
         val next = if (remember) "Запомнил: эта игра теперь запускается на Eden."
         else "Запустите её на Eden — выбор ядра на вкладке «Инструменты»."
         val hint = KenjiCrash.panicResultHint(fresh).let { if (it.isEmpty()) "" else "\n\n" + it }
+        val hidTail = if (operations.isEmpty()) "" else
+            "\n\nПоследние разные вызовы HID (контекст, не доказательство причины):\n" +
+                operations.takeLast(8).joinToString("\n")
         runOnUiThread {
-            fail("второе ядро остановилось. " + panic + hint + tail + "\n\n" + next)
+            fail("второе ядро остановилось. " + panic + hint + tail + hidTail + "\n\n" + next)
         }
     }
 
@@ -921,17 +972,39 @@ class KenjiPlayerActivity : Activity(), SurfaceHolder.Callback {
     }
 
     private fun fail(msg: String) {
+        if (failed || isFinishing || isDestroyed) return
         failed = true
-        status.text = msg
-        Toast.makeText(this, msg, Toast.LENGTH_LONG).show()
+        requestStop()
+        val screen = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(16), dp(16), dp(16), dp(16))
+            setBackgroundColor(Color.rgb(22, 24, 29))
+        }
+        val heading = TextView(this).apply {
+            text = "Второе ядро остановилось"
+            textSize = 20f
+            setTextColor(Color.WHITE)
+            setPadding(0, 0, 0, dp(12))
+        }
+        val details = TextView(this).apply {
+            text = msg
+            textSize = 16f
+            setTextColor(Color.WHITE)
+            setTextIsSelectable(true)
+        }
+        val scroll = ScrollView(this).apply { addView(details) }
+        screen.addView(heading)
+        screen.addView(scroll, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
+        screen.addView(darkButton("Вернуться в библиотеку") { leave() },
+            LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(52)).apply { topMargin = dp(12) })
+        setContentView(screen)
         // Причина падения должна остаться и после того, как экран закроется:
         // отчёт о падении читает лаунчер и показывает его при возврате.
         runCatching {
             KenjiBridge.crashReportFile(applicationContext)
                 .appendText("\nплеер: $msg\n")
         }
-        // Даём прочитать: человек сам решит, когда выйти.
-        status.postDelayed({ finish() }, 6000)
+        // The user decides when to leave; long details remain scrollable.
     }
 
     private fun openRom(path: String): ParcelFileDescriptor? = runCatching {
