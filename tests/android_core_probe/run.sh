@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Runs only in the disposable CI Android emulator. Never reads user data.
 set -euo pipefail
+source "$(dirname "$0")/outcome.sh"
 : "${PROBE_WORK:?}"
 APP=dev.symbiosis.coreprobe
 PROBE_WAIT_SECONDS=${PROBE_WAIT_SECONDS:-45}
@@ -78,14 +79,11 @@ for core in mock sym space; do
   adb shell am start -n "$APP/.ProbeActivity" --es core "$core" || true
   outcome=timeout
   for ((i=0; i<PROBE_WAIT_SECONDS*2; i++)); do
-    if grep -q 'PROBE_FAIL\|FATAL EXCEPTION' "$log"; then outcome=fail; break; fi
-    if grep -q 'Fatal signal.*iosis.coreprobe' "$log"; then outcome=native-crash; break; fi
+    if terminal=$(probe_terminal_failure "$log"); then outcome=$terminal; break; fi
     if grep -q "PROBE_OK core=$core " "$log"; then
       # Never mark an early success followed immediately by an async crash.
       sleep 2
-      if grep -q 'PROBE_FAIL\|FATAL EXCEPTION' "$log"; then outcome=fail
-      elif grep -q 'Fatal signal.*iosis.coreprobe' "$log"; then outcome=native-crash
-      else outcome=pass; fi
+      if terminal=$(probe_terminal_failure "$log"); then outcome=$terminal; else outcome=pass; fi
       break
     fi
     sleep 1
@@ -107,7 +105,7 @@ for core in mock sym space; do
        grep -q 'MOCK_UI_RESPONSE_FAIL' "$log"; then outcome=fail; fi
   fi
   printf '\n=== %s outcome: %s ===\n' "$core" "$outcome"
-  grep -E 'SymCoreProbe|SymMockCore|SymbiosisKenji|RyujinxLog|FATAL EXCEPTION|Fatal signal|linker.*(error|cannot)' "$log" | tail -120 || true
+  grep -E 'SymCoreProbe|SymMockCore|SymbiosisKenji|RyujinxLog|FATAL EXCEPTION|Fatal signal|ActivityManager.*Process dev\.symbiosis\.coreprobe|linker.*(error|cannot)' "$log" | tail -120 || true
   if [ "$outcome" != pass ]; then failed=1; fi
 done
 exit "$failed"

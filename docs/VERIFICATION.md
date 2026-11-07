@@ -5070,3 +5070,33 @@ CPU или ответы ядра и отсутствует в APK. Он нуже
 service. Перед запуском проверяются отсутствие старой области и отдельное чтение
 `getprop`; после теста временная область удаляется. Host тесты с синтетическими
 функциями 3/3; запуск настоящего Bionic и реакция ART ещё ожидаются.
+
+### 89. ARM-эмулятор и результат инициализации
+
+[Run 42404581153](https://github.com/sj0404-collab/symbiosis/actions/runs/42404581153),
+код `a42452c`, API27 software ARM: отдельный native loader **без установки APK**
+загрузил оба ядра и нашёл 11/11 символов; HWCAP `0xff` не содержит ATOMICS и
+ASIMDRDM. Попытка JNI через `app_process` завершилась внутри ART ещё до Java:
+`LoadNativeLibrary failed for libjavacore.so`, код 134; сам вызов ядра этим
+путём не проверен. В независимой диагностической Activity после удаления
+опасного preflight mock и UI прошли, graphics-reference на API27 не загружался,
+а оба реальных ядра дошли до `javaInitialize` и записали сообщение NativeAOT
+про неподдерживаемые instruction sets. Android перезапускал погибшую Activity,
+поэтому старый скрипт выдал `timeout`, хотя журнал показывает смерти с сигналом
+6. Это ошибка классификации диагностики, не успешная инициализация.
+[Логи](https://github.com/sj0404-collab/symbiosis/actions/runs/42404581153/artifacts/13586894661).
+
+Для повторной проверки в `LD_LIBRARY_PATH` standalone добавлен `/system/lib64`;
+**исправит ли это ошибку ART, пока неизвестно**. Классификатор Activity теперь
+распознаёт реальный `Process ... has died` как `process-death`, не приписывая
+причину без журнала; host test 3/3, с unrelated-process отрицательным
+контролем. Искусственные таймауты используются только в одноразовом CI.
+
+[Run 42407817576](https://github.com/sj0404-collab/symbiosis/actions/runs/42407817576),
+код `487cd36`, Linux ARM + Bionic: реальная область свойств создана, 11 значений
+прочитаны из официального образа, отдельный `getprop` прочитал ABI. ART пошёл
+дальше, но на Linux без `/dev/ashmem` сообщения фиксируют fallback для многих
+областей и `LoadNativeLibrary failed for libjavacore.so` до Java/JNI; `strace`
+показывает, что сам файл `/system/lib64/libjavacore.so` был найден и отображён,
+поэтому отсутствие файла не доказано. Инициализация core на этом стенде пока не
+проверена. [Логи](https://github.com/sj0404-collab/symbiosis/actions/runs/42407817576/artifacts/13587768207).
