@@ -884,7 +884,10 @@ object KenjiCrash {
         val whenText = stampSeconds(line)
             ?.let { "на " + String.format(Locale.ROOT, "%.1f", it) + " с от старта" }
             ?: elapsedText(line).let { span -> if (span.isEmpty()) "" else "через " + span + " после старта" }
-        val reasonText = when (reason?.lowercase(Locale.ROOT)) {
+        val normalizedReason = reason?.lowercase(Locale.ROOT)?.let {
+            if (it.startsWith("0x")) "0x" + it.substring(2).trimStart('0').ifEmpty { "0" } else it
+        }
+        val reasonText = when (normalizedReason) {
             "0x0", "0", null -> "паника: игра сама вызвала аварийный останов"
             "0x1", "1" -> "сработала проверка-утверждение внутри игры"
             "0x2", "2" -> "игра попросила останов сама (пользовательский break)"
@@ -896,9 +899,7 @@ object KenjiCrash {
             if (whenText.isNotEmpty()) append(", ").append(whenText)
             if (tid != null) append(", поток ").append(tid)
             if (pc != null) append(", адрес ").append(pc)
-            append(". Это не отказ ядра: игру оно уже загрузило и отвечало на её " +
-                "запросы — остановку запросила сама игра. Ключи и прошивка тут ни " +
-                "при чём: без них ядро не дошло бы до этого места.")
+            append(". Остановка запрошена гостевой программой; её первопричина по этой строке неизвестна.")
         }
     }
 

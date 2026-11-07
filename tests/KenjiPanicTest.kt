@@ -51,12 +51,25 @@ fun main() {
     check("названо время", panic.contains("15.7 с от старта"), panic)
     check("назван поток", panic.contains("поток 28"), panic)
     check("назван адрес", panic.contains("0x139553C0"), panic)
-    check("сказано, что ядро игру уже загрузило", panic.contains("уже загрузило"), panic)
-    check(
-        "ключи и прошивка прямо исключены",
-        panic.contains("прошивка тут ни при чём"),
-        panic
-    )
+    check("причина не выдумана", panic.contains("первопричина по этой строке неизвестна"), panic)
+    val screenshot = "00:00:15.931 |E| HLE.GuestThread.28 KernelSvc Break: SvcBreak reason=0x0000000000000000 pid=109 titleId=0x01004F302847E000 name=Vault of Power tid=28 pc=0x139553C0"
+    val screenshotPanic = KenjiCrash.guestPanic(screenshot)
+    check("строка снимка с 16 нулями распознана как паника", screenshotPanic.contains("паника:"), screenshotPanic)
+    val hugeLog = java.io.File.createTempFile("kenji-busy-log", ".log")
+    try {
+        hugeLog.writeText(("обычная запись без ошибки\n".repeat(20000)) + screenshot + "\n")
+        val oldChunk = hugeLog.inputStream().use { stream ->
+            val bytes = ByteArray(256 * 1024)
+            val n = stream.read(bytes)
+            KernelLogFormat.completeLines(bytes, n).first
+        }
+        check("первая порция отстаёт от паники", KenjiCrash.guestPanic(oldChunk).isEmpty())
+        val recent = KernelLogFormat.tailOf(hugeLog, KernelLogFormat.TAIL_BYTES)
+        check("свежий хвост обнаруживает панику при большой очереди", KenjiCrash.guestPanic(recent).contains("паника:"))
+    } finally { hugeLog.delete() }
+    val audioAndGraphics = "00:00 |I| AudioRenderer ReleaseSessionId: Unregistered output (0)\n00:00 |I| Graphics: Vulkan"
+    val graphicsOnly = KernelLogFormat.pickRendererLines(audioAndGraphics, listOf("Renderer", "Graphics"), 3)
+    check("звук не показывается как графика", graphicsOnly.size == 1 && graphicsOnly[0].contains("Graphics"), graphicsOnly.toString())
 
     // ── 2. причины паники по номеру ─────────────────────────────────────
     val assert = KenjiCrash.guestPanic("SvcBreak reason=0x1 pid=3 tid=7 pc=0x100")

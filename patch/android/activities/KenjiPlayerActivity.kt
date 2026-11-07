@@ -92,6 +92,7 @@ class KenjiPlayerActivity : Activity(), SurfaceHolder.Callback {
     private var noFramesGivenUp = false
     /** Сколько байт журнала ядра уже прочитано: ищем только новое. */
     private var coreLogOffset = 0L
+    private var coreLogPath: String? = null
     /** Игра уже встала внутри ядра — второй раз не сообщаем. */
     private var guestFailed = false
     /** Путь игры: по нему основной процесс переведёт её на Eden. */
@@ -197,22 +198,6 @@ class KenjiPlayerActivity : Activity(), SurfaceHolder.Callback {
             val nw = KenjiBridge.nativeWindow(holder.surface)
             org.kenjinx.android.KenjinxNative.nativeSurface = nw
             org.kenjinx.android.KenjinxNative.nativeWindow = nw
-            // НЕ ЖДАТЬ ВЕРТИКАЛЬНУЮ СИНХРОНИЗАЦИЮ НА ПОВЕРХНОСТИ.
-            //
-            // Официальное приложение выставляет это сразу после получения окна
-            // (`swapInterval = 0`) и повторяет после каждой перезаписи окна.
-            // Мы не делали этого ни разу. На части драйверов Mali первая же
-            // очередь буфера не возвращается, поток показа стоит, гость ждёт
-            // кадр — и через несколько секунд останавливает себя сам.
-            val swap = runCatching { KenjiBridge.setSwapInterval(holder.surface, 0) }
-                .getOrDefault(false)
-            runCatching {
-                KenjiReport.watch(
-                    appContext,
-                    "интервал обмена буферов: " + if (swap) "0 (без синхронизации)" else "не принят"
-                )
-            }
-
             runOnUiThread { status.text = "второе ядро · готовлю ядро и прошивку" }
             KenjiBridge.noteStep("1/6 · загрузка ядра")
             val prep = KenjiBridge.preparePlay(appContext, config)
@@ -313,7 +298,7 @@ class KenjiPlayerActivity : Activity(), SurfaceHolder.Callback {
             KenjiBridge.noteStep("7/7 · цикл отрисовки")
             KenjiBridge.runLoop()
             KenjiBridge.noteStep("цикл завершён")
-            runOnUiThread { leave() }
+            runOnUiThread { if (!guestFailed && !noFramesGivenUp) leave() }
           } catch (t: Throwable) {
             runOnUiThread {
                 fail("внутренняя ошибка плеера: " + (t.message ?: t.javaClass.simpleName))
@@ -344,7 +329,7 @@ class KenjiPlayerActivity : Activity(), SurfaceHolder.Callback {
                 val verdict = when {
                     frames == 0L && org.kenjinx.android.KenjinxNative.surfaceAsked.get() == 0L ->
                         "цикл ещё не дошёл до отрисовки"
-                    frames == 0L -> "поверхность создана, кадров нет"
+                    frames == 0L -> "ядро запросило поверхность; колбэков кадров нет"
                     else -> "кадров $frames (+$rate за 3 с)"
                 }
                 // Второй пинок рендерера.
@@ -498,11 +483,14 @@ class KenjiPlayerActivity : Activity(), SurfaceHolder.Callback {
         // принять его за сегодняшнее — значит перевести здоровую игру на
         // Eden из-за вчерашней ошибки.
         if (file.lastModified() < playStartedAt) return
+        if (coreLogPath != file.absolutePath) {
+            coreLogPath = file.absolutePath
+            coreLogOffset = 0L
+        }
         val length = file.length()
         // Журнал пересоздан (новый запуск) — читаем с начала.
         if (length < coreLogOffset) coreLogOffset = 0L
-        if (length == coreLogOffset) return
-        val fresh = runCatching {
+        val incremental = runCatching {
             java.io.RandomAccessFile(file, "r").use { raf ->
                 raf.seek(coreLogOffset)
                 val size = (length - coreLogOffset).coerceAtMost(256L * 1024L).toInt()
@@ -523,8 +511,12 @@ class KenjiPlayerActivity : Activity(), SurfaceHolder.Callback {
                 text
             }
         }.getOrDefault("")
-        // В куске нет ни одной целой строки — подождём следующего тика.
-        if (fresh.isEmpty()) return
+        // В интенсивном журнале 256 КБ за тик могут не поспевать за записью.
+        // Параллельно проверяем актуальный ограниченный хвост, как экран.
+        val recent = runCatching { KernelLogFormat.tailOf(file, KernelLogFormat.TAIL_BYTES) }
+            .getOrDefault("")
+        val fresh = incremental + "\n" + recent
+        if (fresh.isBlank()) return
         // ДВЕ РАЗНЫЕ ОСТАНОВКИ, И РАНЬШЕ МЫ ВИДЕЛИ ТОЛЬКО ОДНУ.
         //
         //  1. Ядро уронило гостевой поток: в журнале
@@ -547,7 +539,7 @@ class KenjiPlayerActivity : Activity(), SurfaceHolder.Callback {
         guestFailed = true
         if (!guestThread && panic.isEmpty()) {
             runCatching { KenjiReport.watch(appContext, "ядро: " + hostCrash.take(200)) }
-            runCatching { KenjiBridge.stopPlay() }
+            Thread({ runCatching { KenjiBridge.stopPlay() } }, "kenji-stop-failure").start()
             val tail = fresh.lines()
                 .filter { it.contains("LibKenjinx") || it.contains("System.") }
                 .map { it.trim().take(160) }
@@ -582,8 +574,8 @@ class KenjiPlayerActivity : Activity(), SurfaceHolder.Callback {
         val service = KenjiCrash.guestService(fresh)
         runCatching { CoreFallback.note(appContext, gamePath, why) }
         runCatching { KenjiReport.watch(appContext, "ядро: " + why.take(160)) }
-        // Разблокировать цикл отрисовки: он стоит на мёртвом гостевом потоке.
-        runCatching { KenjiBridge.stopPlay() }
+        // Остановка может блокироваться в ядре: не задерживаем экран.
+        Thread({ runCatching { KenjiBridge.stopPlay() } }, "kenji-stop-guest").start()
         runOnUiThread {
             // Короткая строка на экран: полное объяснение — в отчёте, а здесь
             // человек читает его, стоя с телефоном в руках.
@@ -618,7 +610,7 @@ class KenjiPlayerActivity : Activity(), SurfaceHolder.Callback {
         val remember = runCatching {
             EngineStore.setCoreFor(appContext, romPath, EngineHybrid.Core.EDEN)
         }.getOrDefault(false)
-        runCatching { KenjiBridge.stopPlay() }
+        Thread({ runCatching { KenjiBridge.stopPlay() } }, "kenji-stop-panic").start()
         val tail = if (context.isEmpty()) "" else
             "\n\nПоследние строки журнала:\n" + context.take(4).joinToString("\n")
         val next = if (remember) "Запомнил: эта игра теперь запускается на Eden."
@@ -668,7 +660,7 @@ class KenjiPlayerActivity : Activity(), SurfaceHolder.Callback {
         runCatching {
             val file = KenjiBridge.coreLogFile(context) ?: return emptyList()
             val text = KernelLogFormat.tailOf(file, KernelLogFormat.TAIL_BYTES)
-            KernelLogFormat.pickLines(text, RENDER_NEEDLES, limit)
+            KernelLogFormat.pickRendererLines(text, RENDER_NEEDLES, limit)
         }.getOrDefault(emptyList())
 
     private fun coreLogTail(context: android.content.Context, lines: Int): String =

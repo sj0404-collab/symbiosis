@@ -82,6 +82,11 @@ object KernelLogFormat {
             .toList()
             .takeLast(limit)
 
+    /** Отделяем звуковой AudioRenderer от графического Renderer. */
+    fun pickRendererLines(text: String, needles: List<String>, limit: Int): List<String> =
+        pickLines(text.lineSequence().filterNot { it.contains("AudioRenderer", ignoreCase = true) }
+            .joinToString("\n"), needles, limit)
+
     /**
      * Сколько строк уровня Error и Critical.
      *

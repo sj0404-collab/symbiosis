@@ -117,8 +117,6 @@ object KenjiBridge {
     private external fun nativeSetWindowHandle(handle: Long)
     /** Собственный журнал графики ядра: без него причина молчания не видна. */
     private external fun nativeGraphicsLog(on: Boolean)
-    /** Интервал обмена буферов у поверхности Android (0 — не ждать синхронизации). */
-    private external fun nativeSwapInterval(surface: android.view.Surface, interval: Int): Int
     /** Сколько кадров в секунду считает само ядро — не наш колбэк. */
     private external fun nativeGameFrameRate(): Double
     private external fun nativeLoadGame(fd: Int, type: Int): String
@@ -928,19 +926,6 @@ object KenjiBridge {
      */
     fun enableGraphicsLog() {
         if (bridgeLoaded) runCatching { nativeGraphicsLog(true) }
-    }
-
-    /**
-     * Не ждать вертикальную синхронизацию на поверхности.
-     *
-     * Официальное приложение делает это сразу после получения окна и повторяет
-     * после каждой перезаписи окна (`_nativeWindow.swapInterval = 0`).
-     *
-     * @return true, если система приняла значение
-     */
-    fun setSwapInterval(surface: android.view.Surface, interval: Int = 0): Boolean {
-        if (!bridgeLoaded) return false
-        return runCatching { nativeSwapInterval(surface, interval) == 0 }.getOrDefault(false)
     }
 
     /** Сколько кадров в секунду считает само ядро (0 — не считает или не рисует). */

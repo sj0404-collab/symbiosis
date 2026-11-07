@@ -1966,55 +1966,6 @@ Java_org_yuzu_yuzu_1emu_utils_KenjiBridge_nativeGraphicsLog(JNIEnv*, jobject, jb
 }
 
 /**
- * Интервал обмена буферов у самой поверхности Android.
- *
- * ЧТО ЭТО. `ANativeWindow_setSwapInterval(win, 0)` — «не ждать вертикальную
- * синхронизацию». Официальное приложение делает это сразу после получения
- * окна (`_nativeWindow.swapInterval = 0`) и повторяет после каждой перезаписи
- * окна. Мы этот вызов не делали ни разу.
- *
- * ПОЧЕМУ ЭТО МОЖЕТ БЫТЬ ПРИЧИНОЙ. Пока интервал не выставлен, `queueBuffer`
- * ждёт синхронизации дисплея; на части драйверов Mali (наш случай, MT6789)
- * первая же очередь буфера не возвращается, и поток показа стоит навсегда —
- * гость не получает кадр, ждёт его и в конце концов останавливает себя.
- *
- * @return 0, если система приняла интервал; -1, если окна нет
- */
-JNIEXPORT jint JNICALL
-Java_org_yuzu_yuzu_1emu_utils_KenjiBridge_nativeSwapInterval(JNIEnv* env, jobject, jobject surface,
-                                                             jint interval) {
-    if (surface == nullptr) return -1;
-    ANativeWindow* win = ANativeWindow_fromSurface(env, surface);
-    if (win == nullptr) return -1;
-    // ЧЕРЕЗ dlsym, А НЕ ПРЯМЫМ ВЫЗОВОМ.
-    //
-    // В NDK объявление `ANativeWindow_setSwapInterval` закрыто уровнем API:
-    // при сборке под android29 (наш случай) компилятор его не видит вовсе и
-    // сборка падает на «use of undeclared identifier». Сама функция при этом
-    // есть в libandroid.so с давних версий, поэтому берём её по имени: на
-    // старом устройстве вернётся nullptr — тогда честно говорим «не принят»
-    // и ничего не ломаем.
-    // БЕРЁМ ИЗ libandroid.so ЯВНО.
-    //
-    // `dlsym(RTLD_DEFAULT, …)` на телефоне вернул nullptr — в отчёте с
-    // устройства так и вышло: «интервал обмена буферов: не принят». Причина:
-    // символ живёт в libandroid.so, а сам файл может быть ещё не загружен в
-    // момент первого вызова. Поэтому открываем библиотеку по имени и ищем в
-    // ней. dlopen ищет уже загруженную копию, повторной загрузки нет.
-    using SetIntervalFn = int (*)(ANativeWindow*, int);
-    static void* android_lib = dlopen("libandroid.so", RTLD_NOW | RTLD_LOCAL);
-    static SetIntervalFn set_interval = android_lib == nullptr
-        ? nullptr
-        : reinterpret_cast<SetIntervalFn>(dlsym(android_lib, "ANativeWindow_setSwapInterval"));
-    if (set_interval == nullptr) return -1;
-    const int rc = set_interval(win, interval);
-    // Ссылку не отпускаем: указатель уходит в ядро и должен жить до конца
-    // поверхности. Один лишний refcount на запуск — цена того, что окно не
-    // умрёт под ногами у рендерера.
-    return rc == 0 ? 0 : -1;
-}
-
-/**
  * Сколько кадров в секунду считает САМО ядро (`deviceGetGameFrameRate`).
  *
  * ЗАЧЕМ. Наш счётчик растёт от колбэка `frameEnded()`; если имя колбэка в
