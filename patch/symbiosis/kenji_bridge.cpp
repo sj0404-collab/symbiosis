@@ -2006,7 +2006,19 @@ Java_org_yuzu_yuzu_1emu_utils_KenjiBridge_nativeSwapInterval(JNIEnv* env, jobjec
     if (surface == nullptr) return -1;
     ANativeWindow* win = ANativeWindow_fromSurface(env, surface);
     if (win == nullptr) return -1;
-    const int rc = ANativeWindow_setSwapInterval(win, interval);
+    // ЧЕРЕЗ dlsym, А НЕ ПРЯМЫМ ВЫЗОВОМ.
+    //
+    // В NDK объявление `ANativeWindow_setSwapInterval` закрыто уровнем API:
+    // при сборке под android29 (наш случай) компилятор его не видит вовсе и
+    // сборка падает на «use of undeclared identifier». Сама функция при этом
+    // есть в libandroid.so с давних версий, поэтому берём её по имени: на
+    // старом устройстве вернётся nullptr — тогда честно говорим «не принят»
+    // и ничего не ломаем.
+    using SetIntervalFn = int (*)(ANativeWindow*, int);
+    static SetIntervalFn set_interval =
+        reinterpret_cast<SetIntervalFn>(dlsym(RTLD_DEFAULT, "ANativeWindow_setSwapInterval"));
+    if (set_interval == nullptr) return -1;
+    const int rc = set_interval(win, interval);
     // Ссылку не отпускаем: указатель уходит в ядро и должен жить до конца
     // поверхности. Один лишний refcount на запуск — цена того, что окно не
     // умрёт под ногами у рендерера.

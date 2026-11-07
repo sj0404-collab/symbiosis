@@ -3938,3 +3938,19 @@ MD5.
 исправление (интервал обмена), либо инструмент, который причину назовёт
 (журнал графики, FPS ядра). Обещать «починил» без подтверждения с устройства
 нельзя.
+
+### 64.5. Сборка 259 упала на компиляции — и это полезно
+
+`ANativeWindow_setSwapInterval` в NDK закрыт уровнем API: при сборке под
+`android29` компилятор его не видит (`use of undeclared identifier`). Сама
+функция в `libandroid.so` есть давно, поэтому вызов переведён на `dlsym`:
+
+```cpp
+using SetIntervalFn = int (*)(ANativeWindow*, int);
+static SetIntervalFn set_interval =
+    reinterpret_cast<SetIntervalFn>(dlsym(RTLD_DEFAULT, "ANativeWindow_setSwapInterval"));
+if (set_interval == nullptr) return -1;   // старый телефон — «не принят», без поломки
+```
+
+Это не обход проверки: если символа нет, мы честно сообщаем «не принят» и
+продолжаем запуск.
