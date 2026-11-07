@@ -22,6 +22,8 @@ REQUIRED_EXPORTS = {
     'javaInitialize', 'deviceInitialize', 'graphicsInitialize',
     'graphicsInitializeRenderer', 'deviceLoadDescriptor', 'graphicsRendererRunLoop',
     'deviceSignalEmulationClose', 'deviceCloseEmulation',
+    'detachWindow', 'graphicsSetPresentEnabled', 'deviceSetWindowHandle',
+    'deviceRecreateSwapchain', 'graphicsRendererSetSize',
     'inputInitialize', 'inputConnectGamepad', 'inputUpdate',
     'inputSetButtonPressed', 'inputSetStickAxis', 'loggingSetEnabled',
 }
@@ -135,6 +137,9 @@ def elf_check(test, path):
                             check=True, capture_output=True, text=True)
     names = {line.split()[-1].split('@')[0] for line in result.stdout.splitlines() if line.split()}
     test.assertFalse(REQUIRED_EXPORTS - names, REQUIRED_EXPORTS - names)
+    # The SymbEK wrapper catches missing JNA methods. On these pinned cores,
+    # an unconditional GPU-wait call would not resolve.
+    test.assertNotIn('deviceWaitForGpuDone', names)
 
 
 @unittest.skipUnless(os.environ.get('SYMBEK_APK') and os.environ.get('SYMBIOSIS_CORE'),
@@ -175,6 +180,8 @@ class ReferenceArtifacts(unittest.TestCase):
             (native, 'deviceLoadDescriptor', '(III)Z'),
             (native, 'deviceSignalEmulationClose', '()V'),
             (native, 'deviceCloseEmulation', '()V'),
+            (native, 'deviceWaitForGpuDone', '(I)V'),
+            (native, 'detachWindow', '()V'),
             (native, 'inputConnectGamepad', '(I)I'),
             (native, 'inputInitialize', '(II)V'),
             (native, 'inputUpdate', '()V'),

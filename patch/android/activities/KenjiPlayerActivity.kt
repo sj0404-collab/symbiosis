@@ -80,6 +80,8 @@ class KenjiPlayerActivity : Activity(), SurfaceHolder.Callback {
 
     private var pfd: ParcelFileDescriptor? = null
     private var sessionLease: GameSessionLock? = null
+    // One reference from ANativeWindow_fromSurface, owned until teardown.
+    @Volatile private var ownedNativeWindow = -1L
     private var loopThread: Thread? = null
     @Volatile private var inputRunning = false
     private var inputThread: Thread? = null
@@ -348,6 +350,11 @@ class KenjiPlayerActivity : Activity(), SurfaceHolder.Callback {
 
             if (startup.isCancelled()) return@Thread
             val nw = KenjiBridge.nativeWindow(holder.surface)
+            if (nw <= 0L) {
+                if (!startup.isCancelled()) runOnUiThread { fail("Не удалось получить поверхность игры.") }
+                return@Thread
+            }
+            ownedNativeWindow = nw
             org.kenjinx.android.KenjinxNative.nativeSurface = nw
             org.kenjinx.android.KenjinxNative.nativeWindow = nw
             runOnUiThread { updateStatus("Второе ядро · подготовка · подробнее", "Готовлю ядро и прошивку") }
@@ -1064,6 +1071,15 @@ class KenjiPlayerActivity : Activity(), SurfaceHolder.Callback {
                     return@Thread
                 }
                 if (KenjiBridge.unload()) {
+                    org.kenjinx.android.KenjinxNative.nativeSurface = -1L
+                    org.kenjinx.android.KenjinxNative.nativeWindow = -1L
+                    val owned = ownedNativeWindow
+                    if (!KenjiBridge.releaseNativeWindow(owned)) {
+                        // Do not carry a leaked native window into another session.
+                        android.os.Process.killProcess(android.os.Process.myPid())
+                        return@Thread
+                    }
+                    ownedNativeWindow = -1L
                     runCatching { descriptor?.close() }
                     lease.close()
                 }

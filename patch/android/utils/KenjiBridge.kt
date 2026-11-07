@@ -132,6 +132,7 @@ object KenjiBridge {
     private external fun nativeSignalPlayStop(): Boolean
     private external fun nativeClosePlay(): Boolean
     private external fun nativeWindowOf(surface: android.view.Surface): Long
+    private external fun nativeReleaseWindow(handle: Long)
 
     /**
      * Каталог данных второго ядра — тот, что передаётся ядру при инициализации.
@@ -1019,8 +1020,14 @@ object KenjiBridge {
         return if (err.isEmpty()) Status(true, "игра передана ядру") else Status(false, err)
     }
 
+    /** Acquires one ANativeWindow reference; caller must release after core teardown. */
     fun nativeWindow(surface: android.view.Surface): Long =
         runCatching { nativeWindowOf(surface) }.getOrDefault(-1L)
+
+    fun releaseNativeWindow(handle: Long): Boolean {
+        if (handle <= 0L) return true
+        return bridgeLoaded && runCatching { nativeReleaseWindow(handle); true }.getOrDefault(false)
+    }
 
     /** Blocks until the core leaves the run loop. Call from a worker thread. */
     fun runLoop(): Status {

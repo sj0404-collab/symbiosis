@@ -2142,4 +2142,11 @@ Java_org_yuzu_yuzu_1emu_utils_KenjiBridge_nativeWindowOf(JNIEnv* env, jobject, j
     return reinterpret_cast<jlong>(win);
 }
 
+// Pairs the reference acquired by nativeWindowOf. The player calls this only
+// after device close and all known native callers have stopped.
+JNIEXPORT void JNICALL
+Java_org_yuzu_yuzu_1emu_utils_KenjiBridge_nativeReleaseWindow(JNIEnv*, jobject, jlong handle) {
+    if (handle > 0) ANativeWindow_release(reinterpret_cast<ANativeWindow*>(handle));
+}
+
 } // extern "C"
