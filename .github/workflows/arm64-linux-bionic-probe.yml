@@ -32,6 +32,7 @@ jobs:
           name: arm64-bionic-standalone-loader
           path: |
             /tmp/bionic-assets/standalone-core-probe
+            /tmp/bionic-assets/property-init
             /tmp/bionic-assets/libstandalonejni.so
             /tmp/bionic-assets/libkenjinxjni.so
             /tmp/bionic-assets/standalone.jar
@@ -60,7 +61,7 @@ jobs:
           curl -fsSL --retry 3 -o "$W/system-image.zip" \
             https://dl.google.com/android/repository/sys-img/google_apis/arm64-v8a-27_r03.zip
           echo "54dd140e1dd2db0fb7879beecf1068bf476ad171  $W/system-image.zip" | sha1sum -c -
-          python3 - "$W/system-image.zip" "$W/system.img" "$W/bootclasspath.txt" <<'PY'
+          python3 - "$W/system-image.zip" "$W/system.img" "$W/bootclasspath.txt" "$W/image-build.prop" <<'PY'
           import gzip, re, shutil, sys, zipfile
           with zipfile.ZipFile(sys.argv[1]) as archive:
               def unique(name):
@@ -76,6 +77,7 @@ jobs:
               if not all(re.fullmatch(r'/system/framework/[A-Za-z0-9_.-]+\.jar', p) for p in paths):
                   raise SystemExit('unexpected BOOTCLASSPATH value')
               with open(sys.argv[3], 'w') as dest: dest.write(':'.join(paths))
+              with open(sys.argv[4], 'wb') as dest: dest.write(archive.read(unique('build.prop')))
           PY
           rm "$W/system-image.zip"
       - name: Check pinned cores and load directly on ARM64 Linux with Android Bionic
@@ -91,7 +93,7 @@ jobs:
           echo "d781048671e4cef1cde2ec15db8fe29b949df9949d83569ceaf776ad12901590  $W/space.so" | sha256sum -c -
           rm "$W/symbek.apk"
           cp patch/libs/arm64-v8a/libcrypto.so patch/libs/arm64-v8a/libssl.so "$W/"
-          chmod +x "$W/standalone-core-probe"
+          chmod +x "$W/standalone-core-probe" "$W/property-init"
           IMAGE="$W/system.img"
           file "$IMAGE"
           # Sparse images are not mountable until converted; raw ext4 needs no conversion.
@@ -103,7 +105,9 @@ jobs:
           sudo mkdir -p /system "$W/system-mount"
           socket_owned=0
           socket_dir_created=0
+          property_area_owned=0
           cleanup() {
+            if [ "$property_area_owned" = 1 ]; then sudo rm -rf /dev/__properties__; fi
             if [ "$socket_owned" = 1 ]; then
               if [ -f "$W/logger.pid" ]; then sudo kill "$(cat "$W/logger.pid")" 2>/dev/null || true; fi
               sudo rm -f /dev/socket/logdw
@@ -149,6 +153,27 @@ jobs:
             sleep 0.1
           done
           if [ ! -S /dev/socket/logdw ]; then echo 'LOG_SETUP_FAIL logdw not ready'; exit 1; fi
+          # Real Bionic shared area, seeded strictly from the official system
+          # image's build.prop. This is not the phone's property service.
+          if [ -e /dev/__properties__ ] || [ -L /dev/__properties__ ]; then
+            echo 'PROPERTY_SETUP_FAIL existing area; refusing to replace it'; exit 1
+          fi
+          property_area_owned=1
+          set +e
+          sudo env LD_LIBRARY_PATH="$W:/system/lib64" "$W/property-init" "$W/image-build.prop" 2>&1 | tee "$W/logs/properties.txt"
+          prop_rc=${PIPESTATUS[0]}
+          set -e
+          echo "PROPERTY_INIT_EXIT_CODE=$prop_rc" | tee -a "$W/logs/properties.txt"
+          if [ "$prop_rc" != 0 ]; then failed=1; fi
+          # Verify in an independent Bionic process, not just the writer.
+          set +e
+          env LD_LIBRARY_PATH="$W:/system/lib64" /system/bin/getprop ro.product.cpu.abilist64 | tee -a "$W/logs/properties.txt"
+          read_rc=${PIPESTATUS[0]}
+          set -e
+          if [ "$read_rc" != 0 ] || ! grep -qx 'arm64-v8a' "$W/logs/properties.txt"; then
+            echo 'PROPERTY_READBACK_FAIL' | tee -a "$W/logs/properties.txt"
+            failed=1
+          fi
           # Try the real Android ART app_process, not a fabricated JNIEnv. This
           # is exploratory: Linux lacks Android daemons/devices and ART may not
           # start. Report each stage without treating a loader pass as JNI pass.

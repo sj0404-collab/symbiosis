@@ -11,6 +11,8 @@ ANDROID_JAR="$ANDROID_HOME/platforms/android-35/android.jar"
 cp "$ROOT/patch/symbiosis/got_patch.h" "$W/common/symbiosis/got_patch.h"
 "$CXX" -std=c++17 -Wall -Wextra -Werror -O2 -static-libstdc++ -Wl,-z,max-page-size=16384 \
   "$ROOT/tests/standalone_core_probe/probe.cpp" -ldl -o "$W/standalone-core-probe"
+"$CXX" -std=c++17 -Wall -Wextra -Werror -O2 -static-libstdc++ -Wl,-z,max-page-size=16384 \
+  "$ROOT/tests/standalone_core_probe/property_init.cpp" -ldl -o "$W/property-init"
 "$CXX" -std=c++17 -Wall -Wextra -Werror -O2 -shared -fPIC -static-libstdc++ -Wl,-z,max-page-size=16384 \
   "$ROOT/tests/standalone_core_probe/jni.cpp" -ldl -o "$W/libstandalonejni.so"
 # Production bridge, unchanged; still contains explicitly release-blocked callbacks.

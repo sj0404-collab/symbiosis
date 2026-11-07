@@ -114,6 +114,7 @@ jobs:
           python3 fork/tests/test_standalone_core_probe.py
           python3 fork/tests/test_standalone_gpt.py
           python3 fork/tests/test_standalone_log_capture.py
+          python3 fork/tests/test_standalone_property_init.py
           python3 fork/tests/test_kenji_ui_response_gate.py
           python3 fork/tests/test_kenji_ui_shared_event_model.py
           python3 fork/tests/test_kenji_transform_candidate.py
