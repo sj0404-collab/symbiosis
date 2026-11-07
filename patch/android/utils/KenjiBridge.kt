@@ -112,6 +112,8 @@ object KenjiBridge {
     private external fun nativeAttachSurface(surface: android.view.Surface, width: Int, height: Int): String
     /** Инициализация ввода — только после устройства и загрузки игры. */
     private external fun nativeInputInit(width: Int, height: Int): String
+    private external fun nativeConnectPad(index: Int): Int
+    private external fun nativeUpdateInput(): Boolean
     /** Поворот, размер, растяжение и пересоздание цепочки буферов. */
     private external fun nativeRendererKick(width: Int, height: Int, rotation: Int): String
     private external fun nativeSetWindowHandle(handle: Long)
@@ -894,6 +896,14 @@ object KenjiBridge {
             .getOrElse { return Status(false, it.message ?: "ввод") }
         return if (err.isEmpty()) Status(true, "ввод поднят") else Status(false, err)
     }
+
+    /** Подключить виртуальный контроллер игрока 1 после inputInit. */
+    fun connectVirtualPad(): Int =
+        if (!bridgeLoaded) -1 else runCatching { nativeConnectPad(0) }.getOrDefault(-1)
+
+    /** Обновить состояние ввода в ядре. */
+    fun updateInput(): Boolean =
+        if (!bridgeLoaded) false else runCatching { nativeUpdateInput() }.getOrDefault(false)
 
     /**
      * Пинок рендереру после появления поверхности.

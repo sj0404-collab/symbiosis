@@ -64,6 +64,10 @@ class KenjiPlayerActivity : Activity(), SurfaceHolder.Callback {
 
     private var pfd: ParcelFileDescriptor? = null
     private var loopThread: Thread? = null
+    @Volatile private var inputRunning = false
+    private var inputThread: Thread? = null
+    private var stopThread: Thread? = null
+
     private var started = false
     /** Запуск оборвался с названной причиной — она должна остаться в отчёте. */
     private var failed = false
@@ -257,6 +261,18 @@ class KenjiPlayerActivity : Activity(), SurfaceHolder.Callback {
                 runOnUiThread { fail(input.message) }
                 return@Thread
             }
+
+            // Сначала регистрируем виртуальный контроллер игрока 1, затем
+            // обновляем ввод в отдельном потоке, как делает Android-хост Kenji.
+            // По одному возврату API нельзя доказать, что гость его принял.
+            val padId = KenjiBridge.connectVirtualPad()
+            runCatching { KenjiReport.watch(appContext, "виртуальный контроллер: " +
+                if (padId >= 0) "зарегистрирован, id $padId" else "ядро не подключило") }
+            if (padId < 0) {
+                runOnUiThread { fail("Второе ядро не подключило виртуальный контроллер игрока 1.") }
+                return@Thread
+            }
+            if (!startInputUpdates()) return@Thread
 
             // Строка настроек рядом со статусом: «ядро запустилось» без них
             // ничего не говорит о том, с чем именно оно запустилось.
@@ -539,7 +555,7 @@ class KenjiPlayerActivity : Activity(), SurfaceHolder.Callback {
         guestFailed = true
         if (!guestThread && panic.isEmpty()) {
             runCatching { KenjiReport.watch(appContext, "ядро: " + hostCrash.take(200)) }
-            Thread({ runCatching { KenjiBridge.stopPlay() } }, "kenji-stop-failure").start()
+            requestStop()
             val tail = fresh.lines()
                 .filter { it.contains("LibKenjinx") || it.contains("System.") }
                 .map { it.trim().take(160) }
@@ -575,7 +591,7 @@ class KenjiPlayerActivity : Activity(), SurfaceHolder.Callback {
         runCatching { CoreFallback.note(appContext, gamePath, why) }
         runCatching { KenjiReport.watch(appContext, "ядро: " + why.take(160)) }
         // Остановка может блокироваться в ядре: не задерживаем экран.
-        Thread({ runCatching { KenjiBridge.stopPlay() } }, "kenji-stop-guest").start()
+        requestStop()
         runOnUiThread {
             // Короткая строка на экран: полное объяснение — в отчёте, а здесь
             // человек читает его, стоя с телефоном в руках.
@@ -614,15 +630,16 @@ class KenjiPlayerActivity : Activity(), SurfaceHolder.Callback {
         val remember = runCatching {
             EngineStore.setCoreFor(appContext, romPath, EngineHybrid.Core.EDEN)
         }.getOrDefault(false)
-        Thread({ runCatching { KenjiBridge.stopPlay() } }, "kenji-stop-panic").start()
+        requestStop()
         val details = if (evidence.isNotEmpty()) evidence else context.take(4)
         val tail = if (details.isEmpty()) "" else
             "\n\nСтроки журнала рядом с остановкой (не обязательно причина):\n" +
                 details.joinToString("\n")
         val next = if (remember) "Запомнил: эта игра теперь запускается на Eden."
         else "Запустите её на Eden — выбор ядра на вкладке «Инструменты»."
+        val hint = KenjiCrash.panicResultHint(fresh).let { if (it.isEmpty()) "" else "\n\n" + it }
         runOnUiThread {
-            fail("второе ядро остановилось. " + panic + tail + "\n\n" + next)
+            fail("второе ядро остановилось. " + panic + hint + tail + "\n\n" + next)
         }
     }
 
@@ -711,7 +728,34 @@ class KenjiPlayerActivity : Activity(), SurfaceHolder.Callback {
     override fun surfaceChanged(holder: SurfaceHolder, format: Int, width: Int, height: Int) = Unit
 
     override fun surfaceDestroyed(holder: SurfaceHolder) {
-        KenjiBridge.stopPlay()
+        requestStop()
+    }
+
+    @Synchronized
+    private fun startInputUpdates(): Boolean {
+        if (stopThread != null) return false
+        inputRunning = true
+        inputThread = Thread({
+            while (inputRunning) {
+                if (!KenjiBridge.updateInput()) break
+                try { Thread.sleep(8) } catch (_: InterruptedException) { break }
+            }
+            inputRunning = false
+        }, "kenji-input").also { it.start() }
+        return true
+    }
+
+    /** Не закрываем ядро, пока поток ввода ещё внутри его API. */
+    @Synchronized
+    private fun requestStop(): Thread {
+        stopThread?.let { return it }
+        inputRunning = false
+        val updater = inputThread
+        updater?.interrupt()
+        return Thread({
+            runCatching { updater?.join() }
+            runCatching { KenjiBridge.stopPlay() }
+        }, "kenji-stop").also { stopThread = it; it.start() }
     }
 
     @Deprecated("Deprecated in Java")
@@ -742,11 +786,15 @@ class KenjiPlayerActivity : Activity(), SurfaceHolder.Callback {
         val thread = loopThread
         val descriptor = pfd
         pfd = null
+        val stopper = requestStop()
         Thread({
-            runCatching { KenjiBridge.stopPlay() }
+            runCatching { stopper.join(3000) }
             runCatching { thread?.join(3000) }
-            runCatching { KenjiBridge.unload() }
-            runCatching { descriptor?.close() }
+            // Не выгружаем библиотеку, если в ней ещё работает поток.
+            if (!stopper.isAlive && thread?.isAlive != true) {
+                runCatching { KenjiBridge.unload() }
+                runCatching { descriptor?.close() }
+            }
         }, "kenji-teardown").start()
         super.onDestroy()
     }
@@ -760,7 +808,7 @@ class KenjiPlayerActivity : Activity(), SurfaceHolder.Callback {
         // stopPlay() уходит в натив: на телефоне, где цикл стоит, этот вызов
         // ждёт ответа ядра. Поэтому он тоже вне главного потока — иначе окно
         // не закроется до его возврата.
-        Thread({ runCatching { KenjiBridge.stopPlay() } }, "kenji-stop").start()
+        requestStop()
         // Окно закрывается сразу; выгрузка идёт в onDestroy своим потоком.
         finish()
     }

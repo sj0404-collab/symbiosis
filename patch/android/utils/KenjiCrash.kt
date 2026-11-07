@@ -971,6 +971,16 @@ object KenjiCrash {
         return picked.map { it.trim().take(160) }.filter { it.isNotEmpty() }
     }
 
+    /** Известное значение, фактически записанное в SetTerminateResult. */
+    fun panicResultHint(text: String): String {
+        val evidence = panicEvidence(text)
+        if (evidence.any { it.contains("SetTerminateResult") && it.contains("2202-0710") }) {
+            return "Код завершения 2202-0710: контроллер Npad не подключён. " +
+                "Ядро записало этот результат перед остановкой; его связь с другими неполадками ещё нужно проверить."
+        }
+        return ""
+    }
+
     /** Диагностические строки рядом с последним SvcBreak, без вывода причин наугад. */
     fun panicEvidence(text: String): List<String> {
         val lines = text.lines()

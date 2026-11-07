@@ -242,6 +242,7 @@ jobs:
           curl -sL -o /tmp/kc.zip https://github.com/JetBrains/kotlin/releases/download/v2.0.21/kotlin-compiler-2.0.21.zip
           unzip -q /tmp/kc.zip -d /tmp
           export PATH="/tmp/kotlinc/bin:$PATH"
+          python3 fork/tests/test_kenji_input_contract.py
           bash fork/tools/run_tests.sh --eden "$GITHUB_WORKSPACE/eden" --max-skip 3
 
       - name: Check the Russian localisation
@@ -423,7 +424,7 @@ jobs:
               || { echo "  missing JNI export: $sym"; fail=1; }
           done
 
-          for sym in nativeSetCrashLog nativeSetStep; do
+          for sym in nativeSetCrashLog nativeSetStep nativeConnectPad nativeUpdateInput; do
             "$NM" -D lib/arm64-v8a/libsymbiosis_kenji.so \
               | grep -q "Java_org_yuzu_yuzu_1emu_utils_KenjiBridge_$sym" \
               || { echo "  missing JNI export in the bridge: $sym"; fail=1; }
@@ -475,6 +476,7 @@ jobs:
                       "общая с Eden, " \
                       "ядро считает кадров/с: " \
                       "Что ядро говорит про отрисовку" \
+                      "Код завершения 2202-0710" \
                       "Распаковано, но ядро файл не открывает" \
                       "но ни одна не похожа" "ключей игр добавлено" \
                       "прошлый обход библиотеки не закончился" \

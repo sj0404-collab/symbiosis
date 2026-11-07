@@ -129,6 +129,14 @@ fun main() {
     check("регистр сохранён как адрес, не как результат", evidence.any { it.contains("X[1]: 0x0000000012345678") })
     check("без SvcBreak нет доказательств паники", KenjiCrash.panicEvidence("SetTerminateResult: 0x123").isEmpty())
 
+    val hidLog = """
+        |00:00:16.360 |I| {Common} ServiceAm SetTerminateResult: Result = 0x00058cca (2202-0710).
+        |00:00:16.500 |E| HLE.GuestThread.28 KernelSvc Break: SvcBreak reason=0x0000000000000000 pid=109 tid=28 pc=0x139553C0
+    """.trimMargin()
+    check("результат HID распознан", KenjiCrash.panicResultHint(hidLog).contains("контроллер Npad не подключён"))
+    check("нет выдуманной причины без строки результата", KenjiCrash.panicResultHint("SvcBreak reason=0 2202-0710").isEmpty())
+    check("другой результат не подписывается как HID", KenjiCrash.panicResultHint(evidenceLog).isEmpty())
+
     // ── 5. служба-заглушка: переключатель доходит до ядра ───────────────
     //
     // В Kenji Space это ровно та же настройка (`ignoreMissingServices`), и она

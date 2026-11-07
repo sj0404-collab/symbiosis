@@ -1921,6 +1921,26 @@ Java_org_yuzu_yuzu_1emu_utils_KenjiBridge_nativeInputInit(JNIEnv* env, jobject, 
     return env->NewStringUTF("");
 }
 
+// Виртуальный контроллер и обновление ввода — отдельные API ядра.
+JNIEXPORT jint JNICALL
+Java_org_yuzu_yuzu_1emu_utils_KenjiBridge_nativeConnectPad(JNIEnv*, jobject, jint index) {
+    if (g_core == nullptr) return -1;
+    using Fn = int (*)(int);
+    auto fn = reinterpret_cast<Fn>(dlsym(g_core, "inputConnectGamepad"));
+    if (fn == nullptr) return -1;
+    return static_cast<jint>(fn(static_cast<int>(index)));
+}
+
+JNIEXPORT jboolean JNICALL
+Java_org_yuzu_yuzu_1emu_utils_KenjiBridge_nativeUpdateInput(JNIEnv*, jobject) {
+    if (g_core == nullptr) return JNI_FALSE;
+    using Fn = void (*)();
+    auto fn = reinterpret_cast<Fn>(dlsym(g_core, "inputUpdate"));
+    if (fn == nullptr) return JNI_FALSE;
+    fn();
+    return JNI_TRUE;
+}
+
 /**
  * Отдать ядру дескриптор окна Android.
  *
