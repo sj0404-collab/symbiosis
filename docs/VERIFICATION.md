@@ -4543,3 +4543,19 @@ supported by the current CPU.` До остановки в preflight собств
 нет. [Логи](https://github.com/sj0404-collab/symbiosis/actions/runs/42390491624/artifacts/13581790597).
 Экран разбора ошибки дополнительно проверен host-тестом 193/193, до Android
 и игры эта проверка не доходит. APK после 269 не собирался.
+
+Повтор после разделения временных файлов, код `cc5b98c`, [Tests 42391313025](https://github.com/sj0404-collab/symbiosis/actions/runs/42391313025):
+общий job success; отдельные stdout обоих ядер содержат отказ по instruction
+sets, Android job failure. В этом запуске отчёт каждого ядра записывается
+отдельно. [Логи](https://github.com/sj0404-collab/symbiosis/actions/runs/42391313025/artifacts/13582340643).
+
+Уточнение сравнения JNI SymbEK 1.0.121: `setRenderingThread` в оригинальном
+`libkenjinxjni.so` вызывает `pthread_self()` и `steady_clock::now()`, сохраняя
+их в глобальные `_renderingThreadId` и `_currentTimePoint` (адреса функций и
+relocations проверены в точном бинарнике). Текущая пустая функция моста — не
+доказанный эквивалент. Простой перенос этих присваиваний без механизма их
+использования был бы заглушкой; ещё нужно исследовать потребителей этих данных
+и графические хуки. `getStringJava` оригинала вызывает JNI `NewStringUTF`, а
+не передаёт адрес строки в UI для последующего чтения. Полный перенос callback,
+проверка кодировки и времени жизни строк, графического моста и Android
+lifecycle ещё не выполнены. Выпускаемый APK «без заглушек» не готов.
