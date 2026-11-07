@@ -30,6 +30,7 @@ REQUIRED_EXPORTS = {
     'deviceSetSurfaceRotation', 'deviceGetGameFrameRate', 'deviceGetInstalledFirmwareVersion',
     'graphicsSetFullscreenStretch', 'userGetOpenedUser',
     'loggingSetEnabled', 'loggingEnabledGraphicsLog',
+    'uiHandlerSetup', 'uiHandlerSetResponse',
 }
 
 
@@ -145,6 +146,29 @@ def elf_check(test, path):
     # an unconditional GPU-wait call would not resolve.
     test.assertNotIn('deviceWaitForGpuDone', names)
 
+    # In both pinned AArch64 binaries the response entry copies argument w0 to
+    # w19, x1 to x20, and later zero-extends w19's low byte. This checks the
+    # machine-code evidence for two arguments and bool-like first argument;
+    # it does not establish the encoding or prove the whole runtime ABI.
+    symbols = {line.split()[-1].split('@')[0]: int(line.split()[0], 16)
+               for line in result.stdout.splitlines() if len(line.split()) >= 3}
+    addr = symbols['uiHandlerSetResponse']
+    with open(path, 'rb') as f:
+        f.seek(phoff)
+        programs = f.read(entsize * count)
+        for i in range(count):
+            ptype, _, offset, vaddr, _, filesz, _, _ = struct.unpack_from(
+                '<IIQQQQQQ', programs, i * entsize)
+            if ptype == 1 and vaddr <= addr and addr + 44 <= vaddr + filesz:
+                f.seek(offset + addr - vaddr)
+                code = f.read(44)
+                break
+        else:
+            test.fail('response export is not in a file-backed LOAD segment')
+    test.assertEqual(code[12:16], bytes.fromhex('f303002a'))  # mov w19, w0
+    test.assertEqual(code[16:20], bytes.fromhex('f40301aa'))  # mov x20, x1
+    test.assertEqual(code[40:44], bytes.fromhex('601e0053'))  # uxtb w0, w19
+
 
 @unittest.skipUnless(os.environ.get('SYMBEK_APK') and os.environ.get('SYMBIOSIS_CORE'),
                      'set SYMBEK_APK and SYMBIOSIS_CORE to run binary checks')
@@ -168,7 +192,8 @@ class ReferenceArtifacts(unittest.TestCase):
         wanted = {game, native, 'Lorg/kenjinx/android/KenjinxNativeJna;',
                   'Lorg/kenjinx/android/NativeWindow;', 'Ldev/symbiosis/kenji/PadDeck;',
                   'Ldev/symbiosis/kenji/PadBridge;', 'Ldev/symbiosis/kenji/SettingsBank;',
-                  'Ldev/symbiosis/kenji/LoadOverlay;'}
+                  'Ldev/symbiosis/kenji/LoadOverlay;', 'Lorg/kenjinx/android/NativeHelpers;',
+                  'Lorg/kenjinx/android/UiHandler;'}
         classes, methods = set(), set()
         with zipfile.ZipFile(self.apk) as z:
             for name in ('classes.dex', 'classes2.dex', 'classes3.dex', 'classes4.dex'):
@@ -206,6 +231,12 @@ class ReferenceArtifacts(unittest.TestCase):
             (native, 'userGetOpenedUser', '()Ljava/lang/String;'),
             (native, 'loggingSetEnabled', '(IZ)V'),
             (native, 'loggingEnabledGraphicsLog', '(Z)V'),
+            (native, 'uiHandlerSetup', '()V'),
+            (native, 'uiHandlerSetResponse', '(ZLjava/lang/String;)V'),
+            (native, 'updateUiHandler', '(JJJIIIIJJ)V'),
+            ('Lorg/kenjinx/android/NativeHelpers;', 'getStringJava', '(J)Ljava/lang/String;'),
+            ('Lorg/kenjinx/android/UiHandler;', 'update',
+             '(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;IIILorg/kenjinx/android/KeyboardMode;Ljava/lang/String;Ljava/lang/String;)V'),
             ('Ldev/symbiosis/kenji/PadBridge;', 'press', '(Ljava/lang/String;)V'),
         ):
             self.assertIn(signature, methods)
