@@ -1494,7 +1494,10 @@ Java_org_yuzu_yuzu_1emu_utils_KenjiBridge_nativeLoad(JNIEnv* env, jobject, jstri
     // resolving everything now turns the same problem into a message here.
     dlerror();
     void* handle = dlopen(path, RTLD_NOW | RTLD_LOCAL);
-    std::string err = handle ? "" : (dlerror() ? dlerror() : "dlopen failed");
+    // dlerror() consumes its pending error. Read it exactly once and copy it
+    // before any other loader/JNI operation can change the error buffer.
+    const char* loaderError = handle ? nullptr : dlerror();
+    std::string err = loaderError ? loaderError : (handle ? "" : "dlopen failed");
     env->ReleaseStringUTFChars(jpath, path);
 
     if (handle == nullptr) {

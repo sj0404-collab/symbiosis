@@ -245,6 +245,7 @@ jobs:
           python3 fork/tests/test_kenji_input_contract.py
           python3 fork/tests/test_game_session_contract.py
           python3 fork/tests/test_kenji_window_ref.py
+          python3 fork/tests/test_kenji_loader_error.py
           python3 fork/tests/test_core_settings_screen.py
           python3 fork/tests/test_hid_remap_model.py
           git -C eden show HEAD:src/hid_core/resources/npad/npad_resource.cpp > /tmp/original-eden-npad-resource.cpp

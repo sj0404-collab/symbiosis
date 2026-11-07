@@ -9,6 +9,11 @@ name: Tests
 
 on:
   workflow_dispatch:
+    inputs:
+      run_android_probe:
+        description: "Run disposable real-core Android emulator probe after host tests"
+        type: boolean
+        default: false
   push:
     branches: [main]
     paths:
@@ -96,6 +101,7 @@ jobs:
           python3 fork/tests/test_kenji_input_contract.py
           python3 fork/tests/test_game_session_contract.py
           python3 fork/tests/test_kenji_window_ref.py
+          python3 fork/tests/test_kenji_loader_error.py
           python3 fork/tests/test_hid_remap_model.py
           git -C eden show HEAD:src/hid_core/resources/npad/npad_resource.cpp > /tmp/original-eden-npad-resource.cpp
           EDEN_NPAD_RESOURCE=/tmp/original-eden-npad-resource.cpp python3 fork/tests/test_hid_710_experiment.py
@@ -160,3 +166,50 @@ jobs:
               print('format-argument mismatch:', bad[:5]); sys.exit(1)
           print(f'EN {len(en)} / RU {len(ru)} strings, format arguments agree')
           PY
+
+  core-probe:
+    if: github.event_name == 'workflow_dispatch' && inputs.run_android_probe == true
+    needs: tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      PROBE_WORK: /tmp/sym-core-ci
+      KOTLINC_HOME: /tmp/kotlinc
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v4
+      - name: Install test toolchain
+        run: |
+          sdkmanager --install 'ndk;28.2.13676358' 'platforms;android-35' 'build-tools;35.0.0'
+          curl -fsSL --retry 3 -o /tmp/kc.zip https://github.com/JetBrains/kotlin/releases/download/v2.0.21/kotlin-compiler-2.0.21.zip
+          unzip -q /tmp/kc.zip -d /tmp
+      - name: Build disposable probe with real bridge and real cores
+        run: bash tests/android_core_probe/build.sh
+      - name: Enable KVM access
+        run: |
+          test -e /dev/kvm
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - name: Try both cores in separate emulator processes
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          target: google_apis
+          arch: x86_64
+          profile: pixel_5
+          disable-animations: true
+          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -camera-back none -camera-front none
+          script: bash tests/android_core_probe/run.sh
+      - name: Save emulator logs (no probe APK)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-core-probe-logs
+          path: /tmp/sym-core-ci/*-logcat.txt
+          if-no-files-found: warn
+          retention-days: 3
