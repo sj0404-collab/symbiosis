@@ -30,6 +30,7 @@ import org.yuzu.yuzu_emu.utils.EngineStore
 import org.yuzu.yuzu_emu.utils.EngineLoader
 import org.yuzu.yuzu_emu.utils.KenjiBridge
 import org.yuzu.yuzu_emu.utils.KenjiOverlaySnapshot
+import org.yuzu.yuzu_emu.utils.KenjiSurfaceStartGate
 import org.yuzu.yuzu_emu.overlay.InputOverlay
 import org.yuzu.yuzu_emu.overlay.model.OverlayLayout
 import org.yuzu.yuzu_emu.features.input.NativeInput
@@ -81,7 +82,7 @@ class KenjiPlayerActivity : Activity(), SurfaceHolder.Callback {
     private var inputThread: Thread? = null
     private var stopThread: Thread? = null
 
-    private var started = false
+    private val surfaceStart = KenjiSurfaceStartGate()
     /** Запуск оборвался с названной причиной — она должна остаться в отчёте. */
     private var failed = false
     /** Кадров на прошлом тике: разница показывает текущую скорость. */
@@ -277,18 +278,20 @@ class KenjiPlayerActivity : Activity(), SurfaceHolder.Callback {
     }
 
     override fun surfaceCreated(holder: SurfaceHolder) {
-        if (started) return
+        // Android may not have supplied the final size yet. SymbEK's real
+        // GameHost starts on surfaceChanged, not on this callback.
+        surfaceStart.created()
+    }
+
+    @Synchronized
+    private fun startGame(holder: SurfaceHolder, w: Int, h: Int) {
+        if (stopThread != null || failed || isFinishing || isDestroyed) return
         val fd = pfd?.fd ?: return fail("нет дескриптора")
         val path = intent.getStringExtra(EXTRA_PATH).orEmpty()
         val config = intent.getStringExtra(EXTRA_CONFIG).orEmpty()
-        val w = holder.surfaceFrame.width().coerceAtLeast(128)
-        val h = holder.surfaceFrame.height().coerceAtLeast(128)
-        surfaceWidth = w
-        surfaceHeight = h
         gamePath = path
         playStartedAt = System.currentTimeMillis()
         val appContext = applicationContext
-        started = true
         loopThread = Thread({
           // Ошибка в коде самого плеера не должна убивать процесс: экран уже
           // занят игрой, и «Приложение остановлено» без причины — худший из
@@ -430,7 +433,7 @@ class KenjiPlayerActivity : Activity(), SurfaceHolder.Callback {
             //   System.NullReferenceException at LibKenjinx.SetVsyncState(VSyncMode)
             // и abort() через SIGABRT. Режим синхронизации и так уходит в
             // `deviceInitialize` (параметр vSyncMode), этого достаточно.
-            val kick = KenjiBridge.rendererKick(w, h, displayRotation())
+            val kick = KenjiBridge.rendererKick(surfaceWidth, surfaceHeight, displayRotation())
             if (!kick.ok) {
                 runOnUiThread { fail(kick.message) }
                 return@Thread
@@ -847,6 +850,9 @@ class KenjiPlayerActivity : Activity(), SurfaceHolder.Callback {
             surfaceWidth = width
             surfaceHeight = height
             KenjiBridge.inputSize(width, height)
+            if (surfaceStart.changed(width, height, holder.surface.isValid)) {
+                startGame(holder, width, height)
+            }
         }
     }
 
@@ -869,7 +875,8 @@ class KenjiPlayerActivity : Activity(), SurfaceHolder.Callback {
     }
 
     override fun surfaceDestroyed(holder: SurfaceHolder) {
-        requestStop()
+        // A transient surface lost before startup is not a running session.
+        if (surfaceStart.destroyed()) requestStop()
     }
 
     @Synchronized
@@ -890,6 +897,7 @@ class KenjiPlayerActivity : Activity(), SurfaceHolder.Callback {
     /** Не закрываем ядро, пока поток ввода ещё внутри его API. */
     @Synchronized
     private fun requestStop(): Thread {
+        surfaceStart.stop()
         stopThread?.let { return it }
         inputRunning = false
         KenjiBridge.disableInputEvents()

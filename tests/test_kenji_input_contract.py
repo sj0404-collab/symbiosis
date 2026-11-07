@@ -8,6 +8,20 @@ ACTIVITY = (ROOT / 'patch/android/activities/KenjiPlayerActivity.kt').read_text(
 BRIDGE = (ROOT / 'patch/symbiosis/kenji_bridge.cpp').read_text()
 
 class InputContract(unittest.TestCase):
+    def test_surface_starts_once_only_after_valid_sized_change(self):
+        created = ACTIVITY.split('override fun surfaceCreated', 1)[1].split('private fun startGame', 1)[0]
+        changed = ACTIVITY.split('override fun surfaceChanged', 1)[1].split('override fun surfaceDestroyed', 1)[0]
+        destroyed = ACTIVITY.split('override fun surfaceDestroyed', 1)[1].split('private fun startInputUpdates', 1)[0]
+        stop = ACTIVITY.split('private fun requestStop(): Thread', 1)[1].split('@Deprecated', 1)[0]
+        self.assertIn('surfaceStart.created()', created)
+        self.assertNotIn('startGame(', created)
+        self.assertIn('surfaceStart.changed(width, height, holder.surface.isValid)', changed)
+        self.assertIn('startGame(holder, width, height)', changed)
+        self.assertIn('if (surfaceStart.destroyed()) requestStop()', destroyed)
+        self.assertIn('surfaceStart.stop()', stop)
+        self.assertIn('KenjiBridge.rendererKick(surfaceWidth, surfaceHeight, displayRotation())', ACTIVITY)
+        self.assertNotIn('surfaceFrame.width().coerceAtLeast(128)', ACTIVITY)
+
     def test_order_is_init_connect_update_then_game_and_render(self):
         positions = [ACTIVITY.index(x) for x in (
             'KenjiBridge.inputInit(w, h)', 'KenjiBridge.connectVirtualPad()',
