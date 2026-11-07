@@ -4,12 +4,15 @@
 #include <sys/auxv.h>
 #include <sys/utsname.h>
 #include <cstdio>
+#include <cstring>
 
 int main(int argc, char** argv) {
-    if (argc != 2) {
-        std::fprintf(stderr, "usage: standalone-core-probe /absolute/path/to/core.so\n");
+    const bool dependency_only = argc == 3 && std::strcmp(argv[1], "--dlopen-only") == 0;
+    if (argc != 2 && !dependency_only) {
+        std::fprintf(stderr, "usage: standalone-core-probe [--dlopen-only] library.so\n");
         return 2;
     }
+    const char* path = argv[dependency_only ? 2 : 1];
     // Flush each stage: core constructors or the dynamic linker can terminate.
     std::setvbuf(stdout, nullptr, _IONBF, 0);
     struct utsname info{};
@@ -25,15 +28,19 @@ int main(int argc, char** argv) {
     // Linux x86 HWCAP bits have different semantics. Never label them ARM.
     std::printf("HOST_HWCAP=0x%lx (not ARM; no ARM capability conclusion)\n", hw);
 #endif
-    std::printf("STAGE dlopen path=%s\n", argv[1]);
+    std::printf("STAGE dlopen path=%s\n", path);
     dlerror();
-    void* handle = dlopen(argv[1], RTLD_NOW | RTLD_LOCAL);
+    void* handle = dlopen(path, RTLD_NOW | RTLD_LOCAL);
     if (!handle) {
         const char* error = dlerror();
         std::fprintf(stderr, "DLOPEN_FAIL %s\n", error ? error : "unknown loader error");
         return 3;
     }
     std::puts("DLOPEN_OK (no JNI, no device, no game initialized)");
+    if (dependency_only) {
+        std::puts("DEPENDENCY_ONLY no JNI_OnLoad or exported functions called");
+        return 0;
+    }
     constexpr const char* symbols[] = {
         "javaInitialize", "deviceInitialize", "deviceLoadDescriptor",
         "deviceCloseEmulation", "deviceSignalEmulationClose", "graphicsInitialize",

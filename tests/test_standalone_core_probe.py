@@ -58,6 +58,16 @@ class StandaloneProbeTest(unittest.TestCase):
         self.assertEqual(run.returncode, 3)
         self.assertIn('DLOPEN_FAIL', run.stderr)
 
+    def test_dependency_mode_no_core_calls_and_real_dlerror(self):
+        run = self.invoke('--dlopen-only', self.incomplete)
+        self.assertEqual(run.returncode, 0)
+        self.assertIn('DEPENDENCY_ONLY no JNI_OnLoad', run.stdout)
+        self.assertNotIn('SYMBOL ', run.stdout)
+        run = self.invoke('--dlopen-only', self.folder / 'missing.so')
+        self.assertEqual(run.returncode, 3)
+        self.assertIn('DLOPEN_FAIL', run.stderr)
+        self.assertIn('missing.so', run.stderr)
+
 
 class OrchestrationTest(unittest.TestCase):
     def test_two_separate_processes_and_failure_not_hidden(self):
