@@ -546,7 +546,7 @@ class KenjiPlayerActivity : Activity(), SurfaceHolder.Callback {
                     if (frames == 0L) {
                         runCatching { rendererTail(appContext, 1) }.getOrDefault(emptyList())
                             .firstOrNull { line -> !tail.contains(line) }
-                            ?.let { line -> append('\n').append(line) }
+                            ?.let { line -> append("\nЧто ядро говорит про отрисовку:\n").append(line) }
                     }
                 }
                 val summary = if (noFramesWarned && frames == 0L)
