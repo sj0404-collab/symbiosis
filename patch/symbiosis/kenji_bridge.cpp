@@ -1002,24 +1002,14 @@ void PalPreflight() {
 
     const long size = pageByName > 0 ? pageByName : (pageMacro > 0 ? pageMacro : 4096);
 
-    // 2. Версия системы и membarrier: ядро при sdk >= 29 сначала пробует
-    //    membarrier и только при отказе заводит страницу через mmap.
+    // Диагностический вызов membarrier может убить процесс через seccomp,
+    // а жёсткий номер 283 не переносим между архитектурами. Предпроверка не
+    // должна выполнять опасные syscall вместо ядра или подменять их ответы.
+    // Версию записываем, отсутствие измерения указываем явно.
     char sdkRaw[128];
     sdkRaw[0] = '\0';
     ::__system_property_get("ro.build.version.sdk", sdkRaw);
-    errno = 0;
-    const long query = ::syscall(283, 0, 0);
-    const int queryErr = query < 0 ? errno : 0;
-    long registered = -1;
-    int registerErr = 0;
-    if (query >= 0 && (query & 8) != 0) {
-        errno = 0;
-        registered = ::syscall(283, 0x10, 0);
-        registerErr = registered < 0 ? errno : 0;
-    }
-    n = ::snprintf(line, sizeof(line),
-                   "pal: sdk=%s membarrier query=%ld errno=%d register=%ld errno=%d\n",
-                   sdkRaw, query, queryErr, registered, registerErr);
+    n = ::snprintf(line, sizeof(line), "pal: sdk=%s membarrier=not-probed\n", sdkRaw);
     if (n > 0) AppendCrashLine(line);
 
     // 3. Страница: mmap, mlock, мьютекс — ровно в том порядке и с теми же

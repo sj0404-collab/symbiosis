@@ -4918,3 +4918,22 @@ Android и проверка CPU в APK не изменяются и не обх�
 `libssl.so=ok`), но оба реальных ядра всё равно завершились на проверке ISA.
 UI, graphics и mock JNI в той же пробе прошли; общий Android job failure.
 [Логи](https://github.com/sj0404-collab/symbiosis/actions/runs/42401525676/artifacts/13584939772).
+
+### 85. Software ARM: ошибка предпроверки, а не результат игры
+
+[Run 42402359917](https://github.com/sj0404-collab/symbiosis/actions/runs/42402359917),
+код `9922775`: ARM64 Android 8.1/API27 под software QEMU загрузился; `/proc/cpuinfo`
+сообщил `asimd` и `crc32`, но не показал `atomics` и `asimdrdm`. Это вывод
+этого гостевого ядра, не телефона; точный `getauxval` в новом probe ещё нужен.
+Synthetic UI прошёл. Graphics-reference не загрузил JNI (`android_get_device_api_level`
+недоступен в API27), поэтому graphics там **не проверен**. Mock и оба настоящих
+ядра завершились `SIGSYS` *до вызова* `javaInitialize`: backtrace указывает
+на наш `PalPreflight`, который безусловно вызывал syscall 283 (`membarrier`),
+запрещённый seccomp этой системы. Сам QEMU в этом запуске не проверил
+инициализацию ядра, запуск игры или 710. [Отдельные журналы](https://github.com/sj0404-collab/symbiosis/actions/runs/42402359917/artifacts/13586591289).
+
+Опасный диагностический raw syscall из `PalPreflight` удалён, журнал прямо
+говорит `membarrier=not-probed`: это не подмена системного ответа и не
+вмешательство в системные вызовы ядра. `test_kenji_preflight_safety.py`
+проверяет отсутствие raw syscall в предварительной диагностике. Наличие других
+возможных ошибок в preflight не исключено; повторная Android-проверка нужна.
