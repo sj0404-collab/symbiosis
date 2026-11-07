@@ -549,6 +549,14 @@ fun main() {
     val initText = KenjiCrash.format(initReport!!)
     check("ответ инициализации в отчёте", initText.contains("инициализация ядра ответила"), initText)
     check("ненулевой ответ объяснён", initText.contains("ненулевой ответ означает отказ"), initText)
+    check("старый обход не объявлен действующим", !initText.contains("продолжает работу"), initText)
+    val isa = "The required instruction sets are not supported by the current CPU."
+    check("NativeAOT отказ CPU найден среди остальных ошибок",
+        KenjiCrash.exceptionLines("Unhandled exception. Earlier failure\n$isa").any { it == isa })
+    val isaConsole = KenjiCrash.consoleLines("Unhandled exception. Earlier failure\n$isa")
+    check("отказ инструкций объяснён по-русски без домыслов о телефоне",
+        isaConsole.any { it.contains("процессор или среда запуска") } && isaConsole.any { it == isa }, isaConsole.toString())
+    check("лимит сообщения CPU соблюдается", KenjiCrash.consoleLines(isa, 1).size == 1)
     check("обёртка названа в состоянии", initReport.trapState.any { it.contains("init guard") },
         initReport.trapState.toString())
 

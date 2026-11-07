@@ -12,6 +12,8 @@ adb install -r "$PROBE_WORK/core-probe.apk"
 failed=0
 for core in sym space; do
   adb shell am force-stop "$APP"
+  # These belong only to the disposable probe, not the user's core journal.
+  adb shell run-as "$APP" rm -f files/probe-crash.txt files/kenji-stdout.txt files/kenji-jni.txt
   # A fresh process is essential: two NativeAOT cores must not share state.
   log="$PROBE_WORK/$core-logcat.txt"
   adb logcat -T 1 -v time > "$log" 2>&1 &

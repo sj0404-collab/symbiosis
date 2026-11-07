@@ -328,7 +328,7 @@ object KenjiCrash {
                 builder.append(" [").append(report.initCallbackAt).append(']')
             }
             if (report.initResult.trim() != "0") {
-                builder.append(" (ненулевой ответ означает отказ; ядро обёрнуто и продолжает работу)")
+                builder.append(" (ненулевой ответ означает отказ; это запись из старого отчёта)")
             }
             builder.append('\n')
         }
@@ -580,7 +580,12 @@ object KenjiCrash {
      */
     fun consoleLines(dump: String, limit: Int = 12): List<String> {
         val picked = exceptionLines(dump, limit)
-        if (picked.isNotEmpty()) return picked
+        if (picked.isNotEmpty()) {
+            if (picked.any { it.contains("The required instruction sets are not supported by the current CPU", ignoreCase = true) }) {
+                return (listOf("Рантайм ядра сообщает: процессор или среда запуска не поддерживает необходимые инструкции.") + picked).take(limit)
+            }
+            return picked
+        }
         return tailLines(dump, limit)
     }
 
@@ -695,7 +700,8 @@ object KenjiCrash {
             // terminated. …», «Fatal error. Invalid Program: …». Без этих слов
             // его сообщение не попадало в отбор, и причина падения оставалась
             // неизвестной, хотя текст был написан.
-            "process terminated", "fatal error", "invalid program", "assertion"
+            "process terminated", "fatal error", "invalid program", "assertion",
+            "the required instruction sets are not supported by the current cpu"
         )
         val kept = stderrDump.lineSequence()
             .map { it.trim().trimEnd('\r') }
