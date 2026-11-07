@@ -4874,3 +4874,13 @@ Android Emulator на x86 обычно запрещает ARM64 image API28+; AP
 смещением, но не доказывает реальные IPC-байты, код скачанных бинарников или
 первопричину 710. В Eden соответствующий метод устроен иначе; смешивать их
 результаты нельзя. Исследование продолжается.
+
+Результат [Tests 42400815590](https://github.com/sj0404-collab/symbiosis/actions/runs/42400815590),
+код `79efe95`: host success; Android graphics probe `pass` теперь сравнивал
+`SymbekTransformCandidate` с точным исполняемым callback SymbEK и независимой
+таблицей на 1034 входах. UI и mock JNI тоже прошли; оба настоящих ядра снова
+упали на CPU ISA, общий Android job failure.
+[Логи](https://github.com/sj0404-collab/symbiosis/actions/runs/42400815590/artifacts/13585941088).
+На `096934c` host job [42401292432](https://github.com/sj0404-collab/symbiosis/actions/runs/42401292432)
+также прошёл, включая новый тест двух одновременно закрывающих. Ни один из
+этих результатов не является проверкой настоящей игры или исправлением 710.
