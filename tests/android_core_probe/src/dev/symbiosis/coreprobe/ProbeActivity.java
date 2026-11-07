@@ -25,6 +25,8 @@ public final class ProbeActivity extends Activity {
         try {
             System.loadLibrary("symbiosis_kenji");
             KenjiBridge bridge = new KenjiBridge();
+            // Probe files belong only to this disposable test app on the runner.
+            bridge.nativeSetCrashLog(new File(getFilesDir(), "probe-crash.txt").getAbsolutePath());
             String missing = bridge.nativeLoad(getFilesDir() + "/missing-test-core.so");
             if (missing == null || missing.isEmpty() || !missing.contains("missing-test-core.so")) {
                 fail("missing library did not return a useful error: " + missing);

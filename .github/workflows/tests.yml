@@ -210,6 +210,10 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: android-core-probe-logs
-          path: /tmp/sym-core-ci/*-logcat.txt
+          path: |
+            /tmp/sym-core-ci/*-logcat.txt
+            /tmp/sym-core-ci/*-probe-crash.txt
+            /tmp/sym-core-ci/*-kenji-stdout.txt
+            /tmp/sym-core-ci/*-kenji-jni.txt
           if-no-files-found: warn
           retention-days: 3

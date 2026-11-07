@@ -16,14 +16,22 @@ for core in sym space; do
   log="$PROBE_WORK/$core-logcat.txt"
   adb logcat -T 1 -v time > "$log" 2>&1 &
   logpid=$!
-  adb shell am start -W -n "$APP/.ProbeActivity" --es core "$core" || true
+  adb shell am start -n "$APP/.ProbeActivity" --es core "$core" || true
   outcome=timeout
   for ((i=0; i<90; i++)); do
     if grep -q "PROBE_OK core=$core " "$log"; then outcome=pass; break; fi
     if grep -q 'PROBE_FAIL' "$log"; then outcome=fail; break; fi
+    if grep -q 'Fatal signal.*iosis.coreprobe' "$log"; then outcome=native-crash; break; fi
     sleep 1
   done
   adb shell am force-stop "$APP" || true
+  for name in probe-crash.txt kenji-stdout.txt kenji-jni.txt; do
+    adb exec-out run-as "$APP" cat "files/$name" > "$PROBE_WORK/$core-$name" 2>/dev/null || true
+    if [ -s "$PROBE_WORK/$core-$name" ]; then
+      printf '\n=== %s %s ===\n' "$core" "$name"
+      tail -100 "$PROBE_WORK/$core-$name"
+    fi
+  done
   kill "$logpid" 2>/dev/null || true
   wait "$logpid" 2>/dev/null || true
   printf '\n=== %s outcome: %s ===\n' "$core" "$outcome"

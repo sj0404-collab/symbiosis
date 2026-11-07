@@ -10,6 +10,16 @@ ROOT = Path(__file__).resolve().parents[1]
 CPP = (ROOT / 'patch/symbiosis/kenji_bridge.cpp').read_text()
 
 class KenjiLoaderError(unittest.TestCase):
+    def test_no_forced_success_or_fixed_offset_init_hook(self):
+        self.assertNotIn('GuardedInitCallback', CPP)
+        self.assertNotIn('ArmInitGuard', CPP)
+        self.assertNotIn('0x4091000 + 0x290', CPP)
+        init = CPP.split('Java_org_yuzu_yuzu_1emu_utils_KenjiBridge_nativeInitialize(', 1)[1]
+        init = init.split('Java_org_yuzu_yuzu_1emu_utils_KenjiBridge_nativeUnload(', 1)[0]
+        self.assertIn('bool ok = fn(', init)
+        self.assertIn('if (!ok)', init)
+        self.assertIn('ядро отказалось инициализироваться', init)
+
     @unittest.skipUnless(shutil.which('g++'), 'requires g++')
     def test_actual_loader_statements_use_one_error_and_keep_message(self):
         body = CPP.split('Java_org_yuzu_yuzu_1emu_utils_KenjiBridge_nativeLoad(', 1)[1]

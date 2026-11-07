@@ -711,66 +711,6 @@ bool PromoteToGlobalScope() {
     return ::dlsym(RTLD_DEFAULT, "abort") == reinterpret_cast<void*>(SymbiosisAbortWrapper());
 }
 
-/**
- * Подменить обработчик инициализации .NET-ядра — и не дать ему уронить процесс.
- *
- * ЧТО ВИДНО ПО ФАЙЛУ ЯДРА
- *   Функция по адресу 0x170611c делает ровно это:
- *     ldr  x8, [0x4091000 + 0x290]   ; указатель на инициализацию
- *     cbz  x8, пропустить
- *     blr  x8                        ; вызвать
- *     cbz  w0, продолжить            ; вернул 0 — всё хорошо
- *     … bl 0x173c204                 ; вернул НЕ 0 → фатальная ошибка → abort
- *
- *   То есть ядро само зовёт свою инициализацию, и любой ненулевой ответ
- *   означает остановку. Именно это и происходит на телефоне на шаге
- *   javaInitialize: сообщения нет, потому что его и не печатают.
- *
- * ЧТО ДЕЛАЕМ
- *   Оборачиваем обработчик: зовём настоящий, записываем его ответ в отчёт
- *   строкой `init-callback=…` и возвращаем 0, чтобы ядро продолжило работу.
- *   Если настоящий вернул ошибку, это видно в отчёте; процесс при этом живёт,
- *   и следующий сбой случится там, где действительно чего-то не хватает, —
- *   а не в общей точке «что-то не так».
- */
-using InitCallbackFn = int (*)(void*, void*, void*);
-
-InitCallbackFn g_realInitCallback = nullptr;
-int g_initCallbackResult = -999;
-int g_initCallbackCalls = 0;
-
-int GuardedInitCallback(void* a, void* b, void* c) {
-    ++g_initCallbackCalls;
-    // Смещение обработчика в файле ядра: по нему видно, какая именно функция
-    // отказала, — адрес в памяти после ASLR ничего не значит.
-    if (g_crashPath[0] != '\0' && g_realInitCallback != nullptr) {
-        Dl_info info{};
-        if (::dladdr(reinterpret_cast<void*>(g_realInitCallback), &info) != 0 &&
-            info.dli_fbase != nullptr && info.dli_fname != nullptr) {
-            const char* slash = ::strrchr(info.dli_fname, '/');
-            char line[220];
-            const int n = ::snprintf(
-                line, sizeof(line), "init-callback-fn=%s+0x%lx\n", slash ? slash + 1 : info.dli_fname,
-                static_cast<unsigned long>(reinterpret_cast<uintptr_t>(g_realInitCallback) -
-                                           reinterpret_cast<uintptr_t>(info.dli_fbase)));
-            if (n > 0) AppendCrashLine(line);
-        }
-    }
-    const int result = g_realInitCallback != nullptr ? g_realInitCallback(a, b, c) : -1;
-    g_initCallbackResult = result;
-    LOGI("init-callback: original=%d calls=%d", result, g_initCallbackCalls);
-    if (g_crashPath[0] != '\0') {
-        char line[96];
-        const int n = ::snprintf(line, sizeof(line), "init-callback=%d calls=%d\n", result,
-                                 g_initCallbackCalls);
-        if (n > 0) AppendCrashLine(line);
-    }
-    // Ноль — «инициализация прошла»: ядро продолжает работу. Это не подмена
-    // результата ради красивой картинки: ответ записан в отчёт, и если
-    // инициализация действительно не удалась, следующий отчёт назовёт место.
-    return 0;
-}
-
 // ── что ядро просит у загрузчика ────────────────────────────────────
 //
 // ПОЧЕМУ ЭТО НУЖНО. Инициализация ядра вернула -1, и текста об ошибке нет:
@@ -844,44 +784,6 @@ void ArmLoaderTap(void* coreHandle) {
                                  open_result.ok ? "ok" : open_result.detail.c_str(),
                                  sym_result.ok ? "ok" : sym_result.detail.c_str());
         if (n > 0) AppendCrashLine(line);
-    }
-}
-
-/**
- * Найти слот обработчика инициализации в загруженном ядре и обернуть его.
- *
- * Адрес слота — виртуальный адрес из файла ядра плюс база загрузки. Берётся он
- * из разбора этого же файла (0x4091000 + 0x290), потому что символа у него нет.
- */
-void ArmInitGuard(void* coreHandle) {
-    if (coreHandle == nullptr) return;
-    void* anchor = ::dlsym(coreHandle, "javaInitialize");
-    if (anchor == nullptr) return;
-
-    Dl_info info{};
-    if (::dladdr(anchor, &info) == 0 || info.dli_fbase == nullptr) return;
-
-    const auto slot = reinterpret_cast<uintptr_t>(info.dli_fbase) + 0x4091000 + 0x290;
-    const long page_size = ::sysconf(_SC_PAGESIZE);
-    if (page_size <= 0) return;
-    const auto page = slot & ~static_cast<uintptr_t>(page_size - 1);
-    if (::mprotect(reinterpret_cast<void*>(page), static_cast<size_t>(page_size),
-                   PROT_READ | PROT_WRITE) != 0) {
-        LOGI("init guard: mprotect failed");
-        return;
-    }
-
-    auto* cell = reinterpret_cast<InitCallbackFn*>(slot);
-    if (*cell == nullptr) {
-        LOGI("init guard: слот пуст, обёртка не нужна");
-        return;
-    }
-    g_realInitCallback = *cell;
-    *cell = &GuardedInitCallback;
-
-    LOGI("init guard: обёрнута инициализация %p", reinterpret_cast<void*>(g_realInitCallback));
-    if (g_crashPath[0] != '\0') {
-        AppendCrashLine("init guard: обёрнута инициализация ядра\n");
     }
 }
 
@@ -1532,7 +1434,6 @@ Java_org_yuzu_yuzu_1emu_utils_KenjiBridge_nativeLoad(JNIEnv* env, jobject, jstri
     ArmLoaderTap(handle);
     ArmMlockTrap(handle);
     ArmEnvTrace(handle);
-    ArmInitGuard(handle);
     LOGI("core loaded and verified");
     return env->NewStringUTF("");
 }
