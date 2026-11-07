@@ -25,7 +25,11 @@ REQUIRED_EXPORTS = {
     'detachWindow', 'graphicsSetPresentEnabled', 'deviceSetWindowHandle',
     'deviceRecreateSwapchain', 'graphicsRendererSetSize',
     'inputInitialize', 'inputConnectGamepad', 'inputUpdate',
-    'inputSetButtonPressed', 'inputSetStickAxis', 'loggingSetEnabled',
+    'inputSetButtonPressed', 'inputSetButtonReleased', 'inputSetStickAxis',
+    'inputSetTouchPoint', 'inputReleaseTouchPoint', 'inputSetClientSize',
+    'deviceSetSurfaceRotation', 'deviceGetGameFrameRate', 'deviceGetInstalledFirmwareVersion',
+    'graphicsSetFullscreenStretch', 'userGetOpenedUser',
+    'loggingSetEnabled', 'loggingEnabledGraphicsLog',
 }
 
 
@@ -185,6 +189,23 @@ class ReferenceArtifacts(unittest.TestCase):
             (native, 'inputConnectGamepad', '(I)I'),
             (native, 'inputInitialize', '(II)V'),
             (native, 'inputUpdate', '()V'),
+            (native, 'inputSetButtonPressed', '(II)V'),
+            (native, 'inputSetButtonReleased', '(II)V'),
+            (native, 'inputSetStickAxis', '(IFFI)V'),
+            (native, 'inputSetTouchPoint', '(II)V'),
+            (native, 'inputReleaseTouchPoint', '()V'),
+            (native, 'inputSetClientSize', '(II)V'),
+            (native, 'deviceSetSurfaceRotation', '(I)V'),
+            (native, 'deviceSetWindowHandle', '(J)V'),
+            (native, 'deviceRecreateSwapchain', '()V'),
+            (native, 'deviceGetGameFrameRate', '()D'),
+            (native, 'deviceGetInstalledFirmwareVersion', '()Ljava/lang/String;'),
+            (native, 'graphicsRendererSetSize', '(II)V'),
+            (native, 'graphicsSetFullscreenStretch', '(Z)V'),
+            (native, 'graphicsSetPresentEnabled', '(Z)V'),
+            (native, 'userGetOpenedUser', '()Ljava/lang/String;'),
+            (native, 'loggingSetEnabled', '(IZ)V'),
+            (native, 'loggingEnabledGraphicsLog', '(Z)V'),
             ('Ldev/symbiosis/kenji/PadBridge;', 'press', '(Ljava/lang/String;)V'),
         ):
             self.assertIn(signature, methods)
