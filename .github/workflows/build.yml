@@ -247,6 +247,7 @@ jobs:
           python3 fork/tests/test_kenji_window_ref.py
           python3 fork/tests/test_kenji_loader_error.py
           python3 fork/tests/test_kenji_ui_response_gate.py
+          python3 fork/tests/test_kenji_release_guard.py
           python3 fork/tests/test_core_settings_screen.py
           python3 fork/tests/test_hid_remap_model.py
           git -C eden show HEAD:src/hid_core/resources/npad/npad_resource.cpp > /tmp/original-eden-npad-resource.cpp
@@ -254,6 +255,9 @@ jobs:
           git -C eden show HEAD:src/android/app/src/main/java/org/yuzu/yuzu_emu/overlay/InputOverlay.kt > /tmp/original-eden-overlay.kt
           EDEN_OVERLAY_SOURCE=/tmp/original-eden-overlay.kt python3 fork/tests/test_eden_kenji_overlay.py
           bash fork/tools/run_tests.sh --eden "$GITHUB_WORKSPACE/eden" --max-skip 3
+
+      - name: Block release while known Kenji callbacks are empty
+        run: python3 fork/tools/check_kenji_release_ready.py
 
       - name: Check the Russian localisation
         run: |
