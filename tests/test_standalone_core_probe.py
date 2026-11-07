@@ -104,7 +104,7 @@ class OrchestrationTest(unittest.TestCase):
             commands = [a[1] for a in calls if a[0] == 'shell' and len(a) == 2 and 'LD_LIBRARY_PATH=' in a[1]]
             self.assertEqual(len(commands), 4)
             self.assertEqual(sum('app_process' in c for c in commands), 2)
-            self.assertTrue(all(':/system/lib64' in c for c in commands))
+            self.assertTrue(all('LD_LIBRARY_PATH=/system/lib64:' in c for c in commands))
             self.assertTrue(any('libcore_sym.so' in c for c in commands))
             self.assertTrue(any('libcore_space.so' in c for c in commands))
             self.assertFalse(any('install' in str(c) for c in calls))

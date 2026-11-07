@@ -46,7 +46,7 @@ def main():
         adb('shell', 'chmod', '755', f'{REMOTE}/probe')
         outcomes = []
         for core in ('sym', 'space'):
-            command = (f'LD_LIBRARY_PATH={shlex.quote(REMOTE + ":/system/lib64")} '
+            command = (f'LD_LIBRARY_PATH={shlex.quote("/system/lib64:" + REMOTE)} '
                        f'{shlex.quote(REMOTE + "/probe")} '
                        f'{shlex.quote(REMOTE + "/libcore_" + core + ".so")}')
             print(f'=== standalone {core}, no APK, no initialization ===', flush=True)
@@ -71,7 +71,7 @@ def main():
             # Disposable emulator only. Clear first to keep each crash isolated.
             adb('logcat', '-c', check=False)
             command = (f'CLASSPATH={shlex.quote(REMOTE + "/standalone.jar")} '
-                       f'LD_LIBRARY_PATH={shlex.quote(REMOTE + ":/system/lib64")} DOTNET_GCRegionRange=400000000 '
+                       f'LD_LIBRARY_PATH={shlex.quote("/system/lib64:" + REMOTE)} DOTNET_GCRegionRange=400000000 '
                        f'/system/bin/app_process /system/bin dev.symbiosis.standalone.Main '
                        f'{shlex.quote(REMOTE + "/libstandalonejni.so")} '
                        f'{shlex.quote(REMOTE + "/libcore_" + core + ".so")} {shlex.quote(data)}')

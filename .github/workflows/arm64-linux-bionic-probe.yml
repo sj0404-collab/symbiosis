@@ -174,16 +174,19 @@ jobs:
             echo 'PROPERTY_READBACK_FAIL' | tee -a "$W/logs/properties.txt"
             failed=1
           fi
-          # Independent dlopen to reveal dlerror hidden by ART 8.1 for a boot
-          # class-loader failure. Its process namespace differs from ART's, so
-          # the result cannot by itself establish the cause of ART's failure.
-          set +e
-          timeout 30s env LD_LIBRARY_PATH="$W:/system/lib64" "$W/standalone-core-probe" \
-            --dlopen-only /system/lib64/libjavacore.so > "$W/logs/dependency-javacore.txt" 2>&1
-          dependency_rc=$?
-          set -e
-          cat "$W/logs/dependency-javacore.txt"
-          echo "DEPENDENCY_EXIT_CODE=$dependency_rc" | tee -a "$W/logs/dependency-javacore.txt"
+          # Compare dependency resolution in isolated processes. A pass here
+          # does not imply that ART or any core has initialized.
+          for order in private-first system-first; do
+            if [ "$order" = private-first ]; then paths="$W:/system/lib64";
+            else paths="/system/lib64:$W"; fi
+            set +e
+            timeout 30s env LD_LIBRARY_PATH="$paths" "$W/standalone-core-probe" \
+              --dlopen-only /system/lib64/libjavacore.so > "$W/logs/dependency-$order.txt" 2>&1
+            dependency_rc=$?
+            set -e
+            cat "$W/logs/dependency-$order.txt"
+            echo "DEPENDENCY_ORDER=$order EXIT_CODE=$dependency_rc" | tee -a "$W/logs/dependency-$order.txt"
+          done
           # Try the real Android ART app_process, not a fabricated JNIEnv. This
           # is exploratory: Linux lacks Android daemons/devices and ART may not
           # start. Report each stage without treating a loader pass as JNI pass.
@@ -199,7 +202,7 @@ jobs:
             echo "=== $core, real Android ART/JNI attempt on ARM Linux; no APK, no game ===" | tee "$W/logs/jni-$core.txt"
             set +e
             timeout 120s env ANDROID_ROOT=/system ANDROID_DATA="$W/android-data" BOOTCLASSPATH="$BCP" \
-              CLASSPATH="$W/standalone.jar" LD_LIBRARY_PATH="$W:/system/lib64" DOTNET_GCRegionRange=400000000 \
+              CLASSPATH="$W/standalone.jar" LD_LIBRARY_PATH="/system/lib64:$W" DOTNET_GCRegionRange=400000000 \
               /system/bin/app_process /system/bin dev.symbiosis.standalone.Main \
               "$W/libstandalonejni.so" "$W/$core.so" "$data" 2>&1 | tee -a "$W/logs/jni-$core.txt"
             rc=${PIPESTATUS[0]}
@@ -212,7 +215,7 @@ jobs:
               set +e
               timeout 120s strace -f -s 200 -o "$W/logs/strace-$core.txt" \
                 env ANDROID_ROOT=/system ANDROID_DATA="$W/android-data" BOOTCLASSPATH="$BCP" \
-                CLASSPATH="$W/standalone.jar" LD_LIBRARY_PATH="$W:/system/lib64" DOTNET_GCRegionRange=400000000 \
+                CLASSPATH="$W/standalone.jar" LD_LIBRARY_PATH="/system/lib64:$W" DOTNET_GCRegionRange=400000000 \
                 /system/bin/app_process /system/bin dev.symbiosis.standalone.Main \
                 "$W/libstandalonejni.so" "$W/$core.so" "$data" \
                 > "$W/logs/strace-output-$core.txt" 2>&1
