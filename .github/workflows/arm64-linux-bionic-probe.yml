@@ -101,7 +101,17 @@ jobs:
           fi
           test ! -e /system
           sudo mkdir -p /system "$W/system-mount"
-          cleanup() { sudo umount /system 2>/dev/null || true; sudo umount "$W/system-mount" 2>/dev/null || true; }
+          socket_owned=0
+          socket_dir_created=0
+          cleanup() {
+            if [ "$socket_owned" = 1 ]; then
+              if [ -f "$W/logger.pid" ]; then sudo kill "$(cat "$W/logger.pid")" 2>/dev/null || true; fi
+              sudo rm -f /dev/socket/logdw
+            fi
+            if [ "$socket_dir_created" = 1 ]; then sudo rmdir /dev/socket 2>/dev/null || true; fi
+            sudo umount /system 2>/dev/null || true
+            sudo umount "$W/system-mount" 2>/dev/null || true
+          }
           trap cleanup EXIT
           # The pinned image is a GPT disk, not a bare ext4 filesystem.
           # Validate the GPT CRCs and use the unique system partition offset.
@@ -124,6 +134,21 @@ jobs:
             if [ "$rc" != 0 ]; then failed=1; fi
           done
           set -e
+          # Capture real liblog messages into a test-only receiver, without
+          # emulating a property service or modifying any JNI/core response.
+          if [ ! -d /dev/socket ]; then sudo mkdir -m 0755 /dev/socket; socket_dir_created=1; fi
+          if [ -e /dev/socket/logdw ] || [ -L /dev/socket/logdw ]; then
+            echo 'LOG_SETUP_FAIL existing logdw; refusing to replace it'; exit 1
+          fi
+          socket_owned=1
+          sudo python3 -u tests/standalone_core_probe/capture_android_log.py /dev/socket/logdw "$W/logger.pid" > "$W/logs/android-log.txt" 2>&1 &
+          logger_launcher=$!
+          for i in {1..50}; do
+            [ -S /dev/socket/logdw ] && break
+            kill -0 "$logger_launcher" 2>/dev/null || break
+            sleep 0.1
+          done
+          if [ ! -S /dev/socket/logdw ]; then echo 'LOG_SETUP_FAIL logdw not ready'; exit 1; fi
           # Try the real Android ART app_process, not a fabricated JNIEnv. This
           # is exploratory: Linux lacks Android daemons/devices and ART may not
           # start. Report each stage without treating a loader pass as JNI pass.
