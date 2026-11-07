@@ -2,6 +2,7 @@ name: Experimental ARM64 software probe (not an APK release)
 
 on:
   workflow_dispatch:
+  workflow_call:
 
 permissions:
   contents: read

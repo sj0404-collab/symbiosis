@@ -223,3 +223,11 @@ jobs:
             /tmp/sym-core-ci/*-kenji-jni.txt
           if-no-files-found: warn
           retention-days: 3
+
+  # A separate, disposable software ARM experiment; not a release build.
+  # The calling workflow is already registered on the repository's default
+  # branch, so branch-local changes can invoke this reusable workflow.
+  software-arm64-probe:
+    if: github.event_name == 'workflow_dispatch' && inputs.run_android_probe == true
+    needs: tests
+    uses: ./.github/workflows/arm64-software-probe.yml
