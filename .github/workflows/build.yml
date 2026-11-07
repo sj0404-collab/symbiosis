@@ -243,6 +243,8 @@ jobs:
           unzip -q /tmp/kc.zip -d /tmp
           export PATH="/tmp/kotlinc/bin:$PATH"
           python3 fork/tests/test_kenji_input_contract.py
+          git -C eden show HEAD:src/android/app/src/main/java/org/yuzu/yuzu_emu/overlay/InputOverlay.kt > /tmp/original-eden-overlay.kt
+          EDEN_OVERLAY_SOURCE=/tmp/original-eden-overlay.kt python3 fork/tests/test_eden_kenji_overlay.py
           bash fork/tools/run_tests.sh --eden "$GITHUB_WORKSPACE/eden" --max-skip 3
 
       - name: Check the Russian localisation
@@ -400,7 +402,7 @@ jobs:
           # они в libyuzu-android.so как вызовы, а не как экспорт. Поэтому
           # проверяем экспорт JNI и то, что экран действительно лёг в dex:
           # без экрана снимок некому показать.
-          for sym in FrameMetricsText FramePacing; do
+          for sym in FrameMetricsText FramePacing KenjiInputMap KenjiOverlaySnapshot; do
             if [ "$MINIFIED" = 0 ]; then
               grep -qa "$sym" /tmp/x/classes*.dex \
                 || { echo "  missing Kotlin class: $sym"; fail=1; }
@@ -424,7 +426,7 @@ jobs:
               || { echo "  missing JNI export: $sym"; fail=1; }
           done
 
-          for sym in nativeSetCrashLog nativeSetStep nativeConnectPad nativeUpdateInput; do
+          for sym in nativeSetCrashLog nativeSetStep nativeConnectPad nativeUpdateInput nativeInputEventsAvailable nativeInputButton nativeInputStick nativeInputTouch nativeInputSize; do
             "$NM" -D lib/arm64-v8a/libsymbiosis_kenji.so \
               | grep -q "Java_org_yuzu_yuzu_1emu_utils_KenjiBridge_$sym" \
               || { echo "  missing JNI export in the bridge: $sym"; fail=1; }

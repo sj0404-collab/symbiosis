@@ -476,6 +476,8 @@ J="$A/java/org/yuzu/yuzu_emu"
 cp "$P"/android/fragments/*.kt "$J/fragments/"
 cp "$P"/android/adapters/*.kt  "$J/adapters/"
 cp "$P"/android/utils/*.kt     "$J/utils/"
+# Reuse Eden’s overlay, changing its recipient only for the second core.
+python3 "$SELF_DIR/patch_eden_input_overlay.py" "$J/overlay/InputOverlay.kt"
 # Встроенная копия панели: та же страница, показывается когда сети нет.
 # Панель не обязана быть онлайн - она обязана работать.
 if [ -d "$P/android/assets" ]; then

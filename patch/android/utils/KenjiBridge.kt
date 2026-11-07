@@ -110,10 +110,15 @@ object KenjiBridge {
     /** Открытый пользователь ядра (пусто — никого не открыли). */
     private external fun nativeOpenedUser(): String
     private external fun nativeAttachSurface(surface: android.view.Surface, width: Int, height: Int): String
-    /** Инициализация ввода — только после устройства и загрузки игры. */
+    /** Инициализация ввода после устройства, до загрузки игры. */
     private external fun nativeInputInit(width: Int, height: Int): String
     private external fun nativeConnectPad(index: Int): Int
     private external fun nativeUpdateInput(): Boolean
+    private external fun nativeInputEventsAvailable(): Boolean
+    private external fun nativeInputButton(button: Int, id: Int, pressed: Boolean)
+    private external fun nativeInputStick(stick: Int, x: Float, y: Float, id: Int)
+    private external fun nativeInputTouch(x: Int, y: Int, pressed: Boolean)
+    private external fun nativeInputSize(width: Int, height: Int)
     /** Поворот, размер, растяжение и пересоздание цепочки буферов. */
     private external fun nativeRendererKick(width: Int, height: Int, rotation: Int): String
     private external fun nativeSetWindowHandle(handle: Long)
@@ -903,6 +908,60 @@ object KenjiBridge {
     /** Обновить состояние ввода в ядре. */
     fun updateInput(): Boolean =
         if (!bridgeLoaded) false else runCatching { nativeUpdateInput() }.getOrDefault(false)
+
+    // Serialize event callbacks with teardown, without using the renderer lock.
+    private val eventLock = Any()
+    @Volatile private var acceptingEvents = false
+    private var eventPadId = -1
+
+    fun activateInputEvents(id: Int): Boolean = synchronized(eventLock) {
+        if (!bridgeLoaded || id < 0 || !runCatching { nativeInputEventsAvailable() }.getOrDefault(false)) {
+            false
+        } else {
+            eventPadId = id
+            acceptingEvents = true
+            true
+        }
+    }
+    fun disableInputEvents() { acceptingEvents = false }
+    fun inputButton(edenButton: Int, pressed: Boolean) {
+        val mapped = KenjiInputMap.button(edenButton)
+        if (mapped < 0 || !acceptingEvents) return
+        synchronized(eventLock) {
+            if (acceptingEvents) nativeInputButton(mapped, eventPadId, pressed)
+        }
+    }
+    fun inputStick(edenStick: Int, x: Float, y: Float) {
+        val mapped = KenjiInputMap.stick(edenStick)
+        if (mapped < 0 || !acceptingEvents) return
+        synchronized(eventLock) {
+            if (acceptingEvents) nativeInputStick(mapped, x.coerceIn(-1f, 1f), y.coerceIn(-1f, 1f), eventPadId)
+        }
+    }
+    fun inputTouch(x: Int, y: Int, pressed: Boolean) {
+        if (!acceptingEvents) return
+        synchronized(eventLock) { if (acceptingEvents) nativeInputTouch(x, y, pressed) }
+    }
+    fun inputSize(width: Int, height: Int) {
+        if (!acceptingEvents || width <= 0 || height <= 0) return
+        synchronized(eventLock) { if (acceptingEvents) nativeInputSize(width, height) }
+    }
+    private fun releaseInputsLocked() {
+        if (eventPadId < 0) return
+        KenjiInputMap.validButtons().forEach { nativeInputButton(it, eventPadId, false) }
+        nativeInputStick(1, 0f, 0f, eventPadId)
+        nativeInputStick(2, 0f, 0f, eventPadId)
+        nativeInputTouch(0, 0, false)
+    }
+    fun cancelInputEvents() {
+        if (!acceptingEvents) return
+        synchronized(eventLock) { if (acceptingEvents) releaseInputsLocked() }
+    }
+    /** Called on stop worker after updater has exited, not the UI thread. */
+    fun drainInputEvents() = synchronized(eventLock) {
+        if (bridgeLoaded) releaseInputsLocked()
+        eventPadId = -1
+    }
 
     /**
      * Пинок рендереру после появления поверхности.

@@ -6,6 +6,7 @@ package org.yuzu.yuzu_emu.activities
 import android.app.Activity
 import android.content.Context
 import android.content.Intent
+import android.content.res.Configuration
 import android.graphics.Color
 import android.net.Uri
 import android.os.Bundle
@@ -24,6 +25,12 @@ import org.yuzu.yuzu_emu.utils.EngineHybrid
 import org.yuzu.yuzu_emu.utils.EngineStore
 import org.yuzu.yuzu_emu.utils.EngineLoader
 import org.yuzu.yuzu_emu.utils.KenjiBridge
+import org.yuzu.yuzu_emu.utils.KenjiOverlaySnapshot
+import org.yuzu.yuzu_emu.overlay.InputOverlay
+import org.yuzu.yuzu_emu.overlay.model.OverlayLayout
+import org.yuzu.yuzu_emu.features.input.NativeInput
+import org.yuzu.yuzu_emu.features.input.model.NativeButton
+import org.yuzu.yuzu_emu.features.input.model.NativeAnalog
 import org.yuzu.yuzu_emu.utils.KenjiCrash
 import org.yuzu.yuzu_emu.utils.KenjiPlayService
 import org.yuzu.yuzu_emu.utils.KenjiReport
@@ -48,6 +55,7 @@ class KenjiPlayerActivity : Activity(), SurfaceHolder.Callback {
          * набор строкой и применяет его как есть.
          */
         const val EXTRA_CONFIG = "kenji_config"
+        private const val EXTRA_OVERLAY = "kenji_eden_overlay"
 
         fun intent(
             context: Context,
@@ -59,6 +67,7 @@ class KenjiPlayerActivity : Activity(), SurfaceHolder.Callback {
                 .putExtra(EXTRA_PATH, path)
                 .putExtra(EXTRA_TITLE, title)
                 .putExtra(EXTRA_CONFIG, config)
+                .putExtra(EXTRA_OVERLAY, KenjiOverlaySnapshot.capture())
                 .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
     }
 
@@ -74,8 +83,8 @@ class KenjiPlayerActivity : Activity(), SurfaceHolder.Callback {
     /** Кадров на прошлом тике: разница показывает текущую скорость. */
     private var lastFrames = 0L
     /** Размер поверхности — для повторного пинка рендерера из наблюдения. */
-    private var surfaceWidth = 1280
-    private var surfaceHeight = 720
+    @Volatile private var surfaceWidth = 1280
+    @Volatile private var surfaceHeight = 720
     /** Повторный пинок уже сделан: делается один раз, а не каждые 3 секунды. */
     private var kickedLate = false
 
@@ -105,6 +114,39 @@ class KenjiPlayerActivity : Activity(), SurfaceHolder.Callback {
     /** Когда начали: журнал старше этого времени — от прошлого запуска. */
     private var playStartedAt = 0L
     private lateinit var status: TextView
+    private lateinit var overlay: InputOverlay
+    // Kenji's current API exposes only one touchscreen pointer.
+    private var touchPointer = -1
+    private val overlaySink = object : InputOverlay.InputSink {
+        override fun button(button: NativeButton, action: Int) {
+            KenjiBridge.inputButton(button.int, action == NativeInput.ButtonState.PRESSED)
+        }
+        override fun stick(stick: NativeAnalog, x: Float, y: Float) {
+            // Eden's realYAxis is already positive upward, as Kenji expects.
+            KenjiBridge.inputStick(stick.int, x, y)
+        }
+        override fun touchDown(id: Int, x: Float, y: Float) {
+            if (touchPointer != -1) return
+            touchPointer = id
+            KenjiBridge.inputTouch(x.toInt(), y.toInt(), true)
+        }
+        override fun touchMove(id: Int, x: Float, y: Float) {
+            if (touchPointer == id) KenjiBridge.inputTouch(x.toInt(), y.toInt(), true)
+        }
+        override fun touchUp(id: Int) {
+            if (touchPointer == id) {
+                touchPointer = -1
+                KenjiBridge.inputTouch(0, 0, false)
+            }
+        }
+        override fun cancel() {
+            touchPointer = -1
+            KenjiBridge.cancelInputEvents()
+        }
+    }
+    private fun overlayLayout(): OverlayLayout =
+        if (resources.configuration.orientation == Configuration.ORIENTATION_PORTRAIT)
+            OverlayLayout.Portrait else OverlayLayout.Landscape
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -121,6 +163,22 @@ class KenjiPlayerActivity : Activity(), SurfaceHolder.Callback {
                 ViewGroup.LayoutParams.MATCH_PARENT
             )
         )
+        // Refresh a snapshot from the launcher rather than reading stale
+        // process-local settings. Neither layout nor settings are saved here.
+        val overlayResult = runCatching {
+            @Suppress("DEPRECATION")
+            val snapshot = requireNotNull(intent.getBundleExtra(EXTRA_OVERLAY))
+            KenjiOverlaySnapshot.restore(snapshot)
+        }
+        val overlayReady = overlayResult.isSuccess
+        if (overlayReady) {
+            overlay = InputOverlay(this, null).apply {
+                inputSink = overlaySink
+                layout = overlayLayout()
+            }
+            root.addView(overlay, FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+        }
         status = TextView(this).apply {
             text = "Symbiosis · второе ядро\n$title"
             setTextColor(Color.WHITE)
@@ -143,11 +201,18 @@ class KenjiPlayerActivity : Activity(), SurfaceHolder.Callback {
             FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT,
-                Gravity.BOTTOM or Gravity.END
-            ).apply { setMargins(24, 24, 24, 48) }
+                Gravity.TOP or Gravity.CENTER_HORIZONTAL
+            ).apply { setMargins(8, 8, 8, 8) }
         )
         setContentView(root)
 
+        if (!overlayReady) {
+            fail("Не удалось передать настройки управления Eden во второе ядро.")
+            return
+        }
+        if (overlayResult.getOrDefault(emptyList()).isNotEmpty()) {
+            Toast.makeText(this, "Home и Capture пока недоступны во втором ядре.", Toast.LENGTH_LONG).show()
+        }
         if (path.isBlank()) {
             fail("нет пути к игре")
             return
@@ -250,7 +315,12 @@ class KenjiPlayerActivity : Activity(), SurfaceHolder.Callback {
                 runOnUiThread { fail("Второе ядро не подключило виртуальный контроллер игрока 1.") }
                 return@Thread
             }
-            if (!startInputUpdates()) return@Thread
+            if (!startInputUpdates(padId)) {
+                if (!isFinishing) runOnUiThread {
+                    fail("Не удалось включить управление Eden во втором ядре.")
+                }
+                return@Thread
+            }
 
             runOnUiThread { status.text = "второе ядро · загружаю игру" }
             KenjiBridge.noteStep("4/6 · игра")
@@ -735,15 +805,40 @@ class KenjiPlayerActivity : Activity(), SurfaceHolder.Callback {
         return result
     }
 
-    override fun surfaceChanged(holder: SurfaceHolder, format: Int, width: Int, height: Int) = Unit
+    override fun surfaceChanged(holder: SurfaceHolder, format: Int, width: Int, height: Int) {
+        if (width > 0 && height > 0) {
+            surfaceWidth = width
+            surfaceHeight = height
+            KenjiBridge.inputSize(width, height)
+        }
+    }
+
+    override fun onConfigurationChanged(newConfig: Configuration) {
+        super.onConfigurationChanged(newConfig)
+        if (::overlay.isInitialized) {
+            overlaySink.cancel()
+            overlay.layout = overlayLayout()
+            overlay.requestLayout()
+            overlay.post { overlay.refreshControls() }
+        }
+    }
+
+    override fun onWindowFocusChanged(hasFocus: Boolean) {
+        super.onWindowFocusChanged(hasFocus)
+        if (!hasFocus && ::overlay.isInitialized) {
+            overlaySink.cancel()
+            overlay.refreshControls()
+        }
+    }
 
     override fun surfaceDestroyed(holder: SurfaceHolder) {
         requestStop()
     }
 
     @Synchronized
-    private fun startInputUpdates(): Boolean {
-        if (stopThread != null) return false
+    private fun startInputUpdates(padId: Int): Boolean {
+        if (stopThread != null || !KenjiBridge.activateInputEvents(padId)) return false
+        KenjiBridge.inputSize(surfaceWidth, surfaceHeight)
         inputRunning = true
         inputThread = Thread({
             while (inputRunning) {
@@ -760,10 +855,12 @@ class KenjiPlayerActivity : Activity(), SurfaceHolder.Callback {
     private fun requestStop(): Thread {
         stopThread?.let { return it }
         inputRunning = false
+        KenjiBridge.disableInputEvents()
         val updater = inputThread
         updater?.interrupt()
         return Thread({
             runCatching { updater?.join() }
+            runCatching { KenjiBridge.drainInputEvents() }
             runCatching { KenjiBridge.stopPlay() }
         }, "kenji-stop").also { stopThread = it; it.start() }
     }

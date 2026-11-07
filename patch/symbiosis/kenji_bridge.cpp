@@ -1938,6 +1938,49 @@ Java_org_yuzu_yuzu_1emu_utils_KenjiBridge_nativeUpdateInput(JNIEnv*, jobject) {
     return JNI_TRUE;
 }
 
+// Called only while the Kotlin input event gate holds the core alive.
+JNIEXPORT jboolean JNICALL
+Java_org_yuzu_yuzu_1emu_utils_KenjiBridge_nativeInputEventsAvailable(JNIEnv*, jobject) {
+    if (!g_core) return JNI_FALSE;
+    const char* names[] = {"inputSetButtonPressed", "inputSetButtonReleased", "inputSetStickAxis",
+                           "inputSetTouchPoint", "inputReleaseTouchPoint", "inputSetClientSize"};
+    for (const auto* name : names) if (!dlsym(g_core, name)) return JNI_FALSE;
+    return JNI_TRUE;
+}
+JNIEXPORT void JNICALL
+Java_org_yuzu_yuzu_1emu_utils_KenjiBridge_nativeInputButton(JNIEnv*, jobject, jint button, jint id,
+                                                            jboolean pressed) {
+    if (!g_core) return;
+    using Fn = void (*)(int, int);
+    const char* name = pressed == JNI_TRUE ? "inputSetButtonPressed" : "inputSetButtonReleased";
+    if (auto fn = reinterpret_cast<Fn>(dlsym(g_core, name))) fn(button, id);
+}
+JNIEXPORT void JNICALL
+Java_org_yuzu_yuzu_1emu_utils_KenjiBridge_nativeInputStick(JNIEnv*, jobject, jint stick, jfloat x,
+                                                           jfloat y, jint id) {
+    if (!g_core) return;
+    using Fn = void (*)(int, float, float, int);
+    if (auto fn = reinterpret_cast<Fn>(dlsym(g_core, "inputSetStickAxis"))) fn(stick, x, y, id);
+}
+JNIEXPORT void JNICALL
+Java_org_yuzu_yuzu_1emu_utils_KenjiBridge_nativeInputTouch(JNIEnv*, jobject, jint x, jint y,
+                                                           jboolean pressed) {
+    if (!g_core) return;
+    if (pressed == JNI_TRUE) {
+        using Fn = void (*)(int, int);
+        if (auto fn = reinterpret_cast<Fn>(dlsym(g_core, "inputSetTouchPoint"))) fn(x, y);
+    } else {
+        using Fn = void (*)();
+        if (auto fn = reinterpret_cast<Fn>(dlsym(g_core, "inputReleaseTouchPoint"))) fn();
+    }
+}
+JNIEXPORT void JNICALL
+Java_org_yuzu_yuzu_1emu_utils_KenjiBridge_nativeInputSize(JNIEnv*, jobject, jint width, jint height) {
+    if (!g_core) return;
+    using Fn = void (*)(int, int);
+    if (auto fn = reinterpret_cast<Fn>(dlsym(g_core, "inputSetClientSize"))) fn(width, height);
+}
+
 /**
  * Отдать ядру дескриптор окна Android.
  *

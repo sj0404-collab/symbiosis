@@ -209,6 +209,12 @@ if command -v kotlinc >/dev/null 2>&1; then
       # Разбор отчёта о падении второго ядра: файл пишет обработчик сигнала,
       # читает обычный код после смерти процесса.
       KenjiCrashTest) echo "$HERE/patch/android/utils/KenjiCrash.kt" ;;
+      KenjiInputMapTest) echo "$HERE/patch/android/utils/KenjiInputMap.kt" ;;
+      KenjiOverlaySnapshotTest) echo "$HERE/patch/android/utils/KenjiOverlaySnapshot.kt \
+        $HERE/tests/host/kenji_overlay/Bundle.kt \
+        $HERE/tests/host/kenji_overlay/Settings.kt \
+        $HERE/tests/host/kenji_overlay/OverlayControlData.kt \
+        $HERE/tests/host/kenji_overlay/NativeConfig.kt" ;;
       # Записки «эту игру ядро роняло»: формат, совпадение по имени файла,
       # снятие записки явным выбором. 05.11 игра считалась переведённой на
       # Eden, а запуск снова ушёл на Kenji — разбор здесь.

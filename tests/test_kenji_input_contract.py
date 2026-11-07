@@ -11,7 +11,7 @@ class InputContract(unittest.TestCase):
     def test_order_is_init_connect_update_then_game_and_render(self):
         positions = [ACTIVITY.index(x) for x in (
             'KenjiBridge.inputInit(w, h)', 'KenjiBridge.connectVirtualPad()',
-            'startInputUpdates()', 'KenjiBridge.loadGame(fd', 'KenjiBridge.runLoop()')]
+            'startInputUpdates(padId)', 'KenjiBridge.loadGame(fd', 'KenjiBridge.runLoop()')]
         self.assertEqual(positions, sorted(positions))
 
     def test_core_exports_have_exact_expected_signatures(self):
