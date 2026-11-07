@@ -4712,3 +4712,17 @@ Host-модель позднего callback зафиксирована отде�
 синтетическому гостю получить отмену. Открытый gate позволяет ответить этому
 моку, но это **не доказывает**, что вызывать ответ во время `Dispose` безопасно
 в настоящем ядре. Это воспроизведение риска, не закрытие проблемы.
+
+Повторная проверка [Tests 42398765873](https://github.com/sj0404-collab/symbiosis/actions/runs/42398765873),
+код `70f912f`: host job success; API35 x86_64 test-only Activity открыла три
+диалога, реальные listeners проверили пустое поле, программные нажатия OK и
+Cancel, кириллицу/эмодзи и stop; background cleanup завершился до
+`UI_PROBE_OK`, последующих UI ошибок в наблюдаемом журнале не обнаружено.
+Тест не проверяет физический touch или IME. В другом процессе тот же Android
+probe загрузил синтетическую ARM64 `.so` через production bridge, setup и два
+ответа достигли неё с правильными байтами; устаревший ответ после unload
+отклонён: `mock outcome: pass`. Это отдельно от UI-пробы и отдельно от игры;
+выпускаемый APK не содержит fixture. Symbiosis и SymbEK реальные core-процессы
+по-прежнему завершились с `required instruction sets ... not supported`, общий
+Android job failure. [Логи](https://github.com/sj0404-collab/symbiosis/actions/runs/42398765873/artifacts/13584986713).
+Реальные UI callback и lifecycle к плееру не подключены; выпуск запрещён.
