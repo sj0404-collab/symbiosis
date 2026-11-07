@@ -845,36 +845,6 @@ void ArmAbortTrap(void* coreHandle) {
 // ЧТО ДЕЛАЕМ
 //   1. Повторяем эти же вызовы сами и записываем ответы в отчёт строкой
 //      `pal:` — так причина называется словами, а не адресом.
-//   2. `mlock` в ядре подменяем: блокировка страницы в памяти — просьба
-//      nice-to-have, и отказ на неё не должен означать «ядро не работает».
-//      Настоящий ответ при этом пишется в отчёт, чтобы подмена не была
-//      молчаливой.
-
-using MlockFn = int (*)(const void*, size_t);
-MlockFn g_realMlock = nullptr;
-int g_mlockCalls = 0;
-int g_mlockFailures = 0;
-int g_mlockLastError = 0;
-
-int SymbiosisMlock(const void* addr, size_t len) {
-    ++g_mlockCalls;
-    const int real = g_realMlock != nullptr ? g_realMlock(addr, len) : 0;
-    if (real == 0) return 0;
-
-    const int saved = errno;
-    ++g_mlockFailures;
-    g_mlockLastError = saved;
-    LOGI("mlock: настоящий отказал (errno=%d), сообщаю успех", saved);
-    if (g_crashPath[0] != '\0') {
-        char line[160];
-        const int n = ::snprintf(line, sizeof(line),
-                                 "mlock: настоящий отказал errno=%d — сообщено «заперто»\n", saved);
-        if (n > 0) AppendCrashLine(line);
-    }
-    errno = 0;
-    return 0;
-}
-
 // ── настройки кучи .NET: 256 ГиБ адресного пространства ─────────────
 //
 // ЧТО ПОКАЗАЛ ОТЧЁТ С УСТРОЙСТВА (04.11 12:49)
@@ -1251,33 +1221,6 @@ void ArmEnvTrace(void* coreHandle) {
     }
 }
 
-/**
- * Подменить `mlock` в таблице переходов ядра.
- *
- * Подменяется только этот вызов: он единственный из проверок окружения,
- * отказ которого ничего не значит. `mmap` и `pthread_mutex_init` подменять
- * нельзя — они делают работу, без которой рантайм не заработает.
- */
-void ArmMlockTrap(void* coreHandle) {
-    if (coreHandle == nullptr) return;
-
-    // Настоящий адрес нужен до подмены: после неё `dlsym` вернёт уже обёртку.
-    g_realMlock = reinterpret_cast<MlockFn>(::dlsym(RTLD_DEFAULT, "mlock"));
-    void* anchor = ::dlsym(coreHandle, "javaInitialize");
-    if (anchor == nullptr) return;
-
-    const auto result =
-        Symbiosis::PatchImport(anchor, "mlock", reinterpret_cast<void*>(&SymbiosisMlock));
-
-    LOGI("got patch mlock: %s (%s)", result.ok ? "ok" : "failed", result.detail.c_str());
-    if (g_crashPath[0] != '\0') {
-        char line[256];
-        const int n = ::snprintf(line, sizeof(line), "got patch: mlock — %s\n",
-                                 result.detail.c_str());
-        if (n > 0) AppendCrashLine(line);
-    }
-}
-
 // ── loading, carefully ──────────────────────────────────────────────
 
 // Every exported name the core is known to have, as read from its dynamic
@@ -1432,7 +1375,6 @@ Java_org_yuzu_yuzu_1emu_utils_KenjiBridge_nativeLoad(JNIEnv* env, jobject, jstri
     g_core = handle;
     ArmAbortTrap(handle);
     ArmLoaderTap(handle);
-    ArmMlockTrap(handle);
     ArmEnvTrace(handle);
     LOGI("core loaded and verified");
     return env->NewStringUTF("");

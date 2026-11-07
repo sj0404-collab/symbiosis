@@ -14,6 +14,8 @@ class KenjiLoaderError(unittest.TestCase):
         self.assertNotIn('GuardedInitCallback', CPP)
         self.assertNotIn('ArmInitGuard', CPP)
         self.assertNotIn('0x4091000 + 0x290', CPP)
+        self.assertNotIn('SymbiosisMlock', CPP)
+        self.assertNotIn('ArmMlockTrap', CPP)
         init = CPP.split('Java_org_yuzu_yuzu_1emu_utils_KenjiBridge_nativeInitialize(', 1)[1]
         init = init.split('Java_org_yuzu_yuzu_1emu_utils_KenjiBridge_nativeUnload(', 1)[0]
         self.assertIn('bool ok = fn(', init)
