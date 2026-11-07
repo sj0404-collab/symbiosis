@@ -48,6 +48,7 @@ jobs:
             https://github.com/sj0404-collab/symbiosis/releases/download/engine-kenji/libkenji.so
           SYMBEK_APK=/tmp/symbek-reference.apk SYMBIOSIS_CORE=/tmp/symbiosis-core.so \
             python3 fork/tests/test_symbek_reference.py
+          SYMBEK_APK=/tmp/symbek-reference.apk python3 fork/tests/test_symbek_graphics_dex.py
           rm -f /tmp/symbek-reference.apk /tmp/symbiosis-core.so
 
       - name: Check out upstream Eden

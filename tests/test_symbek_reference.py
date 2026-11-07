@@ -235,6 +235,7 @@ class ReferenceArtifacts(unittest.TestCase):
             (native, 'uiHandlerSetResponse', '(ZLjava/lang/String;)V'),
             (native, 'updateUiHandler', '(JJJIIIIJJ)V'),
             ('Lorg/kenjinx/android/NativeHelpers;', 'getStringJava', '(J)Ljava/lang/String;'),
+            ('Lorg/kenjinx/android/NativeHelpers;', 'setIsInitialOrientationFlipped', '(Z)V'),
             ('Lorg/kenjinx/android/UiHandler;', 'update',
              '(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;IIILorg/kenjinx/android/KeyboardMode;Ljava/lang/String;Ljava/lang/String;)V'),
             ('Ldev/symbiosis/kenji/PadBridge;', 'press', '(Ljava/lang/String;)V'),

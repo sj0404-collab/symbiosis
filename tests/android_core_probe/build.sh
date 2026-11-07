@@ -15,6 +15,7 @@ cp "$ROOT/patch/symbiosis/got_patch.h" "$WORK/common/symbiosis/got_patch.h"
 curl -fsSL --retry 3 -o "$WORK/core_sym.so" https://github.com/sj0404-collab/symbiosis/releases/download/engine-kenji/libkenji.so
 curl -fsSL --retry 3 -o "$WORK/symbek.apk" https://github.com/sj0404-collab/SymbEK/releases/download/v1.0.121/Kenji-Space-1.0.121.apk
 SYMBEK_APK="$WORK/symbek.apk" SYMBIOSIS_CORE="$WORK/core_sym.so" python3 "$ROOT/tests/test_symbek_reference.py"
+SYMBEK_APK="$WORK/symbek.apk" python3 "$ROOT/tests/test_symbek_graphics_dex.py"
 unzip -p "$WORK/symbek.apk" lib/arm64-v8a/libkenjinx.so > "$WORK/core_space.so"
 echo 'd781048671e4cef1cde2ec15db8fe29b949df9949d83569ceaf776ad12901590  '"$WORK/core_space.so" | sha256sum -c -
 cp "$WORK/core_sym.so" "$WORK/apk/lib/arm64-v8a/libcore_sym.so"
