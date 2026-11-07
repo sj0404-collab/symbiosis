@@ -117,11 +117,14 @@ class KenjiUiCoordinator(
     /** Only after the owner has joined all callback-producing native threads. */
     fun closeAfterGuestStopped() {
         synchronized(this) {
-            if (closed) return
             check(stopping)
-            closed = true
-            replies.shutdown()
+            if (!closed) {
+                closed = true
+                replies.shutdown()
+            }
         }
+        // Every caller waits, including one arriving after shutdown started:
+        // returning early could let that caller unload an in-flight response.
         // Must run in teardown, never on Android's main thread. There is no
         // fabricated success timeout: a hung core callback keeps the lease.
         while (!replies.awaitTermination(1, TimeUnit.DAYS)) { /* wait */ }

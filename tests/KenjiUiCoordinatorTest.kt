@@ -74,6 +74,43 @@ fun main() {
         h.pump(); check(h.errors.isNotEmpty())
         h.finish()
     }
+    run {
+        // Two teardown callers must both wait for an in-flight native reply.
+        // This models executor draining only, not real guest-thread shutdown.
+        val main = LinkedBlockingQueue<() -> Unit>()
+        val shown = LinkedBlockingQueue<Long>()
+        val enteredReply = CountDownLatch(1)
+        val releaseReply = CountDownLatch(1)
+        val firstDone = CountDownLatch(1)
+        val secondDone = CountDownLatch(1)
+        val coordinator = KenjiUiCoordinator(
+            postMain = { main.put(it) },
+            present = { id, _ -> shown.put(id) }, dismiss = {},
+            reply = { _, _ -> enteredReply.countDown(); releaseReply.await(); true },
+            onError = { error(it) },
+        )
+        coordinator.request(request())
+        checkNotNull(main.poll()).invoke()
+        check(coordinator.answer(checkNotNull(shown.poll()), true, "ok"))
+        check(enteredReply.await(3, TimeUnit.SECONDS))
+        coordinator.stop()
+        val first = Thread { coordinator.closeAfterGuestStopped(); firstDone.countDown() }
+        val second = Thread { coordinator.closeAfterGuestStopped(); secondDone.countDown() }
+        try {
+            first.start()
+            val until = System.nanoTime() + TimeUnit.SECONDS.toNanos(3)
+            while (first.state != Thread.State.TIMED_WAITING && System.nanoTime() < until) Thread.yield()
+            check(first.state == Thread.State.TIMED_WAITING)
+            second.start()
+            check(!firstDone.await(200, TimeUnit.MILLISECONDS))
+            check(!secondDone.await(200, TimeUnit.MILLISECONDS))
+        } finally {
+            releaseReply.countDown()
+            first.join(3000)
+            if (second.state != Thread.State.NEW) second.join(3000)
+        }
+        check(firstDone.count == 0L && secondDone.count == 0L)
+    }
     repeat(100) {
         val h = Harness()
         h.coordinator.request(request()); h.pump()
