@@ -242,39 +242,52 @@ jobs:
           echo "ART_SMOKE_EXIT_CODE=$smoke_rc" | tee -a "$W/logs/art-smoke.txt"
           if [ "$smoke_rc" != 0 ] || ! grep -q '^JAVA_SMOKE_OK$' "$W/logs/art-smoke.txt"; then failed=1; fi
           for core in sym space; do
-            data="$W/data-$core"
-            mkdir -p "$data"/{Logs,Games,Profiles,Keys}
-            rm -f "$data/java-stages.txt" "$data/jni-stages.txt"
-            echo "=== $core, real Android ART/JNI attempt on ARM Linux; no APK, no game ===" | tee "$W/logs/jni-$core.txt"
-            set +e
-            timeout 120s env ANDROID_ROOT=/system ANDROID_DATA="$W/android-data" BOOTCLASSPATH="$BCP" \
-              CLASSPATH="$W/standalone.jar" LD_LIBRARY_PATH="/system/lib64:$W" DOTNET_GCRegionRange=400000000 \
-              /system/bin/app_process /system/bin dev.symbiosis.standalone.Main \
-              "$W/libstandalonejni.so" "$W/$core.so" "$data" 2>&1 | tee -a "$W/logs/jni-$core.txt"
-            rc=${PIPESTATUS[0]}
-            set -e
-            for marker in java-stages.txt jni-stages.txt; do
-              if [ -f "$data/$marker" ]; then
-                echo "=== $marker ===" | tee -a "$W/logs/jni-$core.txt"
-                cat "$data/$marker" | tee -a "$W/logs/jni-$core.txt"
-              fi
-            done
-            echo "EXIT_CODE=$rc" | tee -a "$W/logs/jni-$core.txt"
-            if [ "$rc" != 0 ] || ! grep -q 'JNI_RESULT javaInitialize=true' "$W/logs/jni-$core.txt"; then
-              failed=1
-              # A diagnostic rerun under strace only on failure, to identify
-              # missing real Android services/files; never suppress the failure.
+            for mode in baseline preload; do
+              tag="$core-$mode"
+              data="$W/data-$tag"
+              mkdir -p "$data"/{Logs,Games,Profiles,Keys}
+              rm -f "$data/java-stages.txt" "$data/jni-stages.txt"
+              extra=()
+              if [ "$mode" = preload ]; then extra=(--preload-tls); fi
+              echo "=== $tag, real Android ART/JNI on ARM Linux; no APK, no game ===" | tee "$W/logs/jni-$tag.txt"
               set +e
-              timeout 120s strace -f -s 200 -o "$W/logs/strace-$core.txt" \
-                env ANDROID_ROOT=/system ANDROID_DATA="$W/android-data" BOOTCLASSPATH="$BCP" \
+              timeout 120s env ANDROID_ROOT=/system ANDROID_DATA="$W/android-data" BOOTCLASSPATH="$BCP" \
                 CLASSPATH="$W/standalone.jar" LD_LIBRARY_PATH="/system/lib64:$W" DOTNET_GCRegionRange=400000000 \
                 /system/bin/app_process /system/bin dev.symbiosis.standalone.Main \
-                "$W/libstandalonejni.so" "$W/$core.so" "$data" \
-                > "$W/logs/strace-output-$core.txt" 2>&1
-              trace_rc=$?
+                "$W/libstandalonejni.so" "$W/$core.so" "$data" "${extra[@]}" 2>&1 | tee -a "$W/logs/jni-$tag.txt"
+              rc=${PIPESTATUS[0]}
               set -e
-              echo "TRACE_EXIT_CODE=$trace_rc" | tee -a "$W/logs/jni-$core.txt"
-            fi
+              for marker in java-stages.txt jni-stages.txt; do
+                if [ -f "$data/$marker" ]; then
+                  echo "=== $marker ===" | tee -a "$W/logs/jni-$tag.txt"
+                  cat "$data/$marker" | tee -a "$W/logs/jni-$tag.txt"
+                fi
+              done
+              echo "EXIT_CODE=$rc" | tee -a "$W/logs/jni-$tag.txt"
+              if [ "$rc" != 0 ] || ! grep -q 'JNI_RESULT javaInitialize=true' "$W/logs/jni-$tag.txt"; then
+                echo "JNI_INITIALIZATION_FAILED mode=$mode" | tee -a "$W/logs/jni-$tag.txt"
+                if [ "$mode" = preload ]; then failed=1; fi
+                # Isolated diagnostic rerun, never used to turn failure into success.
+                set +e
+                timeout 120s strace -f -s 200 -o "$W/logs/strace-$tag.txt" \
+                  env ANDROID_ROOT=/system ANDROID_DATA="$W/android-data" BOOTCLASSPATH="$BCP" \
+                  CLASSPATH="$W/standalone.jar" LD_LIBRARY_PATH="/system/lib64:$W" DOTNET_GCRegionRange=400000000 \
+                  /system/bin/app_process /system/bin dev.symbiosis.standalone.Main \
+                  "$W/libstandalonejni.so" "$W/$core.so" "$data" "${extra[@]}" \
+                  > "$W/logs/strace-output-$tag.txt" 2>&1
+                trace_rc=$?
+                set -e
+                echo "TRACE_EXIT_CODE=$trace_rc" | tee -a "$W/logs/jni-$tag.txt"
+              fi
+              if [ "$mode" = preload ]; then
+                # A successful init alone must not hide that a private TLS
+                # library failed to preload or resolved from another image.
+                grep -Fq "TLS_PRELOAD libcrypto.so ok" "$W/logs/jni-$tag.txt" || failed=1
+                grep -Fq "TLS_PRELOAD libssl.so ok" "$W/logs/jni-$tag.txt" || failed=1
+                grep -Fq "TLS_SYMBOL OpenSSL_version_num ok origin=$W/libcrypto.so" "$W/logs/jni-$tag.txt" || failed=1
+                grep -Fq "TLS_SYMBOL SSL_CTX_new ok origin=$W/libssl.so" "$W/logs/jni-$tag.txt" || failed=1
+              fi
+            done
           done
           exit "${failed:-0}"
       - name: Save logs (no APK, core, or system image)

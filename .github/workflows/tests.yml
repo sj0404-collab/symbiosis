@@ -112,6 +112,7 @@ jobs:
           python3 fork/tests/test_kenji_loader_error.py
           python3 fork/tests/test_kenji_preflight_safety.py
           python3 fork/tests/test_standalone_core_probe.py
+          python3 fork/tests/test_standalone_tls_jni.py
           python3 fork/tests/test_standalone_gpt.py
           python3 fork/tests/test_standalone_log_capture.py
           python3 fork/tests/test_standalone_property_init.py

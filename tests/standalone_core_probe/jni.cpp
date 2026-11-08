@@ -7,7 +7,7 @@
 #include <string>
 
 extern "C" JNIEXPORT jint JNICALL
-Java_dev_symbiosis_standalone_Main_initialize(JNIEnv* env, jclass, jstring core_path, jstring data_path) {
+Java_dev_symbiosis_standalone_Main_initialize(JNIEnv* env, jclass, jstring core_path, jstring data_path, jboolean preload_tls) {
     std::setvbuf(stdout, nullptr, _IONBF, 0);
     const char* core = env->GetStringUTFChars(core_path, nullptr);
     const char* data = env->GetStringUTFChars(data_path, nullptr);
@@ -27,6 +27,33 @@ Java_dev_symbiosis_standalone_Main_initialize(JNIEnv* env, jclass, jstring core_
     }
 #define MARK(...) do { std::printf(__VA_ARGS__); std::fprintf(marker, __VA_ARGS__); std::fflush(marker); } while (0)
     MARK("JNI_ARM_HWCAP=0x%lx\n", getauxval(AT_HWCAP));
+    if (preload_tls) {
+        // Same public loader operations and same exact bundled files as the
+        // production bridge, in this separate diagnostic process only.
+        // Never modify, fake, or replace an OpenSSL response.
+        const std::string path(core);
+        const size_t slash = path.find_last_of('/');
+        const std::string dir = slash == std::string::npos ? "." : path.substr(0, slash);
+        for (const char* name : {"libcrypto.so", "libssl.so"}) {
+            std::string absolute = dir + "/" + name;
+            dlerror();
+            void* tls = dlopen(absolute.c_str(), RTLD_NOW | RTLD_GLOBAL);
+            const char* error = dlerror();
+            MARK("TLS_PRELOAD %s %s%s%s\n", name, tls ? "ok" : "fail",
+                 !tls && error ? ": " : "", !tls && error ? error : "");
+            if (tls) {
+                const char* probe = name[3] == 'c' ? "OpenSSL_version_num" : "SSL_CTX_new";
+                dlerror();
+                void* symbol = dlsym(tls, probe);
+                const char* symerror = dlerror();
+                Dl_info origin{};
+                const char* image = symbol && dladdr(symbol, &origin) && origin.dli_fname ? origin.dli_fname : "unknown";
+                MARK("TLS_SYMBOL %s %s origin=%s\n", probe, symbol && !symerror ? "ok" : "missing", image);
+            }
+        }
+    } else {
+        MARK("TLS_PRELOAD not-attempted\n");
+    }
     MARK("JNI_STAGE dlopen path=%s\n", core);
     void* handle = dlopen(core, RTLD_NOW | RTLD_LOCAL);
     if (!handle) {

@@ -5,7 +5,7 @@ import java.io.IOException;
 
 /** CI-only app_process entry: no APK, Activity, keys, firmware or games. */
 public final class Main {
-    private static native int initialize(String core, String data);
+    private static native int initialize(String core, String data, boolean preloadTls);
 
     private static void mark(String path, String line) {
         try (FileWriter writer = new FileWriter(path, true)) {
@@ -21,16 +21,18 @@ public final class Main {
             mark(args[1], "JAVA_SMOKE_OK");
             return;
         }
-        if (args.length != 3) {
-            System.err.println("usage: Main /path/libstandalonejni.so /path/core.so /path/data");
+        if ((args.length != 3 && args.length != 4) ||
+            (args.length == 4 && !"--preload-tls".equals(args[3]))) {
+            System.err.println("usage: Main /path/libstandalonejni.so /path/core.so /path/data [--preload-tls]");
             System.exit(2);
         }
+        boolean preloadTls = args.length == 4;
         String marker = args[2] + "/java-stages.txt";
         try {
             mark(marker, "JAVA_STAGE load_jni");
             System.load(args[0]);
             mark(marker, "JAVA_STAGE JNI_loaded");
-            int result = initialize(args[1], args[2]);
+            int result = initialize(args[1], args[2], preloadTls);
             mark(marker, "JAVA_RESULT status=" + result);
             System.exit(result);
         } catch (Throwable t) {

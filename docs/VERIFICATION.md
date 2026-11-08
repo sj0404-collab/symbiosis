@@ -5166,3 +5166,29 @@ binderfs ioctl создания устройства `binder` вернул `EEXI
 Binder и не подтверждение наличия Android service manager. Host regression 4/4;
 повторная реальная проверка ещё нужна.
 [Лог ARM Linux](https://github.com/sj0404-collab/symbiosis/actions/runs/42497000490/artifacts/13624435368).
+
+### 92. Оба ARM-ядра дошли до инициализации: конфликт SSL на стенде
+
+[Run 42498469154](https://github.com/sj0404-collab/symbiosis/actions/runs/42498469154),
+код `4520bdf`, native ARM64 Linux + Android Bionic: настоящий binderfs узел
+готов, Java smoke прошёл, оба real core в отдельных процессах прошли CPU
+проверку и начали настоящий `javaInitialize`: сами ядра записали `Initializing`
+и `Build flags: ANDROID enabled`. Затем оба процесса завершились SIGABRT с
+`No usable version of libssl was found`; `javaInitialize` успеха не вернул.
+[Логи](https://github.com/sj0404-collab/symbiosis/actions/runs/42498469154/artifacts/13624756204).
+На этом стенде трасса показывает поиск system `libcrypto.so`, затем частного
+`libssl.so` и его зависимости `libcrypto.so`; это указывает на возможный
+конфликт BoringSSL из Android-образа и поставляемого OpenSSL, но одного trace
+недостаточно для окончательной причины. Упакованная пара содержит OpenSSL
+1.1.1l. На настоящем Android namespaces и порядок загрузки могут отличаться;
+поэтому данный сбой нельзя объявлять причиной `2202-0710` на телефоне.
+
+Для проверки добавлено сравнение без preloading и с настоящей загрузкой тех же
+неизменённых bundled `libcrypto.so` и `libssl.so` по абсолютным путям, в
+отдельных процессах для каждого core. Вывод включает `dlerror`, успешность
+каждой загрузки и `dladdr` происхождения `OpenSSL_version_num`/`SSL_CTX_new`;
+результат `javaInitialize=true` сам по себе не зачтётся, если одна библиотека
+не загрузилась либо символы пришли не из bundled файлов. Ни ядро, ни ответы TLS
+не подменяются. Host-JVM test 1/1 проверяет обе ветки и отрицательный случай на
+одноразовых синтетических библиотеках, которые не входят в APK. Настоящий ARM
+результат ещё ожидается.
