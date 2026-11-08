@@ -4,6 +4,29 @@ on:
 permissions:
   contents: read
 jobs:
+  page16k-kernel:
+    # Separate kernel-only experiment; not an Android userspace or APK test.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install software QEMU and ARM64 static compiler
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends qemu-system-arm gcc-aarch64-linux-gnu libc6-dev-arm64-cross cpio
+      - name: Verify real 16K page size and ISA on the official Android kernel
+        run: |
+          set -o pipefail
+          bash tests/modern_android_qemu/probe_16k_kernel.sh | tee /tmp/real-16k-kernel.txt
+      - name: Save kernel-only evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: android15-16k-kernel-only-log
+          path: /tmp/real-16k-kernel.txt
+          if-no-files-found: warn
+          retention-days: 3
+
   software-emulator:
     runs-on: ubuntu-24.04
     timeout-minutes: 65

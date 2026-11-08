@@ -5305,3 +5305,19 @@ ES 3.0 и Android goldfish/qemud backend; процесс работал боле
 фактической проверкой `sys.boot_completed`, затем отдельными standalone и
 одноразовым Android probe; до готовности ADB/core он обязан завершиться ошибкой.
 Этот workflow не является сборкой выпускного APK.
+
+### 95. Проверка аппаратных признаков 16-КБ ядра, отдельно от Android
+
+Проверен оригинальный `kernel-ranchu` из Google SDK
+`system-images;android-35;google_apis_ps16k;arm64-v8a`, revision 5;
+SHA-256 сжатого kernel `e8ac73e75665e94ae692c782cdde9a5f98f905d47eee4d9fde48892510232a58`.
+Под QEMU 10.0.13 TCG с одноразовым синтетическим static Linux init **без
+Android userspace или APK** фактические значения `getauxval`/`sysconf`:
+`AT_PAGESZ=16384`, `SYSCONF=16384`, `HWCAP=0xffffffff`, необходимая маска
+`0x1182`, отсутствующих битов 0, штатное выключение. Повторяемая процедура
+`tests/modern_android_qemu/probe_16k_kernel.sh` извлекает через HTTP Range только
+kernel, проверяет CRC ZIP entry и SHA-256 именно kernel (не всего архива).
+Этот тест не загружает ядра Kenji, не проверяет ELF Android loader на 16 КБ,
+не подтверждает zip-alignment и не заменяет тест полного Android 16 КБ.
+Добавлен отдельный независимый job в экспериментальный workflow; CI результата
+для него ещё нет.
