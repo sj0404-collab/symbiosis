@@ -26,7 +26,10 @@ class TlsJniFixtureTest(unittest.TestCase):
                 subprocess.run(['g++', '-std=c++17', '-shared', '-fPIC', str(source), '-o', str(library), *extra], check=True)
                 return library
             build('libcrypto', 'extern "C" unsigned long OpenSSL_version_num(){return 0x101010cfUL;}')
-            build('libssl', 'extern "C" void* SSL_CTX_new(void*){return nullptr;}')
+            build('libssl', '''static int fixture;
+                extern "C" const void* TLS_method(){return &fixture;}
+                extern "C" void* SSL_CTX_new(const void* m){return m ? &fixture : nullptr;}
+                extern "C" void SSL_CTX_free(void*){}''')
             core = build('core', 'extern "C" bool javaInitialize(void* path, void* env){return path && env;}')
             jni = work / 'libstandalonejni.so'
             subprocess.run(['g++', '-std=c++17', '-shared', '-fPIC', '-Wall', '-Wextra', '-Werror',
@@ -42,7 +45,7 @@ class TlsJniFixtureTest(unittest.TestCase):
                 if mode != 'baseline':
                     cmd.append('--preload-tls')
                 result = subprocess.run(cmd, text=True, capture_output=True, timeout=15)
-                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(result.returncode, 8 if mode in ('missing', 'null-context') else 0, result.stderr)
                 return (data / 'jni-stages.txt').read_text()
 
             base = invoke('baseline')
@@ -53,12 +56,20 @@ class TlsJniFixtureTest(unittest.TestCase):
             self.assertIn('TLS_PRELOAD libssl.so ok', preloaded)
             self.assertIn('TLS_SYMBOL OpenSSL_version_num ok origin=' + str(work / 'libcrypto.so'), preloaded)
             self.assertIn('TLS_SYMBOL SSL_CTX_new ok origin=' + str(work / 'libssl.so'), preloaded)
+            self.assertIn('TLS_OPENSSL_VERSION=0x101010cf', preloaded)
+            self.assertIn('TLS_CONTEXT_SMOKE=ok', preloaded)
+            build('libssl', '''extern "C" const void* TLS_method(){static int x; return &x;}
+                extern "C" void* SSL_CTX_new(const void*){return nullptr;}
+                extern "C" void SSL_CTX_free(void*){}''')
+            broken = invoke('null-context')
+            self.assertIn('JNI_RESULT javaInitialize=true', broken)
+            self.assertIn('TLS_CONTEXT_SMOKE=fail', broken)
             (work / 'libssl.so').unlink()
             missing = invoke('missing')
             self.assertIn('TLS_PRELOAD libssl.so fail:', missing)
-            # A fixture may succeed regardless: the CI's independent TLS
-            # assertions must reject this, not interpret init as proof of TLS.
+            # Even if the fixture core initializes, the missing TLS check fails.
             self.assertIn('JNI_RESULT javaInitialize=true', missing)
+            self.assertIn('TLS_CONTEXT_SMOKE=fail', missing)
 
 
 if __name__ == '__main__':

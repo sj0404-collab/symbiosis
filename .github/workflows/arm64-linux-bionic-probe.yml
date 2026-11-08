@@ -297,6 +297,7 @@ jobs:
                 grep -Fq "TLS_PRELOAD libssl.so ok" "$W/logs/jni-$tag.txt" || failed=1
                 grep -Fq "TLS_SYMBOL OpenSSL_version_num ok origin=$libdir/libcrypto.so" "$W/logs/jni-$tag.txt" || failed=1
                 grep -Fq "TLS_SYMBOL SSL_CTX_new ok origin=$libdir/libssl.so" "$W/logs/jni-$tag.txt" || failed=1
+                grep -Fq 'TLS_CONTEXT_SMOKE=ok' "$W/logs/jni-$tag.txt" || failed=1
               fi
             done
           done

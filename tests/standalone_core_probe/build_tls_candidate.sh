@@ -15,9 +15,10 @@ export ANDROID_NDK_ROOT="$ANDROID_HOME/ndk/28.2.13676358"
 export PATH="$ANDROID_NDK_ROOT/toolchains/llvm/prebuilt/linux-x86_64/bin:$PATH"
 cd "$STANDALONE_WORK/openssl-3.5.9"
 perl Configure android-arm64 shared no-tests no-apps -D__ANDROID_API__=27 -Wl,-z,max-page-size=16384
-make -j2 build_libs
-cp libcrypto.so.3 "$W/libcrypto.so"
-cp libssl.so.3 "$W/libssl.so"
+make -s -j2 build_libs
+# OpenSSL's android-arm64 target emits unversioned SONAMEs and filenames.
+cp libcrypto.so "$W/libcrypto.so"
+cp libssl.so "$W/libssl.so"
 python3 - "$ROOT" "$W" <<'PY'
 import importlib.util, pathlib, sys
 spec = importlib.util.spec_from_file_location('guard', pathlib.Path(sys.argv[1]) / 'tools/check_kenji_release_ready.py')

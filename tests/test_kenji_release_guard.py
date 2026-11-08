@@ -32,6 +32,7 @@ class ReleaseGuardTest(unittest.TestCase):
         self.assertEqual(guard.check_sources(cpp, kotlin), [])
         self.assertTrue(any('UI ядра' in problem for problem in guard.UNRESOLVED_INTEGRATION))
         self.assertTrue(any('графические callback' in problem for problem in guard.UNRESOLVED_INTEGRATION))
+        self.assertTrue(any('OpenSSL 1.1.1l' in problem for problem in guard.UNRESOLVED_INTEGRATION))
         # Even if all shallow empty-body checks pass, main must fail closed.
         with patch.object(guard, 'check_sources', return_value=[]), patch('sys.stderr'):
             self.assertEqual(guard.main(), 1)

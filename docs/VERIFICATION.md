@@ -5248,3 +5248,33 @@ preload и baseline остаются для сравнения. Успех сб�
 криптографических операций, полноценного Android, упаковки и проверки на 16-КБ
 устройстве, а также соблюдение лицензии. Кандидат не копируется в production APK
 и ещё не проверен на ARM.
+
+[Run 42500597280](https://github.com/sj0404-collab/symbiosis/actions/runs/42500597280),
+`69fb169`, загрузил оригинальные system/vendor/metadata образы в QEMU, но
+Android init перезагрузился до ADB. Последующее локальное исследование
+настоящего `/init` через GDB выявило отсутствие `/dev/block/by-name/super`:
+в обычном QEMU не были заданы реальные платформенные boot devices. После их
+указания first-stage mount нашёл и смонтировал системные разделы. Файл
+официального vendor fstab требует `/dev/block/vdc` как raw ext4 userdata и
+`metadata` на `a003c00.virtio_mmio`; диагностические диски переставлены по
+этому реальному контракту, сами system/vendor файлы не менялись.
+
+С этими настройками оригинальный Android 15 ARM64 дошёл до второго init,
+смонтировал `/data`, запустил сервисы, APEX и zygote. На disposable userdebug
+guest включены ADB TCP и настоящий IP/маршрут QEMU, без отключения SELinux;
+ADB на хосте увидел устройство `sdk_gphone64_arm64`, API 35, но команды ADB
+позже зависали, а `sys.boot_completed` не был получен. Системный
+`surfaceflinger` многократно падал: `both vsock and goldfish_pipe paths failed`,
+`failed to connect to opengles pipe`. Обычный QEMU не предоставляет требуемый
+Android Emulator graphics transport. Это не краш нашего APK; полноценная
+графика и запуск ядер внутри этого Android пока не подтверждены. Продолжается
+поиск среды с настоящим graphics transport. Описанные изменения — только CI
+стенд; в APK ничего из тестовых дисков или shell-команд не включается.
+
+[Run 42500713205](https://github.com/sj0404-collab/symbiosis/actions/runs/42500713205)
+собрал OpenSSL 3.5.9 для ARM64, но тест остановился до ARM: сборочный скрипт
+ошибочно ожидал Linux-имена `libssl.so.3` и `libcrypto.so.3`, хотя конфигурация
+`android-arm64` выдаёт `libssl.so` и `libcrypto.so`. Это ошибка диагностического
+скрипта, не доказательство совместимости или несовместимости с ядрами; имена
+исправлены. Дополнительно после `javaInitialize` будет проверено создание и
+освобождение настоящего TLS context; это не заменяет TLS handshake.
