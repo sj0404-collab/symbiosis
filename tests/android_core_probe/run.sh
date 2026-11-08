@@ -80,6 +80,11 @@ for core in mock sym space; do
   for ((i=0; i<PROBE_WAIT_SECONDS*2; i++)); do
     if grep -q 'PROBE_FAIL\|FATAL EXCEPTION' "$log"; then outcome=fail; break; fi
     if grep -q 'Fatal signal.*iosis.coreprobe' "$log"; then outcome=native-crash; break; fi
+    # On some images our signal reporter writes to disk and Android restarts
+    # the Activity without a libc "Fatal signal" line. Do not wait through
+    # hundreds of repeated attempts or mislabel this as a simple timeout.
+    starts=$(grep -c "START core=$core " "$log" || true)
+    if [ "$starts" -gt 1 ]; then outcome=probe-restarted; break; fi
     if grep -q "PROBE_OK core=$core " "$log"; then
       # Never mark an early success followed immediately by an async crash.
       sleep 2
@@ -100,6 +105,9 @@ for core in mock sym space; do
   done
   kill "$logpid" 2>/dev/null || true
   wait "$logpid" 2>/dev/null || true
+  if [ "$outcome" = probe-restarted ] && grep -q '^crash signal=' "$PROBE_WORK/$core-probe-crash.txt"; then
+    outcome=native-crash
+  fi
   if [ "$core" = mock ] && [ "$outcome" = pass ]; then
     if ! grep -q 'MOCK_UI_SETUP_OK' "$log" ||
        ! grep -q 'MOCK_UI_RESPONSE_OK accepted=1' "$log" ||

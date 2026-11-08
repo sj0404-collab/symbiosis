@@ -78,8 +78,14 @@ class OrchestrationTest(unittest.TestCase):
             def fake_adb(*args, **kwargs):
                 calls.append(args)
                 cmd = args[1] if args[0] == 'shell' and len(args) == 2 else ''
+                if args[0:2] == ('shell', 'cat'):
+                    if args[2].endswith('/smoke.txt'):
+                        return subprocess.CompletedProcess(args, 0, 'JAVA_SMOKE_OK\n')
+                    if args[2].endswith('/jni-stages.txt'):
+                        return subprocess.CompletedProcess(args, 0, 'JNI_STAGE BEFORE_JAVA_INITIALIZE\nJNI_RESULT javaInitialize=true\n')
+                    return subprocess.CompletedProcess(args, 0, 'JAVA_STAGE JNI_loaded\n')
                 if 'app_process' in cmd:
-                    return subprocess.CompletedProcess(args, 0, 'JNI_RESULT javaInitialize=true\n')
+                    return subprocess.CompletedProcess(args, 0, '')
                 if 'libcore_sym.so' in cmd:
                     return subprocess.CompletedProcess(args, 0, 'DLOPEN_OK\nRESULT symbols=11/11 missing=0 initialization=not-attempted\n')
                 if 'libcore_space.so' in cmd:
@@ -91,12 +97,47 @@ class OrchestrationTest(unittest.TestCase):
             self.assertIn('EXIT_CODE=0', (work / 'standalone-sym.txt').read_text())
             self.assertIn('EXIT_CODE=3', (work / 'standalone-space.txt').read_text())
             self.assertIn('JNI_RESULT javaInitialize=true', (work / 'standalone-jni-sym.txt').read_text())
-            commands = [a[1] for a in calls if a[0] == 'shell' and len(a) == 2 and 'LD_LIBRARY_PATH=' in a[1]]
-            self.assertEqual(len(commands), 4)
-            self.assertEqual(sum('app_process' in c for c in commands), 2)
+            commands = [a[1] for a in calls if a[0] == 'shell' and len(a) == 2 and
+                        ('LD_LIBRARY_PATH=' in a[1] or 'app_process' in a[1])]
+            self.assertEqual(len(commands), 5)
+            self.assertEqual(sum('app_process' in c for c in commands), 3)
+            self.assertFalse(any('LD_LIBRARY_PATH=' in c for c in commands if 'app_process' in c))
             self.assertTrue(any('libcore_sym.so' in c for c in commands))
             self.assertTrue(any('libcore_space.so' in c for c in commands))
             self.assertFalse(any('install' in str(c) for c in calls))
+
+    def test_failed_art_smoke_never_claims_or_attempts_core_jni(self):
+        spec = importlib.util.spec_from_file_location('standalone_run', ROOT / 'tests/standalone_core_probe/run.py')
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        with tempfile.TemporaryDirectory() as tmp:
+            work = Path(tmp)
+            for name in ('standalone-core-probe', 'core_sym.so', 'core_space.so',
+                         'libstandalonejni.so', 'standalone.jar',
+                         'apk/lib/arm64-v8a/libkenjinxjni.so',
+                         'apk/lib/arm64-v8a/libcrypto.so', 'apk/lib/arm64-v8a/libssl.so'):
+                path = work / name
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.touch()
+            calls = []
+
+            def fake_adb(*args, **kwargs):
+                calls.append(args)
+                cmd = args[1] if args[0] == 'shell' and len(args) == 2 else ''
+                if 'app_process' in cmd:
+                    return subprocess.CompletedProcess(args, 134, 'Aborted\n')
+                if args[0:2] == ('shell', 'cat'):
+                    return subprocess.CompletedProcess(args, 1, '')
+                if '/probe' in cmd:
+                    return subprocess.CompletedProcess(args, 0, 'DLOPEN_OK\nRESULT symbols=11/11 missing=0 initialization=not-attempted\n')
+                return subprocess.CompletedProcess(args, 0, '')
+
+            with mock.patch.object(module, 'adb', side_effect=fake_adb), mock.patch.object(sys, 'argv', ['run.py', tmp]):
+                self.assertEqual(module.main(), 1)
+            self.assertIn('NOT_ATTEMPTED ART smoke failed', (work / 'standalone-jni-sym.txt').read_text())
+            app_cmds = [x[1] for x in calls if x[0] == 'shell' and len(x) == 2 and 'app_process' in x[1]]
+            self.assertEqual(len(app_cmds), 1)
+            self.assertIn('--smoke', app_cmds[0])
 
 
 if __name__ == '__main__':

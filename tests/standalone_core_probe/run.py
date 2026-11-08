@@ -65,27 +65,61 @@ def main():
             print(text, end='', flush=True)
             outcomes.append(passed)
 
+        # app_process needs Android's own system library search path. In
+        # particular, do not let our bundled TLS libraries shadow libjavacore's
+        # dependencies while ART starts. Probe the Java runtime independently.
+        app_prefix = (f'CLASSPATH={shlex.quote(REMOTE + "/standalone.jar")} '
+                      f'DOTNET_GCRegionRange=400000000 '
+                      f'/system/bin/app_process /system/bin dev.symbiosis.standalone.Main')
+        smoke_file = f'{REMOTE}/smoke.txt'
+        adb('shell', 'rm', '-f', smoke_file, check=False)
+        adb('logcat', '-c', check=False)
+        print('=== standalone ART smoke, no JNI and no core ===', flush=True)
+        try:
+            smoke_result = adb('shell', f'{app_prefix} --smoke {shlex.quote(smoke_file)}', timeout=180, check=False)
+            smoke_marker = adb('shell', 'cat', smoke_file, check=False).stdout
+            smoke_text = smoke_result.stdout + smoke_marker + f'EXIT_CODE={smoke_result.returncode}\n'
+            smoke_ok = smoke_result.returncode == 0 and 'JAVA_SMOKE_OK' in smoke_marker
+        except subprocess.TimeoutExpired:
+            smoke_text, smoke_ok = 'ART_SMOKE_TIMEOUT\n', False
+        (work / 'standalone-art-smoke.txt').write_text(smoke_text, encoding='utf-8')
+        print(smoke_text, end='', flush=True)
+        if not smoke_ok:
+            logcat = adb('logcat', '-d', '-v', 'threadtime', timeout=60, check=False)
+            (work / 'standalone-art-smoke-logcat.txt').write_text(logcat.stdout, encoding='utf-8')
+            print('ART_SMOKE_FAIL: JNI/core initialization not attempted', flush=True)
+            for core in ('sym', 'space'):
+                (work / f'standalone-jni-{core}.txt').write_text(
+                    'NOT_ATTEMPTED ART smoke failed\n', encoding='utf-8')
+            return 1
         for core in ('sym', 'space'):
             data = f'{REMOTE}/data-{core}'
             adb('shell', 'mkdir', '-p', data, *(f'{data}/{x}' for x in ('Logs', 'Games', 'Profiles', 'Keys')))
             # Disposable emulator only. Clear first to keep each crash isolated.
             adb('logcat', '-c', check=False)
-            command = (f'CLASSPATH={shlex.quote(REMOTE + "/standalone.jar")} '
-                       f'LD_LIBRARY_PATH={shlex.quote(REMOTE)} DOTNET_GCRegionRange=400000000 '
-                       f'/system/bin/app_process /system/bin dev.symbiosis.standalone.Main '
-                       f'{shlex.quote(REMOTE + "/libstandalonejni.so")} '
+            adb('shell', 'rm', '-f', f'{data}/java-stages.txt', f'{data}/jni-stages.txt', check=False)
+            command = (f'{app_prefix} {shlex.quote(REMOTE + "/libstandalonejni.so")} '
                        f'{shlex.quote(REMOTE + "/libcore_" + core + ".so")} {shlex.quote(data)}')
             print(f'=== standalone JNI {core}, real javaInitialize, no APK ===', flush=True)
             try:
                 result = adb('shell', command, timeout=180, check=False)
                 text = result.stdout + f'EXIT_CODE={result.returncode}\n'
-                passed = result.returncode == 0 and 'JNI_RESULT javaInitialize=true' in result.stdout
+                exit_code = result.returncode
             except subprocess.TimeoutExpired as exc:
                 text = exc.stdout or b''
                 if isinstance(text, bytes):
                     text = text.decode('utf-8', errors='replace')
                 text += '\nTIMEOUT\n'
-                passed = False
+                exit_code = -1
+            markers = []
+            for name in ('java-stages.txt', 'jni-stages.txt'):
+                marker = adb('shell', 'cat', f'{data}/{name}', check=False)
+                if marker.returncode == 0:
+                    markers.append(marker.stdout)
+                    text += f'--- {name} ---\n{marker.stdout}'
+                else:
+                    text += f'--- {name}: unavailable ---\n'
+            passed = exit_code == 0 and any('JNI_RESULT javaInitialize=true' in m for m in markers)
             (work / f'standalone-jni-{core}.txt').write_text(text, encoding='utf-8')
             print(text, end='', flush=True)
             try:

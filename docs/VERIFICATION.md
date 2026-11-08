@@ -4968,3 +4968,33 @@ reference graphics прошли, оба реальных ядра заверши
 [Логи](https://github.com/sj0404-collab/symbiosis/actions/runs/42403548558/artifacts/13587195286).
 Software ARM job того же run загрузился, но `adb install` оборвался с `Broken
 pipe` до теста: исправление preflight на ARM и HWCAP этим запуском не проверены.
+
+### 87. Первый отдельный запуск и нативный ARM Linux
+
+[Run 42404581153](https://github.com/sj0404-collab/symbiosis/actions/runs/42404581153),
+код `a42452c`: отдельная программа **без установки APK** на API27 software ARM
+загрузила оба SHA-pinned ядра (`dlopen`), и у каждого нашла 11/11 проверяемых
+экспортов. `getauxval` вернул `0xff`, среди требуемых отсутствуют ATOMICS и
+ASIMDRDM (`missing=0x1100`). Это не инициализация ядра и не запуск игры.
+
+Изолированный JNI-тест *не дошёл* до `javaInitialize`: Android `app_process`
+завершил ART при старте с `LoadNativeLibrary failed for "libjavacore.so"`.
+Это сбой окружения стенда, а не доказанный сбой ядер; вероятное влияние нашей
+переменной `LD_LIBRARY_PATH` с собственными TLS-библиотеками требует проверки.
+В новом стенде Android runtime запускается без этой переменной, перед ядрами
+есть Java smoke test и отдельные сохраняемые метки фаз. Если smoke не прошёл,
+ядра маркируются `NOT_ATTEMPTED`. Исправления ожидают Android CI.
+
+Отдельный тестовый Activity в том же запуске: UI и mock прошли; после удаления
+опасного preflight `SIGSYS` там не наблюдался, а оба real core дошли до
+`javaInitialize`, записали ISA-сообщение и завершились. Из-за автостарта
+Activity runner ранее записал `timeout`, хотя в файловом отчёте есть SIGABRT;
+теперь повторный старт отмечается отдельно и повышается до `native-crash`
+только при наличии отчёта сигнала. Host regression 2/2.
+[Журналы](https://github.com/sj0404-collab/symbiosis/actions/runs/42404581153/artifacts/13586894661).
+
+Добавлен параллельный эксперимент на `ubuntu-24.04-arm`: Linux ARM64 запускает
+родной ELF-loader без эмуляции и пытается открыть оба исходных Android `.so` в
+раздельных процессах, печатая HWCAP и реальные ошибки зависимости. Linux glibc
+не является Android bionic, Java/Android или проверкой игры; не подменяем
+системные функции для видимого успеха. Результат нового job пока неизвестен.

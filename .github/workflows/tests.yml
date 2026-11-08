@@ -108,6 +108,7 @@ jobs:
           python3 fork/tests/test_kenji_loader_error.py
           python3 fork/tests/test_kenji_preflight_safety.py
           python3 fork/tests/test_standalone_core_probe.py
+          python3 fork/tests/test_android_probe_outcome.py
           python3 fork/tests/test_kenji_ui_response_gate.py
           python3 fork/tests/test_kenji_ui_shared_event_model.py
           python3 fork/tests/test_kenji_transform_candidate.py
@@ -237,3 +238,8 @@ jobs:
   software-arm64-probe:
     if: github.event_name == 'workflow_dispatch' && inputs.run_android_probe == true
     uses: ./.github/workflows/arm64-software-probe.yml
+
+  # Native ARM Linux is a separate baseline, not an Android environment.
+  native-arm64-linux-probe:
+    if: github.event_name == 'workflow_dispatch' && inputs.run_android_probe == true
+    uses: ./.github/workflows/arm64-native-host-probe.yml
