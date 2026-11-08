@@ -18,6 +18,10 @@ on:
         description: "Run experimental ARM64 Linux/Bionic loader probe (not Android)"
         type: boolean
         default: false
+      run_modern_arm_probe:
+        description: "Try a full Android 15 ARM system on software QEMU"
+        type: boolean
+        default: false
   push:
     branches: [main]
     paths:
@@ -252,3 +256,8 @@ jobs:
   direct-arm-linux-probe:
     if: github.event_name == 'workflow_dispatch' && inputs.run_arm_linux_probe == true
     uses: ./.github/workflows/arm64-linux-bionic-probe.yml
+
+  # Experimental full system Android boot, no APK and no games.
+  modern-arm-qemu-boot:
+    if: github.event_name == 'workflow_dispatch' && inputs.run_modern_arm_probe == true
+    uses: ./.github/workflows/modern-arm-qemu-boot.yml
