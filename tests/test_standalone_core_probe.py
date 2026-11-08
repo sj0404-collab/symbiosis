@@ -116,6 +116,39 @@ class OrchestrationTest(unittest.TestCase):
             self.assertTrue(any('libcore_space.so' in c for c in commands))
             self.assertFalse(any('install' in str(c) for c in calls))
 
+    def test_preload_mode_requires_context_smoke_from_each_core(self):
+        spec = importlib.util.spec_from_file_location('standalone_run_tls', ROOT / 'tests/standalone_core_probe/run.py')
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        with tempfile.TemporaryDirectory() as tmp:
+            work = Path(tmp)
+            for name in ('standalone-core-probe', 'core_sym.so', 'core_space.so', 'libstandalonejni.so',
+                         'standalone.jar', 'apk/lib/arm64-v8a/libkenjinxjni.so',
+                         'apk/lib/arm64-v8a/libcrypto.so', 'apk/lib/arm64-v8a/libssl.so'):
+                path = work / name
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.touch()
+            calls = []
+            def fake_adb(*args, **kwargs):
+                calls.append(args)
+                cmd = args[1] if args[0] == 'shell' and len(args) == 2 else ''
+                if args[:2] == ('shell', 'cat'):
+                    if args[2].endswith('/smoke.txt'):
+                        return subprocess.CompletedProcess(args, 0, 'JAVA_SMOKE_OK\n')
+                    if args[2].endswith('/jni-stages.txt'):
+                        # Successful core init alone is deliberately insufficient.
+                        return subprocess.CompletedProcess(args, 0, 'JNI_RESULT javaInitialize=true\nTLS_CONTEXT_SMOKE=fail\n')
+                    return subprocess.CompletedProcess(args, 0, 'JAVA_STAGE JNI_loaded\n')
+                if 'app_process' in cmd:
+                    return subprocess.CompletedProcess(args, 0, '')
+                if 'libcore_' in cmd:
+                    return subprocess.CompletedProcess(args, 0, 'DLOPEN_OK\nRESULT symbols=11/11 missing=0 initialization=not-attempted\n')
+                return subprocess.CompletedProcess(args, 0, '')
+            with mock.patch.object(module, 'adb', side_effect=fake_adb), mock.patch.object(sys, 'argv', ['run.py', tmp, '--preload-tls']):
+                self.assertEqual(module.main(), 1)
+            cmds = [a[1] for a in calls if a[0] == 'shell' and len(a) == 2 and '--preload-tls' in a[1]]
+            self.assertEqual(len(cmds), 2)
+
     def test_failed_art_smoke_never_claims_or_attempts_core_jni(self):
         spec = importlib.util.spec_from_file_location('standalone_run', ROOT / 'tests/standalone_core_probe/run.py')
         module = importlib.util.module_from_spec(spec)

@@ -22,6 +22,10 @@ on:
         description: "Try a full Android 15 ARM system on software QEMU"
         type: boolean
         default: false
+      run_android35_backend:
+        description: "Try Android Emulator backend with ARM Android 15 (unsupported software mode)"
+        type: boolean
+        default: false
   push:
     branches: [main]
     paths:
@@ -261,3 +265,8 @@ jobs:
   modern-arm-qemu-boot:
     if: github.event_name == 'workflow_dispatch' && inputs.run_modern_arm_probe == true
     uses: ./.github/workflows/modern-arm-qemu-boot.yml
+
+  # Official graphics backend in unsupported software ARM-on-x86 mode; never release.
+  android35-emulator-backend:
+    if: github.event_name == 'workflow_dispatch' && inputs.run_android35_backend == true
+    uses: ./.github/workflows/android35-emulator-backend.yml

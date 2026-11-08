@@ -5278,3 +5278,30 @@ Android Emulator graphics transport. Это не краш нашего APK; по
 скрипта, не доказательство совместимости или несовместимости с ядрами; имена
 исправлены. Дополнительно после `javaInitialize` будет проверено создание и
 освобождение настоящего TLS context; это не заменяет TLS handshake.
+
+### 94. OpenSSL 3.5.9 и Android Emulator backend
+
+[Run 42501956373](https://github.com/sj0404-collab/symbiosis/actions/runs/42501956373),
+`17484ce`, native ARM Linux + Android 8.1 Bionic/ART: обе настоящие core с
+диагностическим OpenSSL 3.5.9 успешно вернули `javaInitialize=true`,
+`TLS_OPENSSL_VERSION=0x30500090`, и реально создали/освободили SSL context;
+символы пришли из проверенных кандидатов и оба процесса завершились 0. Кандидат
+прошёл проверку ARM64 ELF `PT_LOAD` 16 КБ при сборке. Для bundled 1.1.1l те же
+две операции тоже прошли; baseline без preload у обоих по-прежнему SIGABRT 134.
+[Логи](https://github.com/sj0404-collab/symbiosis/actions/runs/42501956373/artifacts/13625733751).
+Это не TLS handshake, не APK, не запуск игры и не проверка Android namespace,
+отсутствия уязвимостей или 16-КБ телефона. Ни один production-файл OpenSSL не
+заменён, release guard остаётся активным.
+
+Локально установлен оригинальный архив Android Emulator 34.2.16 с ранее
+закреплённым SHA-256. Его стандартный launcher отказался запускать ARM Android
+15 на x86 как неподдерживаемую комбинацию. При прямом вызове настоящего
+`qemu-system-aarch64-headless` backend начал работу в software TCG с тем же
+неизменённым system image и инициализировал настоящий host SwiftShader OpenGL
+ES 3.0 и Android goldfish/qemud backend; процесс работал более минуты, но
+полная загрузка/ADB не были подтверждены на ограниченном локальном стенде.
+Это неподдерживаемая конфигурация, а не подмена CPU-флагов, сервисов или
+результатов. Добавлен отдельный GitHub workflow для повторения с 4 ГБ памяти,
+фактической проверкой `sys.boot_completed`, затем отдельными standalone и
+одноразовым Android probe; до готовности ADB/core он обязан завершиться ошибкой.
+Этот workflow не является сборкой выпускного APK.

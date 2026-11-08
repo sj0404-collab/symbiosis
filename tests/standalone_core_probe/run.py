@@ -23,6 +23,8 @@ def adb(*args, timeout=120, check=True):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('work', type=Path, help='disposable, previously built probe directory')
+    parser.add_argument('--preload-tls', action='store_true',
+                        help='preload the real bundled TLS files before real core initialization')
     args = parser.parse_args()
     work = args.work.resolve()
     files = {
@@ -99,6 +101,8 @@ def main():
             adb('shell', 'rm', '-f', f'{data}/java-stages.txt', f'{data}/jni-stages.txt', check=False)
             command = (f'{app_prefix} {shlex.quote(REMOTE + "/libstandalonejni.so")} '
                        f'{shlex.quote(REMOTE + "/libcore_" + core + ".so")} {shlex.quote(data)}')
+            if args.preload_tls:
+                command += ' --preload-tls'
             print(f'=== standalone JNI {core}, real javaInitialize, no APK ===', flush=True)
             try:
                 result = adb('shell', command, timeout=180, check=False)
@@ -119,6 +123,8 @@ def main():
                 else:
                     text += f'--- {name}: unavailable ---\n'
             passed = exit_code == 0 and any('JNI_RESULT javaInitialize=true' in m for m in markers)
+            if args.preload_tls:
+                passed = passed and any('TLS_CONTEXT_SMOKE=ok' in m for m in markers)
             (work / f'standalone-jni-{core}.txt').write_text(text, encoding='utf-8')
             print(text, end='', flush=True)
             try:
