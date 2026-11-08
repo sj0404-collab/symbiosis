@@ -5,8 +5,12 @@ set -Eeuo pipefail
 W=${1:?work directory required}
 I="$W/image/arm64-v8a"
 mkdir -p "$W/logs"
-command -v qemu-system-aarch64 >/dev/null
-command -v adb >/dev/null
+for tool in qemu-system-aarch64 adb sgdisk losetup mkfs.ext4; do
+  if ! command -v "$tool" >/dev/null; then
+    echo "MISSING_REQUIRED_TOOL $tool" | tee -a "$W/logs/environment.txt"
+    exit 1
+  fi
+done
 # Fresh, test-only blank disk, with a genuine GPT userdata partition. The
 # official image's encryptionkey.img supplies the separate metadata partition.
 truncate -s 3G "$W/userdata.img"

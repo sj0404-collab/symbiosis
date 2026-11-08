@@ -9,6 +9,7 @@ It does not run or ship mock code.
 """
 from pathlib import Path
 import re
+import struct
 import sys
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -49,10 +50,40 @@ def check_sources(cpp: str, kotlin: str) -> list[str]:
     return problems
 
 
+def check_tls_alignment(directory: Path) -> list[str]:
+    """Fail closed on malformed or non-16K-compatible bundled ARM64 TLS ELF.
+
+    ELF segment alignment alone is not an APK zip-alignment or device test.
+    """
+    problems = []
+    for name in ('libcrypto.so', 'libssl.so'):
+        try:
+            data = (directory / name).read_bytes()
+            if len(data) < 64 or data[:6] != b'\x7fELF\x02\x01':
+                raise ValueError('не ELF64 little-endian')
+            machine, = struct.unpack_from('<H', data, 18)
+            phoff, = struct.unpack_from('<Q', data, 32)
+            entsize, count = struct.unpack_from('<HH', data, 54)
+            if machine != 183 or entsize < 56 or not count or phoff + entsize * count > len(data):
+                raise ValueError('неверный ARM64 ELF или таблица сегментов')
+            loads = []
+            for index in range(count):
+                kind, _, offset, vaddr, _, _, _, align = struct.unpack_from('<IIQQQQQQ', data, phoff + index * entsize)
+                if kind == 1:
+                    loads.append((offset, vaddr, align))
+            if not loads:
+                raise ValueError('нет PT_LOAD')
+            if any(align < 16384 or align & (align - 1) or (vaddr - offset) % 16384 for offset, vaddr, align in loads):
+                raise ValueError('PT_LOAD не совместим с выравниванием 16 КБ')
+        except (OSError, ValueError, struct.error) as error:
+            problems.append(f'{name}: {error}')
+    return problems
+
+
 def main() -> int:
     cpp = (ROOT / 'patch/symbiosis/kenji_bridge.cpp').read_text(encoding='utf-8')
     kotlin = (ROOT / 'patch/android/kenjinx/KenjinxNative.kt').read_text(encoding='utf-8')
-    problems = check_sources(cpp, kotlin) + list(UNRESOLVED_INTEGRATION)
+    problems = check_sources(cpp, kotlin) + check_tls_alignment(ROOT / 'patch/libs/arm64-v8a') + list(UNRESOLVED_INTEGRATION)
     if problems:
         print('Выпуск APK остановлен: интеграция второго ядра не завершена.', file=sys.stderr)
         for problem in problems:

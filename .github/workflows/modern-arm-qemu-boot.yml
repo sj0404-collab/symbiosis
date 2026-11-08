@@ -15,7 +15,7 @@ jobs:
       - name: Install QEMU and filesystem tools
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y -qq --no-install-recommends qemu-system-arm gdisk e2fsprogs unzip
+          sudo apt-get install -y -qq --no-install-recommends qemu-system-arm gdisk e2fsprogs unzip adb
       - name: Download official Android 15 ARM64 image and check pinned digest
         run: |
           set -euxo pipefail
@@ -24,7 +24,7 @@ jobs:
             https://dl.google.com/android/repository/sys-img/google_apis/arm64-v8a-35_r09.zip \
             -o /tmp/android35/image.zip
           echo '16f5bceca236b2737008977c4aaf826e46a8de7d  /tmp/android35/image.zip' | sha1sum -c -
-          sha256sum /tmp/android35/image.zip | tee /tmp/android35/logs/image-sha256.txt
+          echo 'd2e7c6076e5df54d3677605a324daf9edf813b2808c216bdb1687f6b2b6aed99  /tmp/android35/image.zip' | sha256sum -c - | tee /tmp/android35/logs/image-sha256.txt
           unzip -q /tmp/android35/image.zip 'arm64-v8a/kernel-ranchu' 'arm64-v8a/ramdisk.img' \
             'arm64-v8a/system.img' 'arm64-v8a/vendor.img' 'arm64-v8a/encryptionkey.img' -d /tmp/android35/image
           rm /tmp/android35/image.zip
