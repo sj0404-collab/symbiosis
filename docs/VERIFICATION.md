@@ -5141,3 +5141,28 @@ services; файлы и mount удаляются после теста. Нали
 файловые метки сохраняют стадии, если stdout Java перенаправлен. Изменения не
 входят в приложение. Host-тесты упаковки ioctl 2/2 с синтетическими данными,
 сценарии классификации процесса 5/5; это не Android runtime.
+
+### 91. Android standalone действительно вызвал ядра; Binder уже существовал
+
+[Run 42497000490](https://github.com/sj0404-collab/symbiosis/actions/runs/42497000490),
+код `d5240ae`: host suite success. На software Android ARM/API27 без установки
+APK оба core `dlopen=OK`, 11/11 символов; независимый Java smoke `JAVA_SMOKE_OK`.
+В отдельных процессах JNI действительно дошёл до `BEFORE_JAVA_INITIALIZE` обоих
+реальных ядер. Каждое завершилось SIGABRT/134 с сообщением NativeAOT о
+неподдерживаемых инструкциях, `JNI_RESULT` нет; HWCAP `0xff`, отсутствуют
+ATOMICS и ASIMDRDM. Это результат QEMU, не телефона и не запуск игры.
+[Журнал](https://github.com/sj0404-collab/symbiosis/actions/runs/42497000490/artifacts/13624815506).
+В Activity той же машины mock и synthetic UI прошли; графическая reference JNI
+не загружается на API27. Исход обоих реальных процессов — `process-death`,
+не успешный запуск.
+
+В native ARM Linux+Bionic том же run оба core снова загрузились 11/11, ARM
+HWCAP удовлетворяет проверенным требованиям. Выяснилось, что при монтировании
+binderfs ioctl создания устройства `binder` вернул `EEXIST`; предыдущий код
+затем не использовал существующий узел, вследствие чего ART снова сообщил об
+отсутствии Binder до Java/JNI. Исправление разрешает повторное использование
+только уже существующего **символьного** узла с ненулевым major в только что
+смонтированном binderfs; обычный файл и symlink отклоняются. Это не подмена
+Binder и не подтверждение наличия Android service manager. Host regression 4/4;
+повторная реальная проверка ещё нужна.
+[Лог ARM Linux](https://github.com/sj0404-collab/symbiosis/actions/runs/42497000490/artifacts/13624435368).
