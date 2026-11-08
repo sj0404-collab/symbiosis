@@ -49,7 +49,7 @@ jobs:
             -gpu swiftshader_indirect -memory 4096 -cores 2 \
             -qemu -machine virt -cpu max > "$PROBE_WORK/emulator.log" 2>&1 &
           emu_pid=$!
-          trap 'kill "$emu_pid" 2>/dev/null || true; adb kill-server || true' EXIT
+          trap 'kill "$emu_pid" 2>/dev/null || true; timeout 10s adb kill-server || true' EXIT
           deadline=$((SECONDS + 900))
           booted=0
           while (( SECONDS < deadline )); do
@@ -63,9 +63,9 @@ jobs:
           # Standalone runs first, before APK installation; keep its failure
           # distinct from the separate diagnostic Activity suite.
           set +e
-          python3 tests/standalone_core_probe/run.py "$PROBE_WORK"
+          timeout 900s python3 tests/standalone_core_probe/run.py "$PROBE_WORK"
           standalone_rc=$?
-          bash tests/android_core_probe/run.sh
+          timeout 600s bash tests/android_core_probe/run.sh
           activity_rc=$?
           set -e
           echo "standalone_rc=$standalone_rc activity_rc=$activity_rc"

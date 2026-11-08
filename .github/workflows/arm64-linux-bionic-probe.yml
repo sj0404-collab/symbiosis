@@ -1,0 +1,287 @@
+name: Experimental ARM64 Linux + Android Bionic loader (not a release)
+
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  compile:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v4
+      - name: Compile diagnostic loader and real-ART JNI entry (no APK)
+        env:
+          KOTLINC_HOME: /tmp/kotlinc
+          STANDALONE_WORK: /tmp/bionic-assets
+        run: |
+          set -euo pipefail
+          sdkmanager --install 'ndk;28.2.13676358' 'platforms;android-35' 'build-tools;35.0.0'
+          curl -fsSL --retry 3 -o /tmp/kotlin.zip https://github.com/JetBrains/kotlin/releases/download/v2.0.21/kotlin-compiler-2.0.21.zip
+          unzip -q /tmp/kotlin.zip -d /tmp
+          bash tests/standalone_core_probe/build_assets.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: arm64-bionic-standalone-loader
+          path: |
+            /tmp/bionic-assets/standalone-core-probe
+            /tmp/bionic-assets/property-init
+            /tmp/bionic-assets/libstandalonejni.so
+            /tmp/bionic-assets/libkenjinxjni.so
+            /tmp/bionic-assets/standalone.jar
+          retention-days: 1
+
+  native-arm64-linux:
+    needs: compile
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: arm64-bionic-standalone-loader
+          path: /tmp/arm-native-probe
+      - name: Obtain the official ARM64 Android 8.1 system image
+        run: |
+          set -euo pipefail
+          test "$(uname -m)" = aarch64
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends android-sdk-libsparse-utils strace
+          # sdkmanager cannot satisfy its emulator dependency on an ARM host.
+          # Use the exact official system-image archive instead; SHA-1 comes
+          # from Google's sys-img2-1.xml package metadata for revision 3.
+          W=/tmp/arm-native-probe
+          curl -fsSL --retry 3 -o "$W/system-image.zip" \
+            https://dl.google.com/android/repository/sys-img/google_apis/arm64-v8a-27_r03.zip
+          echo "54dd140e1dd2db0fb7879beecf1068bf476ad171  $W/system-image.zip" | sha1sum -c -
+          python3 - "$W/system-image.zip" "$W/system.img" "$W/bootclasspath.txt" "$W/image-build.prop" <<'PY'
+          import gzip, re, shutil, sys, zipfile
+          with zipfile.ZipFile(sys.argv[1]) as archive:
+              def unique(name):
+                  paths = [p for p in archive.namelist() if p == name or p.endswith('/' + name)]
+                  if len(paths) != 1: raise SystemExit('expected exactly one ' + name)
+                  return paths[0]
+              with archive.open(unique('system.img')) as source, open(sys.argv[2], 'wb') as dest:
+                  shutil.copyfileobj(source, dest, 1024 * 1024)
+              ramdisk = gzip.decompress(archive.read(unique('ramdisk.img')))
+              values = re.findall(rb'(?m)^[ \t]*export BOOTCLASSPATH ([^\r\n]+)$', ramdisk)
+              if len(values) != 1: raise SystemExit('expected one BOOTCLASSPATH in init ramdisk')
+              paths = values[0].decode('ascii').split(':')
+              if not all(re.fullmatch(r'/system/framework/[A-Za-z0-9_.-]+\.jar', p) for p in paths):
+                  raise SystemExit('unexpected BOOTCLASSPATH value')
+              with open(sys.argv[3], 'w') as dest: dest.write(':'.join(paths))
+              with open(sys.argv[4], 'wb') as dest: dest.write(archive.read(unique('build.prop')))
+          PY
+          rm "$W/system-image.zip"
+      - name: Check pinned cores and load directly on ARM64 Linux with Android Bionic
+        run: |
+          set -euo pipefail
+          W=/tmp/arm-native-probe
+          mkdir -p "$W/logs"
+          curl -fsSL --retry 3 -o "$W/sym.so" https://github.com/sj0404-collab/symbiosis/releases/download/engine-kenji/libkenji.so
+          curl -fsSL --retry 3 -o "$W/symbek.apk" https://github.com/sj0404-collab/SymbEK/releases/download/v1.0.121/Kenji-Space-1.0.121.apk
+          echo "969431b3962408dd02ce38bd2cd4b2a954d11e5212ddef3f65c80a0b419918b8  $W/sym.so" | sha256sum -c -
+          echo "f9eb3ecfaf5700df1b5d575984ab1588848c0eb6a70b2acb19b9e6243705f95e  $W/symbek.apk" | sha256sum -c -
+          unzip -p "$W/symbek.apk" lib/arm64-v8a/libkenjinx.so > "$W/space.so"
+          echo "d781048671e4cef1cde2ec15db8fe29b949df9949d83569ceaf776ad12901590  $W/space.so" | sha256sum -c -
+          rm "$W/symbek.apk"
+          cp patch/libs/arm64-v8a/libcrypto.so patch/libs/arm64-v8a/libssl.so "$W/"
+          chmod +x "$W/standalone-core-probe" "$W/property-init"
+          IMAGE="$W/system.img"
+          file "$IMAGE"
+          # Sparse images are not mountable until converted; raw ext4 needs no conversion.
+          if file "$IMAGE" | grep -qi 'sparse'; then
+            simg2img "$IMAGE" "$W/system-raw.img"
+            IMAGE="$W/system-raw.img"
+          fi
+          test ! -e /system
+          sudo mkdir -p /system "$W/system-mount"
+          socket_owned=0
+          socket_dir_created=0
+          property_area_owned=0
+          binder_symlink_owned=0
+          binderfs_mounted=0
+          cleanup() {
+            if [ "$binder_symlink_owned" = 1 ]; then sudo rm -f /dev/binder; fi
+            if [ "$binderfs_mounted" = 1 ]; then sudo umount "$W/binderfs" 2>/dev/null || true; fi
+            if [ "$property_area_owned" = 1 ]; then sudo rm -rf /dev/__properties__; fi
+            if [ "$socket_owned" = 1 ]; then
+              if [ -f "$W/logger.pid" ]; then sudo kill "$(cat "$W/logger.pid")" 2>/dev/null || true; fi
+              sudo rm -f /dev/socket/logdw
+            fi
+            if [ "$socket_dir_created" = 1 ]; then sudo rmdir /dev/socket 2>/dev/null || true; fi
+            sudo umount /system 2>/dev/null || true
+            sudo umount "$W/system-mount" 2>/dev/null || true
+          }
+          trap cleanup EXIT
+          # The pinned image is a GPT disk, not a bare ext4 filesystem.
+          # Validate the GPT CRCs and use the unique system partition offset.
+          OFFSET=$(python3 tests/standalone_core_probe/gpt_offset.py "$IMAGE")
+          echo "validated system partition offset=$OFFSET"
+          sudo mount -o "loop,ro,offset=$OFFSET" "$IMAGE" "$W/system-mount"
+          if test -x "$W/system-mount/bin/linker64"; then ROOT="$W/system-mount";
+          elif test -x "$W/system-mount/system/bin/linker64"; then ROOT="$W/system-mount/system";
+          else echo 'BIONIC_SETUP_FAIL linker64 missing'; exit 1; fi
+          sudo mount --bind "$ROOT" /system
+          printf 'Host is ARM64 Linux with a mounted Android system image, not an Android device.\n' | tee "$W/logs/environment.txt"
+          uname -a | tee -a "$W/logs/environment.txt"
+          ls -l /system/bin/linker64 /system/lib64/libc.so | tee -a "$W/logs/environment.txt"
+          set +e
+          for core in sym space; do
+            echo "=== $core, direct Linux/Bionic dlopen, no JNI ===" | tee "$W/logs/$core.txt"
+            timeout 90s env LD_LIBRARY_PATH="$W:/system/lib64" "$W/standalone-core-probe" "$W/$core.so" 2>&1 | tee -a "$W/logs/$core.txt"
+            rc=${PIPESTATUS[0]}
+            echo "EXIT_CODE=$rc" | tee -a "$W/logs/$core.txt"
+            if [ "$rc" != 0 ]; then failed=1; fi
+          done
+          set -e
+          # Capture real liblog messages into a test-only receiver, without
+          # emulating a property service or modifying any JNI/core response.
+          if [ ! -d /dev/socket ]; then sudo mkdir -m 0755 /dev/socket; socket_dir_created=1; fi
+          if [ -e /dev/socket/logdw ] || [ -L /dev/socket/logdw ]; then
+            echo 'LOG_SETUP_FAIL existing logdw; refusing to replace it'; exit 1
+          fi
+          socket_owned=1
+          sudo python3 -u tests/standalone_core_probe/capture_android_log.py /dev/socket/logdw "$W/logger.pid" > "$W/logs/android-log.txt" 2>&1 &
+          logger_launcher=$!
+          for i in {1..50}; do
+            [ -S /dev/socket/logdw ] && break
+            kill -0 "$logger_launcher" 2>/dev/null || break
+            sleep 0.1
+          done
+          if [ ! -S /dev/socket/logdw ]; then echo 'LOG_SETUP_FAIL logdw not ready'; exit 1; fi
+          # Real Bionic shared area, seeded strictly from the official system
+          # image's build.prop. This is not the phone's property service.
+          if [ -e /dev/__properties__ ] || [ -L /dev/__properties__ ]; then
+            echo 'PROPERTY_SETUP_FAIL existing area; refusing to replace it'; exit 1
+          fi
+          property_area_owned=1
+          set +e
+          sudo env LD_LIBRARY_PATH="$W:/system/lib64" "$W/property-init" "$W/image-build.prop" 2>&1 | tee "$W/logs/properties.txt"
+          prop_rc=${PIPESTATUS[0]}
+          set -e
+          echo "PROPERTY_INIT_EXIT_CODE=$prop_rc" | tee -a "$W/logs/properties.txt"
+          if [ "$prop_rc" != 0 ]; then failed=1; fi
+          # Verify in an independent Bionic process, not just the writer.
+          set +e
+          env LD_LIBRARY_PATH="$W:/system/lib64" /system/bin/getprop ro.product.cpu.abilist64 | tee -a "$W/logs/properties.txt"
+          read_rc=${PIPESTATUS[0]}
+          set -e
+          if [ "$read_rc" != 0 ] || ! grep -qx 'arm64-v8a' "$W/logs/properties.txt"; then
+            echo 'PROPERTY_READBACK_FAIL' | tee -a "$W/logs/properties.txt"
+            failed=1
+          fi
+          # Compare dependency resolution in isolated processes. A pass here
+          # does not imply that ART or any core has initialized.
+          for order in private-first system-first; do
+            if [ "$order" = private-first ]; then paths="$W:/system/lib64";
+            else paths="/system/lib64:$W"; fi
+            set +e
+            timeout 30s env LD_LIBRARY_PATH="$paths" "$W/standalone-core-probe" \
+              --dlopen-only /system/lib64/libjavacore.so > "$W/logs/dependency-$order.txt" 2>&1
+            dependency_rc=$?
+            set -e
+            cat "$W/logs/dependency-$order.txt"
+            echo "DEPENDENCY_ORDER=$order EXIT_CODE=$dependency_rc" | tee -a "$W/logs/dependency-$order.txt"
+          done
+          # Use a real kernel binder driver if the disposable ARM runner has
+          # one. No fake device or userspace Binder responses are substituted.
+          # Android service manager is still absent: availability of a device
+          # alone does not make this host Android or guarantee ART can start.
+          echo '=== real Binder availability ===' | tee "$W/logs/binder.txt"
+          if [ ! -e /dev/binder ] && [ ! -L /dev/binder ]; then
+            sudo modprobe binder_linux devices=binder 2>&1 | tee -a "$W/logs/binder.txt" || true
+            # Only change mode of a device which did not exist before modprobe.
+            if [ -c /dev/binder ]; then sudo chmod 666 /dev/binder; fi
+            if [ ! -e /dev/binder ] && grep -qw binder /proc/filesystems; then
+              mkdir -p "$W/binderfs"
+              if sudo mount -t binder binder "$W/binderfs"; then
+                binderfs_mounted=1
+                if sudo python3 tests/standalone_core_probe/binderfs_create.py "$W/binderfs" 2>&1 | tee -a "$W/logs/binder.txt"; then
+                  sudo chmod 666 "$W/binderfs/binder"
+                  if [ ! -e /dev/binder ] && [ ! -L /dev/binder ]; then
+                    sudo ln -s "$W/binderfs/binder" /dev/binder
+                    binder_symlink_owned=1
+                  fi
+                fi
+              else
+                echo 'BINDERFS_MOUNT_UNAVAILABLE' | tee -a "$W/logs/binder.txt"
+              fi
+            fi
+          fi
+          if [ -c /dev/binder ]; then
+            ls -lL /dev/binder | tee -a "$W/logs/binder.txt"
+          else
+            echo 'BINDER_UNAVAILABLE: real kernel driver not accessible' | tee -a "$W/logs/binder.txt"
+          fi
+          # Try the real Android ART app_process, not a fabricated JNIEnv. This
+          # is exploratory: Linux lacks Android daemons/devices and ART may not
+          # start. Report each stage without treating a loader pass as JNI pass.
+          BCP=$(cat "$W/bootclasspath.txt")
+          IFS=: read -ra BOOT_JARS <<< "$BCP"
+          for jar in "${BOOT_JARS[@]}"; do
+            if [ ! -f "$jar" ]; then echo "MISSING_BOOT_JAR $jar" | tee -a "$W/logs/environment.txt"; failed=1; fi
+          done
+          mkdir -p "$W/android-data/dalvik-cache/arm64"
+          rm -f "$W/art-smoke-marker.txt"
+          set +e
+          timeout 120s env ANDROID_ROOT=/system ANDROID_DATA="$W/android-data" BOOTCLASSPATH="$BCP" \
+            CLASSPATH="$W/standalone.jar" LD_LIBRARY_PATH="/system/lib64:$W" DOTNET_GCRegionRange=400000000 \
+            /system/bin/app_process /system/bin dev.symbiosis.standalone.Main --smoke "$W/art-smoke-marker.txt" \
+            > "$W/logs/art-smoke.txt" 2>&1
+          smoke_rc=$?
+          set -e
+          if [ -f "$W/art-smoke-marker.txt" ]; then cat "$W/art-smoke-marker.txt" >> "$W/logs/art-smoke.txt"; fi
+          echo "ART_SMOKE_EXIT_CODE=$smoke_rc" | tee -a "$W/logs/art-smoke.txt"
+          if [ "$smoke_rc" != 0 ] || ! grep -q '^JAVA_SMOKE_OK$' "$W/logs/art-smoke.txt"; then failed=1; fi
+          for core in sym space; do
+            data="$W/data-$core"
+            mkdir -p "$data"/{Logs,Games,Profiles,Keys}
+            rm -f "$data/java-stages.txt" "$data/jni-stages.txt"
+            echo "=== $core, real Android ART/JNI attempt on ARM Linux; no APK, no game ===" | tee "$W/logs/jni-$core.txt"
+            set +e
+            timeout 120s env ANDROID_ROOT=/system ANDROID_DATA="$W/android-data" BOOTCLASSPATH="$BCP" \
+              CLASSPATH="$W/standalone.jar" LD_LIBRARY_PATH="/system/lib64:$W" DOTNET_GCRegionRange=400000000 \
+              /system/bin/app_process /system/bin dev.symbiosis.standalone.Main \
+              "$W/libstandalonejni.so" "$W/$core.so" "$data" 2>&1 | tee -a "$W/logs/jni-$core.txt"
+            rc=${PIPESTATUS[0]}
+            set -e
+            for marker in java-stages.txt jni-stages.txt; do
+              if [ -f "$data/$marker" ]; then
+                echo "=== $marker ===" | tee -a "$W/logs/jni-$core.txt"
+                cat "$data/$marker" | tee -a "$W/logs/jni-$core.txt"
+              fi
+            done
+            echo "EXIT_CODE=$rc" | tee -a "$W/logs/jni-$core.txt"
+            if [ "$rc" != 0 ] || ! grep -q 'JNI_RESULT javaInitialize=true' "$W/logs/jni-$core.txt"; then
+              failed=1
+              # A diagnostic rerun under strace only on failure, to identify
+              # missing real Android services/files; never suppress the failure.
+              set +e
+              timeout 120s strace -f -s 200 -o "$W/logs/strace-$core.txt" \
+                env ANDROID_ROOT=/system ANDROID_DATA="$W/android-data" BOOTCLASSPATH="$BCP" \
+                CLASSPATH="$W/standalone.jar" LD_LIBRARY_PATH="/system/lib64:$W" DOTNET_GCRegionRange=400000000 \
+                /system/bin/app_process /system/bin dev.symbiosis.standalone.Main \
+                "$W/libstandalonejni.so" "$W/$core.so" "$data" \
+                > "$W/logs/strace-output-$core.txt" 2>&1
+              trace_rc=$?
+              set -e
+              echo "TRACE_EXIT_CODE=$trace_rc" | tee -a "$W/logs/jni-$core.txt"
+            fi
+          done
+          exit "${failed:-0}"
+      - name: Save logs (no APK, core, or system image)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: arm64-linux-bionic-probe-logs
+          path: /tmp/arm-native-probe/logs/*.txt
+          if-no-files-found: warn
+          retention-days: 3

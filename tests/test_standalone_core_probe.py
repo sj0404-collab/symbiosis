@@ -58,6 +58,16 @@ class StandaloneProbeTest(unittest.TestCase):
         self.assertEqual(run.returncode, 3)
         self.assertIn('DLOPEN_FAIL', run.stderr)
 
+    def test_dependency_mode_no_core_calls_and_real_dlerror(self):
+        run = self.invoke('--dlopen-only', self.incomplete)
+        self.assertEqual(run.returncode, 0)
+        self.assertIn('DEPENDENCY_ONLY no JNI_OnLoad', run.stdout)
+        self.assertNotIn('SYMBOL ', run.stdout)
+        run = self.invoke('--dlopen-only', self.folder / 'missing.so')
+        self.assertEqual(run.returncode, 3)
+        self.assertIn('DLOPEN_FAIL', run.stderr)
+        self.assertIn('missing.so', run.stderr)
+
 
 class OrchestrationTest(unittest.TestCase):
     def test_two_separate_processes_and_failure_not_hidden(self):
@@ -101,7 +111,7 @@ class OrchestrationTest(unittest.TestCase):
                         ('LD_LIBRARY_PATH=' in a[1] or 'app_process' in a[1])]
             self.assertEqual(len(commands), 5)
             self.assertEqual(sum('app_process' in c for c in commands), 3)
-            self.assertFalse(any('LD_LIBRARY_PATH=' in c for c in commands if 'app_process' in c))
+            self.assertTrue(all('LD_LIBRARY_PATH=/system/lib64:' in c for c in commands))
             self.assertTrue(any('libcore_sym.so' in c for c in commands))
             self.assertTrue(any('libcore_space.so' in c for c in commands))
             self.assertFalse(any('install' in str(c) for c in calls))
@@ -138,6 +148,26 @@ class OrchestrationTest(unittest.TestCase):
             app_cmds = [x[1] for x in calls if x[0] == 'shell' and len(x) == 2 and 'app_process' in x[1]]
             self.assertEqual(len(app_cmds), 1)
             self.assertIn('--smoke', app_cmds[0])
+
+    def test_adb_setup_failure_retains_real_error(self):
+        spec = importlib.util.spec_from_file_location('standalone_run', ROOT / 'tests/standalone_core_probe/run.py')
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        with tempfile.TemporaryDirectory() as tmp:
+            work = Path(tmp)
+            for name in ('standalone-core-probe', 'core_sym.so', 'core_space.so', 'libstandalonejni.so', 'standalone.jar', 'apk/lib/arm64-v8a/libkenjinxjni.so', 'apk/lib/arm64-v8a/libcrypto.so', 'apk/lib/arm64-v8a/libssl.so'):
+                path = work / name
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.touch()
+
+            def fake_adb(*args, **kwargs):
+                if args[0] == 'push':
+                    raise subprocess.CalledProcessError(1, args, output='adb: device offline\n')
+                return subprocess.CompletedProcess(args, 0, '')
+
+            with mock.patch.object(module, 'adb', side_effect=fake_adb), mock.patch.object(sys, 'argv', ['run.py', tmp]):
+                self.assertEqual(module.main(), 2)
+            self.assertIn('adb: device offline', (work / 'standalone-setup.txt').read_text())
 
 
 if __name__ == '__main__':

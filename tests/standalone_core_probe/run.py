@@ -46,7 +46,7 @@ def main():
         adb('shell', 'chmod', '755', f'{REMOTE}/probe')
         outcomes = []
         for core in ('sym', 'space'):
-            command = (f'LD_LIBRARY_PATH={shlex.quote(REMOTE)} '
+            command = (f'LD_LIBRARY_PATH={shlex.quote("/system/lib64:" + REMOTE)} '
                        f'{shlex.quote(REMOTE + "/probe")} '
                        f'{shlex.quote(REMOTE + "/libcore_" + core + ".so")}')
             print(f'=== standalone {core}, no APK, no initialization ===', flush=True)
@@ -65,11 +65,10 @@ def main():
             print(text, end='', flush=True)
             outcomes.append(passed)
 
-        # app_process needs Android's own system library search path. In
-        # particular, do not let our bundled TLS libraries shadow libjavacore's
-        # dependencies while ART starts. Probe the Java runtime independently.
+        # System libraries must precede bundled TLS, otherwise libjavacore can
+        # pick an incompatible libcrypto. Probe Java runtime independently.
         app_prefix = (f'CLASSPATH={shlex.quote(REMOTE + "/standalone.jar")} '
-                      f'DOTNET_GCRegionRange=400000000 '
+                      f'LD_LIBRARY_PATH={shlex.quote("/system/lib64:" + REMOTE)} DOTNET_GCRegionRange=400000000 '
                       f'/system/bin/app_process /system/bin dev.symbiosis.standalone.Main')
         smoke_file = f'{REMOTE}/smoke.txt'
         adb('shell', 'rm', '-f', smoke_file, check=False)
@@ -130,7 +129,12 @@ def main():
             outcomes.append(passed)
         return 0 if all(outcomes) else 1
     except (OSError, subprocess.SubprocessError) as exc:
-        print(f'STANDALONE_SETUP_FAIL {exc}', file=sys.stderr)
+        detail = getattr(exc, 'stdout', '') or ''
+        if isinstance(detail, bytes):
+            detail = detail.decode('utf-8', errors='replace')
+        message = f'STANDALONE_SETUP_FAIL {exc}\n{detail}'
+        (work / 'standalone-setup.txt').write_text(message, encoding='utf-8')
+        print(message, file=sys.stderr)
         return 2
     finally:
         try:
