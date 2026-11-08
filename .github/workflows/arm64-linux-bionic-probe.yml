@@ -27,6 +27,10 @@ jobs:
           curl -fsSL --retry 3 -o /tmp/kotlin.zip https://github.com/JetBrains/kotlin/releases/download/v2.0.21/kotlin-compiler-2.0.21.zip
           unzip -q /tmp/kotlin.zip -d /tmp
           bash tests/standalone_core_probe/build_assets.sh
+      - name: Build a 16K OpenSSL 3.5 LTS diagnostic candidate (not for APK)
+        env:
+          STANDALONE_WORK: /tmp/bionic-assets
+        run: bash tests/standalone_core_probe/build_tls_candidate.sh
       - uses: actions/upload-artifact@v4
         with:
           name: arm64-bionic-standalone-loader
@@ -36,6 +40,8 @@ jobs:
             /tmp/bionic-assets/libstandalonejni.so
             /tmp/bionic-assets/libkenjinxjni.so
             /tmp/bionic-assets/standalone.jar
+            /tmp/bionic-assets/tls-candidate/libssl.so
+            /tmp/bionic-assets/tls-candidate/libcrypto.so
           retention-days: 1
 
   native-arm64-linux:
@@ -242,19 +248,24 @@ jobs:
           echo "ART_SMOKE_EXIT_CODE=$smoke_rc" | tee -a "$W/logs/art-smoke.txt"
           if [ "$smoke_rc" != 0 ] || ! grep -q '^JAVA_SMOKE_OK$' "$W/logs/art-smoke.txt"; then failed=1; fi
           for core in sym space; do
-            for mode in baseline preload; do
+            for mode in baseline preload candidate; do
               tag="$core-$mode"
               data="$W/data-$tag"
+              libdir="$W"
+              if [ "$mode" = candidate ]; then
+                libdir="$W/tls-candidate"
+                cp "$W/$core.so" "$libdir/$core.so"
+              fi
               mkdir -p "$data"/{Logs,Games,Profiles,Keys}
               rm -f "$data/java-stages.txt" "$data/jni-stages.txt"
               extra=()
-              if [ "$mode" = preload ]; then extra=(--preload-tls); fi
+              if [ "$mode" != baseline ]; then extra=(--preload-tls); fi
               echo "=== $tag, real Android ART/JNI on ARM Linux; no APK, no game ===" | tee "$W/logs/jni-$tag.txt"
               set +e
               timeout 120s env ANDROID_ROOT=/system ANDROID_DATA="$W/android-data" BOOTCLASSPATH="$BCP" \
-                CLASSPATH="$W/standalone.jar" LD_LIBRARY_PATH="/system/lib64:$W" DOTNET_GCRegionRange=400000000 \
+                CLASSPATH="$W/standalone.jar" LD_LIBRARY_PATH="/system/lib64:$libdir:$W" DOTNET_GCRegionRange=400000000 \
                 /system/bin/app_process /system/bin dev.symbiosis.standalone.Main \
-                "$W/libstandalonejni.so" "$W/$core.so" "$data" "${extra[@]}" 2>&1 | tee -a "$W/logs/jni-$tag.txt"
+                "$W/libstandalonejni.so" "$libdir/$core.so" "$data" "${extra[@]}" 2>&1 | tee -a "$W/logs/jni-$tag.txt"
               rc=${PIPESTATUS[0]}
               set -e
               for marker in java-stages.txt jni-stages.txt; do
@@ -266,26 +277,26 @@ jobs:
               echo "EXIT_CODE=$rc" | tee -a "$W/logs/jni-$tag.txt"
               if [ "$rc" != 0 ] || ! grep -q 'JNI_RESULT javaInitialize=true' "$W/logs/jni-$tag.txt"; then
                 echo "JNI_INITIALIZATION_FAILED mode=$mode" | tee -a "$W/logs/jni-$tag.txt"
-                if [ "$mode" = preload ]; then failed=1; fi
+                if [ "$mode" != baseline ]; then failed=1; fi
                 # Isolated diagnostic rerun, never used to turn failure into success.
                 set +e
                 timeout 120s strace -f -s 200 -o "$W/logs/strace-$tag.txt" \
                   env ANDROID_ROOT=/system ANDROID_DATA="$W/android-data" BOOTCLASSPATH="$BCP" \
-                  CLASSPATH="$W/standalone.jar" LD_LIBRARY_PATH="/system/lib64:$W" DOTNET_GCRegionRange=400000000 \
+                  CLASSPATH="$W/standalone.jar" LD_LIBRARY_PATH="/system/lib64:$libdir:$W" DOTNET_GCRegionRange=400000000 \
                   /system/bin/app_process /system/bin dev.symbiosis.standalone.Main \
-                  "$W/libstandalonejni.so" "$W/$core.so" "$data" "${extra[@]}" \
+                  "$W/libstandalonejni.so" "$libdir/$core.so" "$data" "${extra[@]}" \
                   > "$W/logs/strace-output-$tag.txt" 2>&1
                 trace_rc=$?
                 set -e
                 echo "TRACE_EXIT_CODE=$trace_rc" | tee -a "$W/logs/jni-$tag.txt"
               fi
-              if [ "$mode" = preload ]; then
+              if [ "$mode" != baseline ]; then
                 # A successful init alone must not hide that a private TLS
                 # library failed to preload or resolved from another image.
                 grep -Fq "TLS_PRELOAD libcrypto.so ok" "$W/logs/jni-$tag.txt" || failed=1
                 grep -Fq "TLS_PRELOAD libssl.so ok" "$W/logs/jni-$tag.txt" || failed=1
-                grep -Fq "TLS_SYMBOL OpenSSL_version_num ok origin=$W/libcrypto.so" "$W/logs/jni-$tag.txt" || failed=1
-                grep -Fq "TLS_SYMBOL SSL_CTX_new ok origin=$W/libssl.so" "$W/logs/jni-$tag.txt" || failed=1
+                grep -Fq "TLS_SYMBOL OpenSSL_version_num ok origin=$libdir/libcrypto.so" "$W/logs/jni-$tag.txt" || failed=1
+                grep -Fq "TLS_SYMBOL SSL_CTX_new ok origin=$libdir/libssl.so" "$W/logs/jni-$tag.txt" || failed=1
               fi
             done
           done
