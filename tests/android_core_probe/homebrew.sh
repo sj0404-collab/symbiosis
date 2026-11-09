@@ -7,15 +7,15 @@ sample=${HOMEBREW_SAMPLE:-sdl}
 case "$sample" in
  sdl) url='https://github.com/vgmoose/sdl-hello-world/releases/download/1.1/sdl-hello.nro'; sha=2c591bf8030f38567d8a1076b97203a98003f4faf2fbd9fbf7b1ced115f120b9 ;;
  snake) url='https://github.com/CompSciOrBust/Cpp-Snake-NX/releases/download/1.1.0/Cpp-Snake-NX.nro'; sha=982ff14c538bb94eb6d18411efe71e885006cf3e944da270d18cd2fa88442f16 ;;
- matrix|sdl-surface|swkbd|swkbd-response|swkbd-ui|swkbd-stop) url=; sha= ;;
+ matrix|sdl-surface|swkbd|swkbd-response|swkbd-ui|swkbd-stop|swkbd-stop-keep) url=; sha= ;;
  *) echo 'Unknown pinned NRO sample' >&2; exit 1 ;;
 esac
-if [ "$sample" = matrix ] || [ "$sample" = sdl-surface ] || [ "$sample" = swkbd ] || [ "$sample" = swkbd-response ] || [ "$sample" = swkbd-ui ] || [ "$sample" = swkbd-stop ]; then
+if [ "$sample" = matrix ] || [ "$sample" = sdl-surface ] || [ "$sample" = swkbd ] || [ "$sample" = swkbd-response ] || [ "$sample" = swkbd-ui ] || [ "$sample" = swkbd-stop ] || [ "$sample" = swkbd-stop-keep ]; then
   # Built from this repository in the separate isolated CI build job.
   case "$sample" in
     matrix) nro="$PROBE_WORK/hid-matrix.nro" ;;
     sdl-surface) nro="$PROBE_WORK/sdl-surface.nro" ;;
-    swkbd|swkbd-response|swkbd-ui|swkbd-stop) nro="$PROBE_WORK/swkbd.nro" ;;
+    swkbd|swkbd-response|swkbd-ui|swkbd-stop|swkbd-stop-keep) nro="$PROBE_WORK/swkbd.nro" ;;
   esac
   test -s "$nro"; sha256sum "$nro"
 else
@@ -29,7 +29,7 @@ adb shell rm /data/local/tmp/symbiosis-ci-homebrew.nro
 failed=0
 for core in sym space; do
   adb shell am force-stop "$APP"
-  adb shell run-as "$APP" rm -f files/engine-crash.txt files/input-stage.txt files/stop-request.txt
+  adb shell run-as "$APP" rm -f files/engine-crash.txt files/input-stage.txt files/stop-request.txt files/teardown-stage.txt
   log="$PROBE_WORK/$core-$sample-homebrew-logcat.txt"
   adb logcat -c # disposable Android only
   # The NRO's busy game-over loop can produce >100 MB of verbose guest IPC
@@ -42,11 +42,13 @@ for core in sym space; do
   ui_response=false
   ui_real=false
   ui_stop=false
-  if [ "$sample" = swkbd ] || [ "$sample" = swkbd-response ] || [ "$sample" = swkbd-ui ] || [ "$sample" = swkbd-stop ]; then ui_setup=true; fi
-  if [ "$sample" = swkbd-response ] || [ "$sample" = swkbd-ui ] || [ "$sample" = swkbd-stop ]; then ui_response=true; fi
-  if [ "$sample" = swkbd-ui ] || [ "$sample" = swkbd-stop ]; then ui_real=true; fi
-  [ "$sample" = swkbd-stop ] && ui_stop=true
-  adb shell am start -n "$APP/.EngineStageActivity" --es core "$core" --ez homebrew true --ez input_probe "$input_probe" --ez ui_setup "$ui_setup" --ez ui_response "$ui_response" --ez ui_real "$ui_real" --ez ui_stop "$ui_stop" --ez stop_probe "$ui_stop" || true
+  keep_core=false
+  if [ "$sample" = swkbd ] || [ "$sample" = swkbd-response ] || [ "$sample" = swkbd-ui ] || [ "$sample" = swkbd-stop ] || [ "$sample" = swkbd-stop-keep ]; then ui_setup=true; fi
+  if [ "$sample" = swkbd-response ] || [ "$sample" = swkbd-ui ] || [ "$sample" = swkbd-stop ] || [ "$sample" = swkbd-stop-keep ]; then ui_response=true; fi
+  if [ "$sample" = swkbd-ui ] || [ "$sample" = swkbd-stop ] || [ "$sample" = swkbd-stop-keep ]; then ui_real=true; fi
+  if [ "$sample" = swkbd-stop ] || [ "$sample" = swkbd-stop-keep ]; then ui_stop=true; fi
+  [ "$sample" = swkbd-stop-keep ] && keep_core=true
+  adb shell am start -n "$APP/.EngineStageActivity" --es core "$core" --ez homebrew true --ez input_probe "$input_probe" --ez ui_setup "$ui_setup" --ez ui_response "$ui_response" --ez ui_real "$ui_real" --ez ui_stop "$ui_stop" --ez stop_probe "$ui_stop" --ez keep_core "$keep_core" || true
   outcome=timeout
   for ((i=0; i<120; i++)); do
     if grep -qE 'ENGINE_FAIL|SDL_SURFACE_FAIL|Unhandled exception in guest thread|FATAL EXCEPTION|Fatal signal|ActivityManager.*Process dev\.symbiosis\.coreprobe \(pid [0-9]+\) has died' "$log"; then outcome=fail; break; fi
@@ -64,7 +66,7 @@ for core in sym space; do
           outcome=matrix-incomplete; break
         fi
       fi
-      if [ "$sample" = swkbd ] || [ "$sample" = swkbd-response ] || [ "$sample" = swkbd-ui ] || [ "$sample" = swkbd-stop ]; then
+      if [ "$sample" = swkbd ] || [ "$sample" = swkbd-response ] || [ "$sample" = swkbd-ui ] || [ "$sample" = swkbd-stop ] || [ "$sample" = swkbd-stop-keep ]; then
         # swkbd: unchanged production callback; swkbd-response: explicitly
         # separate test-only callback sends a real JNI response.
         for ((j=0; j<25; j++)); do
@@ -72,17 +74,27 @@ for core in sym space; do
           grep -qE 'ENGINE_FAIL|Unhandled exception in guest thread|Fatal signal' "$log" && break
           sleep 1
         done
-        if [ "$sample" = swkbd-stop ] && grep -q 'UI_REAL_STOP_REQUESTED' "$log" &&
+        if { [ "$sample" = swkbd-stop ] || [ "$sample" = swkbd-stop-keep ]; } && grep -q 'UI_REAL_STOP_REQUESTED' "$log" &&
            grep -q 'UI_REAL_RESPONSE accepted=false result=true' "$log" &&
            grep -q 'SWKBD_SHOW_RETURN rc=0x00005d59 ' "$log" && grep -q 'SWKBD_GUEST_DONE' "$log"; then
+          observed_pid=$(adb shell pidof "$APP" | tr -d '\r' || true)
           adb shell run-as "$APP" touch files/stop-request.txt
+          teardown_stage=''
           for ((j=0; j<45; j++)); do
-            grep -q "TEARDOWN_COMPLETE core=$core" "$log" && break
+            teardown_stage=$(timeout 5s adb exec-out run-as "$APP" cat files/teardown-stage.txt 2>/dev/null | tr -d '\r' || true)
+            printf '%s\n' "$teardown_stage" | grep -q '^TEARDOWN_COMPLETE$' && break
+            current_pid=$(adb shell pidof "$APP" | tr -d '\r' || true)
+            [ -n "$observed_pid" ] && [ "$current_pid" != "$observed_pid" ] && break
             grep -qE 'ENGINE_FAIL|Fatal signal|FATAL EXCEPTION' "$log" && break
             sleep 1
           done
-          if grep -q "TEARDOWN_COMPLETE core=$core" "$log" && ! grep -qE 'ENGINE_FAIL|Fatal signal|FATAL EXCEPTION' "$log"; then
-            outcome=frame-callback-observed
+          printf 'TEARDOWN_DURABLE core=%s pid=%s stages=\n%s\n' "$core" "$observed_pid" "$teardown_stage" | tee "$PROBE_WORK/$core-$sample-teardown-stage.txt"
+          if printf '%s\n' "$teardown_stage" | grep -q '^TEARDOWN_COMPLETE$' && [ -n "$observed_pid" ]; then
+            sleep 15
+            current_pid=$(adb shell pidof "$APP" | tr -d '\r' || true)
+            if [ "$current_pid" = "$observed_pid" ] && ! grep -qE 'ENGINE_FAIL|Fatal signal|FATAL EXCEPTION|Process dev\.symbiosis\.coreprobe .*has died' "$log"; then
+              outcome=frame-callback-observed
+            else outcome=teardown-process-died; fi
           else outcome=teardown-incomplete; fi
         elif [ "$sample" = swkbd-response ] &&
            grep -q 'UI_TEST_CALLBACK ' "$log" &&

@@ -5828,3 +5828,15 @@ HID matrix и современный SDL проходят. [Логи](https://gi
 проверка физического IME и безопасного закрытия игры с открытым диалогом.
 Обычный production callback остаётся пустым; старый SDL продолжает падать;
 `SWKBD_UI_EXIT=0` при общем failed. [Логи](https://github.com/sj0404-collab/symbiosis/actions/runs/42684640892/artifacts/13704591726).
+
+[Run 42686076242](https://github.com/sj0404-collab/symbiosis/actions/runs/42686076242),
+`9dfdee5`: при остановке тестового координатора с открытым диалогом оба ядра
+вернули гостю отмену `0x5d59`, затем сигнал остановки, завершение renderer loop
+и `deviceCloseEmulation` вернулись. Sym показал возврат `nativeUnload` и
+`TEARDOWN_COMPLETE`, после чего тест почти сразу принудительно завершил процесс,
+поэтому длительная безопасность не проверена. Space после сообщения моста
+`core unloaded` не записал возврат `nativeUnload`; Zygote сообщил о завершении
+процесса по SIGSEGV. Это реальный сбой в данном прогоне, но его причина пока не
+установлена. Строка `core unloaded` сама по себе не доказывает завершение JNI.
+`SWKBD_STOP_EXIT=1`, общий job failed; release guard не снимать.
+[Логи](https://github.com/sj0404-collab/symbiosis/actions/runs/42686076242/artifacts/13704618532).

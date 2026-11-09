@@ -20,7 +20,15 @@ public final class EngineStageActivity extends Activity {
     private final java.util.concurrent.CountDownLatch rendererReturned = new java.util.concurrent.CountDownLatch(1);
     private volatile boolean rendererStoppedOk;
     private static native int nativeWindowWidth(long handle);
-    private void step(String name) { Log.i(TAG, "ENGINE_STAGE core=" + flavor + " " + name); }
+    private void step(String name) {
+        if (name.startsWith("TEARDOWN_")) {
+            try (FileOutputStream output = new FileOutputStream(new File(getFilesDir(), "teardown-stage.txt"), true)) {
+                output.write((name + "\n").getBytes(StandardCharsets.UTF_8));
+                output.flush();
+            } catch (Exception e) { Log.e(TAG, "ENGINE_FAIL teardown breadcrumb", e); }
+        }
+        Log.i(TAG, "ENGINE_STAGE core=" + flavor + " " + name);
+    }
     // Test-only durable breadcrumb: logcat may drop lines under guest load.
     private void inputStep(String name) {
         try (FileOutputStream output = new FileOutputStream(new File(getFilesDir(), "input-stage.txt"))) {
@@ -118,11 +126,18 @@ public final class EngineStageActivity extends Activity {
                         if (!bridge.nativeClosePlay()) { Log.e(TAG, "ENGINE_FAIL close"); return; }
                         step("TEARDOWN_CLOSE_RETURNED");
                         KeyboardUiFixture.closeAfterDeviceStopped();
-                        bridge.nativeUnload();
-                        step("TEARDOWN_UNLOAD_RETURNED");
-                        long owned = KenjinxNative.INSTANCE.getNativeWindow();
-                        KenjinxNative.INSTANCE.setNativeWindow(-1);
-                        bridge.nativeReleaseWindow(owned);
+                        if (getIntent().getBooleanExtra("keep_core", false)) {
+                            step("TEARDOWN_CORE_KEPT_MAPPED");
+                        } else {
+                            step("TEARDOWN_BEFORE_UNLOAD");
+                            bridge.nativeUnload();
+                            step("TEARDOWN_UNLOAD_RETURNED");
+                            long owned = KenjinxNative.INSTANCE.getNativeWindow();
+                            KenjinxNative.INSTANCE.setNativeWindow(-1);
+                            bridge.nativeReleaseWindow(owned);
+                            step("TEARDOWN_WINDOW_RELEASED");
+                        }
+                        step("TEARDOWN_COMPLETE");
                         Log.i(TAG, "TEARDOWN_COMPLETE core=" + flavor);
                     } catch (Throwable t) { Log.e(TAG, "ENGINE_FAIL teardown exception", t); }
                 }}, "test-stop-observer").start();
