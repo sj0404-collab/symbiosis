@@ -70,7 +70,11 @@ jobs:
       - name: Install original image and pinned third-party ARM-host emulator
         run: |
           set -euo pipefail
-          mkdir -p "$ANDROID_HOME/system-images/android-35/google_apis"
+          mkdir -p "$ANDROID_HOME/system-images/android-35/google_apis" "$ANDROID_HOME/platform-tools"
+          # Use the genuine distribution adb, linked into the SDK layout the
+          # emulator expects; no protocol shim or synthetic device.
+          ln -s "$(command -v adb)" "$ANDROID_HOME/platform-tools/adb"
+          "$ANDROID_HOME/platform-tools/adb" version
           curl -fsSL --retry 3 -o /tmp/android35-image.zip https://dl.google.com/android/repository/sys-img/google_apis/arm64-v8a-35_r09.zip
           echo 'd2e7c6076e5df54d3677605a324daf9edf813b2808c216bdb1687f6b2b6aed99  /tmp/android35-image.zip' | sha256sum -c -
           unzip -q /tmp/android35-image.zip -d "$ANDROID_HOME/system-images/android-35/google_apis"
