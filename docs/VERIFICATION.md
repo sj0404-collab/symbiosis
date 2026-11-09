@@ -5671,3 +5671,17 @@ icon из devkitPro через `nacptool`/`elf2nro`; отказ без asset sec
 Это дефект обработки синтетического недопустимого запроса, не причина 710 в
 коммерческой игре без доказательств её ID/IPC. SDL снова упал, Snake и
 предварительные этапы прошли; общий run failed. [Логи](https://github.com/sj0404-collab/symbiosis/actions/runs/42666979926/artifacts/13696094451).
+
+[Run 42668159327](https://github.com/sj0404-collab/symbiosis/actions/runs/42668159327),
+`87e4895`: на реальных двух ядрах ARM Android выполнены все 35 действительных
+запросов HID 106, в каждом получен rc=0 и handle; оба тестовых NRO показали
+кадры. Проверены 4 набора style (0, FullKey, Handheld, Standard), 3 набора
+допустимых ID (No1, Handheld, оба) и запросы обоих ID после каждой настройки.
+Параметры ARUID и padding также проверены ранее в том же NRO. Сам по себе
+такой выбор значений 710 не воспроизвёл; это не полное воспроизведение
+состояния коммерческой игры и не доказательство исправления 710. SDL по-прежнему
+SIGABRT. Повтор Snake на Sym прошёл, на Space frame и press/update прошли, но
+после `AFTER_update_pressed` маркеры отпускания до таймаута не появились;
+причина неизвестна, считать повтор inconclusive, а не успешным по прежнему run.
+`STANDALONE_EXIT=0 ACTIVITY_EXIT=0 ENGINE_EXIT=0 SDL_EXIT=1 SNAKE_EXIT=1 MATRIX_EXIT=0`.
+[Логи](https://github.com/sj0404-collab/symbiosis/actions/runs/42668159327/artifacts/13697587597).

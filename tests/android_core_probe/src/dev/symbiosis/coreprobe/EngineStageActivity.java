@@ -69,7 +69,7 @@ public final class EngineStageActivity extends Activity {
                                     step("AFTER_plus_press BEFORE_update_pressed");
                                     bridge.nativeUpdateInput();
                                     step("AFTER_update_pressed");
-                                    Thread.sleep(500);
+                                    Thread.sleep(1500);
                                     step("BEFORE_plus_release");
                                     bridge.nativeInputButton(16, 0, false);
                                     step("AFTER_plus_release BEFORE_update_released");

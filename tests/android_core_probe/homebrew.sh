@@ -33,7 +33,7 @@ for core in sym space; do
   adb logcat -T 1 -v time 'SymEngineStage:V' 'SymbiosisKenji:V' \
     'RyujinxLog:I' 'AndroidRuntime:E' 'libc:F' 'ActivityManager:I' '*:S' > "$log" 2>&1 & logpid=$!
   input_probe=false
-  [ "$sample" = snake ] && input_probe=true
+  [ "$sample" = snake ] || [ "$sample" = matrix ] && input_probe=true
   adb shell am start -n "$APP/.EngineStageActivity" --es core "$core" --ez homebrew true --ez input_probe "$input_probe" || true
   outcome=timeout
   for ((i=0; i<120; i++)); do
@@ -55,11 +55,20 @@ for core in sym space; do
       if [ "$input_probe" = true ]; then
         # Before/after images only; input delivery needs independent observation.
         timeout 10s adb exec-out screencap -p > "$PROBE_WORK/$core-$sample-before-screen.png" || true
-        for ((j=0; j<15; j++)); do
+        for ((j=0; j<40; j++)); do
           grep -q "HOMEBREW_INPUT_SENT core=$core " "$log" && break
           sleep 1
         done
         if ! grep -q "HOMEBREW_INPUT_SENT core=$core " "$log"; then outcome=input-not-sent; break; fi
+        if [ "$sample" = matrix ]; then
+          for ((j=0; j<10; j++)); do
+            if awk '/HID_BUTTONS plus=1/{pressed=1} pressed && /HID_BUTTONS plus=0/{ok=1} END{exit !ok}' "$log"; then break; fi
+            sleep 1
+          done
+          if ! awk '/HID_BUTTONS plus=1/{pressed=1} pressed && /HID_BUTTONS plus=0/{ok=1} END{exit !ok}' "$log"; then
+            outcome=input-not-observed-by-guest; break
+          fi
+        fi
       fi
       sleep 4
       if grep -qE 'ENGINE_FAIL|Unhandled exception in guest thread|FATAL EXCEPTION|Fatal signal|ActivityManager.*Process dev\.symbiosis\.coreprobe \(pid [0-9]+\) has died' "$log"; then

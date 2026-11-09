@@ -85,13 +85,29 @@ int main(void) {
             Result ir = hidSetSupportedNpadIdType(start, count);
             record("HID_MATRIX_CONFIG style=0x%08x id_mode=%u style_rc=0x%08x ids_rc=0x%08x",
                 styles[s], mode, sr, ir);
+            svcSleepThread(50000000);
+            padUpdate(&pad);
+            record("HID_SHARED style0=0x%08x style20=0x%08x pad_style=0x%08x connected=%u buttons=0x%016llx",
+                hidGetNpadStyleSet(HidNpadIdType_No1),
+                hidGetNpadStyleSet(HidNpadIdType_Handheld), padGetStyleSet(&pad),
+                (unsigned)padIsConnected(&pad), (unsigned long long)padGetButtons(&pad));
             acquire_raw(index++, HidNpadIdType_No1, 0, aruid);
             acquire_raw(index++, HidNpadIdType_Handheld, 0, aruid);
         }
     }
     record("HID_MATRIX_COMPLETE count=%u", index);
+    hidSetSupportedNpadStyleSet(HidNpadStyleSet_NpadStandard);
+    hidSetSupportedNpadIdType(ids, 2);
+    int last_plus = -1;
     while (appletMainLoop()) {
         padUpdate(&pad);
+        int plus = (padGetButtons(&pad) & HidNpadButton_Plus) != 0;
+        if (plus != last_plus) {
+            record("HID_BUTTONS plus=%d style=0x%08x connected=%u buttons=0x%016llx",
+                plus, padGetStyleSet(&pad), (unsigned)padIsConnected(&pad),
+                (unsigned long long)padGetButtons(&pad));
+            last_plus = plus;
+        }
         consoleUpdate(NULL);
         svcSleepThread(16666667);
     }
