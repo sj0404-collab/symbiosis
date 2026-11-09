@@ -37,6 +37,7 @@ jobs:
           path: |
             /tmp/bionic-assets/standalone-core-probe
             /tmp/bionic-assets/property-init
+            /tmp/bionic-assets/tls-handshake-probe
             /tmp/bionic-assets/libstandalonejni.so
             /tmp/bionic-assets/libkenjinxjni.so
             /tmp/bionic-assets/standalone.jar
@@ -99,7 +100,7 @@ jobs:
           echo "d781048671e4cef1cde2ec15db8fe29b949df9949d83569ceaf776ad12901590  $W/space.so" | sha256sum -c -
           rm "$W/symbek.apk"
           cp patch/libs/arm64-v8a/libcrypto.so patch/libs/arm64-v8a/libssl.so "$W/"
-          chmod +x "$W/standalone-core-probe" "$W/property-init"
+          chmod +x "$W/standalone-core-probe" "$W/property-init" "$W/tls-handshake-probe"
           IMAGE="$W/system.img"
           file "$IMAGE"
           # Sparse images are not mountable until converted; raw ext4 needs no conversion.
@@ -301,6 +302,33 @@ jobs:
               fi
             done
           done
+          # Independent, real in-memory TLS handshake on Android Bionic. A
+          # disposable local test CA/cert proves certificate+hostname checking,
+          # not production trust stores or a live network. No key is uploaded.
+          openssl req -x509 -newkey rsa:2048 -nodes -keyout "$W/test-key.pem" -out "$W/test-cert.pem" \
+            -days 1 -subj '/CN=localhost' -addext 'subjectAltName=DNS:localhost' >/dev/null 2>&1
+          for mode in bundled candidate; do
+            libdir="$W"
+            if [ "$mode" = candidate ]; then libdir="$W/tls-candidate"; fi
+            for host in localhost wrong.invalid; do
+              log="$W/logs/tls-handshake-$mode-$host.txt"
+              set +e
+              timeout 60s env LD_LIBRARY_PATH="/system/lib64:$libdir" "$W/tls-handshake-probe" \
+                "$libdir" "$W/test-cert.pem" "$W/test-key.pem" "$host" > "$log" 2>&1
+              tls_rc=$?
+              set -e
+              cat "$log"
+              echo "TLS_HANDSHAKE_EXIT=$tls_rc" | tee -a "$log"
+              grep -Fq "CRYPTO_ORIGIN=$libdir/libcrypto.so" "$log" || failed=1
+              grep -Fq "SSL_ORIGIN=$libdir/libssl.so" "$log" || failed=1
+              if [ "$host" = localhost ]; then
+                if [ "$tls_rc" != 0 ] || ! grep -q 'TLS_VERIFIED_HANDSHAKE_OK protocol=TLSv1.*encrypted_data=ok' "$log"; then failed=1; fi
+              else
+                if [ "$tls_rc" = 0 ] || ! grep -q 'TLS_HANDSHAKE_FAIL side=client' "$log" || grep -q 'TLS_VERIFIED_HANDSHAKE_OK' "$log"; then failed=1; fi
+              fi
+            done
+          done
+          rm -f "$W/test-key.pem" "$W/test-cert.pem"
           exit "${failed:-0}"
       - name: Save logs (no APK, core, or system image)
         if: always()
