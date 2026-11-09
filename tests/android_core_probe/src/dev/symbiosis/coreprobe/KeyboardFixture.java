@@ -2,6 +2,7 @@ package dev.symbiosis.coreprobe;
 
 import android.util.Log;
 import org.yuzu.yuzu_emu.utils.KenjiBridge;
+import org.kenjinx.android.KenjinxNative;
 import java.nio.charset.StandardCharsets;
 
 /** Disposable automated user response; never compiled into the release APK. */
@@ -13,6 +14,12 @@ public final class KeyboardFixture {
         bridge = value;
         generation = token;
         realUi = useRealUi;
+        KenjinxNative.INSTANCE.setUiCallback(new KenjinxNative.UiCallback() {
+            @Override public void onRequest(long title, long message, long watermark, int type,
+                    int min, int max, int mode, long subtitle, long initial) {
+                KeyboardFixture.onRequest(title, message, watermark, type, min, max, mode, subtitle, initial);
+            }
+        });
     }
     public static void onRequest(long title, long message, long watermark, int type,
             int min, int max, int mode, long subtitle, long initial) {

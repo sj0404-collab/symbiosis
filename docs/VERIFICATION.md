@@ -5915,3 +5915,11 @@ JNI-передача ответа (клавиатуры), и оба гостя �
 поэтому `SWKBD_OVERLAP_EXIT=1` и общий Android job failed наряду со старыми
 известными отказами. Другие источники type=1 и реальный production callback не
 проверены. [Логи](https://github.com/sj0404-collab/symbiosis/actions/runs/42700609612/artifacts/13711997326).
+
+[Run 42702690523](https://github.com/sj0404-collab/symbiosis/actions/runs/42702690523),
+`c8a31cb`: при открытом сообщении ErrorApplication и ожидающей гостевой
+клавиатуре `coordinator.stop()` на обоих ядрах отправил только один отменяющий
+ответ клавиатуре; гость получил `0x5d59`, сообщение не создало лишний ответ.
+`SWKBD_MESSAGE_STOP_EXIT=0`, но тест намеренно затем завершил процесс и не
+проверял production Activity, его полный teardown или сохранения.
+[Логи](https://github.com/sj0404-collab/symbiosis/actions/runs/42702690523/artifacts/13712897222).

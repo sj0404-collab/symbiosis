@@ -79,6 +79,17 @@ object KenjinxNative {
         return nativeWindow
     }
 
+    /** Must return only after the listener has copied any native strings.
+     * Installed per isolated player session before uiHandlerSetup. */
+    fun interface UiCallback {
+        fun onRequest(title: Long, message: Long, watermark: Long, type: Int,
+                      min: Int, max: Int, mode: Int, subtitle: Long, initial: Long)
+    }
+    @Volatile var uiCallback: UiCallback? = null
+
+    /** Copies native bytes synchronously; decoding must use standard UTF-8. */
+    @JvmStatic external fun nativeCopyUiText(pointer: Long): ByteArray?
+
     @JvmStatic
     fun updateUiHandler(
         newTitlePointer: Long,
@@ -90,7 +101,10 @@ object KenjinxNative {
         nMode: Int,
         newSubtitlePointer: Long,
         newInitialTextPointer: Long
-    ) { /* software keyboard — ignore */ }
+    ) {
+        uiCallback?.onRequest(newTitlePointer, newMessagePointer, newWatermarkPointer,
+            newType, min, max, nMode, newSubtitlePointer, newInitialTextPointer)
+    }
 
     /** Счётчики одной строкой — для статуса плеера и отчёта. */
     fun stats(): String =
