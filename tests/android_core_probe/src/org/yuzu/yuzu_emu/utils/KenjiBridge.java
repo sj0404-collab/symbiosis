@@ -28,4 +28,6 @@ public final class KenjiBridge {
     public native String nativeLoadGame(int fd, int type);
     public native String nativeRendererKick(int width, int height, int rotation);
     public native String nativeRunLoop();
+    public native boolean nativeSignalPlayStop();
+    public native boolean nativeClosePlay();
 }

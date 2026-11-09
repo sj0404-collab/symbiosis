@@ -17,6 +17,8 @@ public final class EngineStageActivity extends Activity {
     private static final String TAG = "SymEngineStage";
     private boolean started;
     private String flavor;
+    private final java.util.concurrent.CountDownLatch rendererReturned = new java.util.concurrent.CountDownLatch(1);
+    private volatile boolean rendererStoppedOk;
     private static native int nativeWindowWidth(long handle);
     private void step(String name) { Log.i(TAG, "ENGINE_STAGE core=" + flavor + " " + name); }
     // Test-only durable breadcrumb: logcat may drop lines under guest load.
@@ -99,9 +101,37 @@ public final class EngineStageActivity extends Activity {
                         Log.e(TAG, "ENGINE_FAIL frame observer exception", t);
                     }
                 }}, "frame-observer").start();
+                boolean stopProbe = getIntent().getBooleanExtra("stop_probe", false);
+                if (stopProbe) new Thread(new Runnable() { public void run() {
+                    try {
+                        File request = new File(getFilesDir(), "stop-request.txt");
+                        for (int i = 0; i < 900 && !request.exists(); i++) Thread.sleep(100);
+                        if (!request.exists()) { Log.e(TAG, "ENGINE_FAIL no stop request"); return; }
+                        step("TEARDOWN_BEFORE_SIGNAL");
+                        if (!bridge.nativeSignalPlayStop()) { Log.e(TAG, "ENGINE_FAIL signal stop"); return; }
+                        step("TEARDOWN_SIGNAL_RETURNED");
+                        if (!rendererReturned.await(30, java.util.concurrent.TimeUnit.SECONDS)) {
+                            Log.e(TAG, "ENGINE_FAIL renderer stop timeout"); return;
+                        }
+                        if (!rendererStoppedOk) { Log.e(TAG, "ENGINE_FAIL renderer stop result"); return; }
+                        step("TEARDOWN_BEFORE_CLOSE");
+                        if (!bridge.nativeClosePlay()) { Log.e(TAG, "ENGINE_FAIL close"); return; }
+                        step("TEARDOWN_CLOSE_RETURNED");
+                        KeyboardUiFixture.closeAfterDeviceStopped();
+                        bridge.nativeUnload();
+                        step("TEARDOWN_UNLOAD_RETURNED");
+                        long owned = KenjinxNative.INSTANCE.getNativeWindow();
+                        KenjinxNative.INSTANCE.setNativeWindow(-1);
+                        bridge.nativeReleaseWindow(owned);
+                        Log.i(TAG, "TEARDOWN_COMPLETE core=" + flavor);
+                    } catch (Throwable t) { Log.e(TAG, "ENGINE_FAIL teardown exception", t); }
+                }}, "test-stop-observer").start();
                 step("BEFORE_realRendererRunLoop");
                 String result = bridge.nativeRunLoop();
-                Log.e(TAG, "ENGINE_FAIL renderer loop returned result=" + result);
+                rendererStoppedOk = stopProbe && result != null && result.isEmpty();
+                rendererReturned.countDown();
+                if (rendererStoppedOk) step("TEARDOWN_RENDERER_RETURNED");
+                else Log.e(TAG, "ENGINE_FAIL renderer loop returned result=" + result);
             } catch (Throwable t) { Log.e(TAG, "ENGINE_FAIL homebrew exception", t); }
         }}, "real-homebrew-engine").start();
     }
@@ -146,7 +176,8 @@ public final class EngineStageActivity extends Activity {
                     long generation = bridge.nativeUiActivate();
                     if (generation <= 0) { Log.e(TAG, "ENGINE_FAIL UI response activation"); return; }
                     boolean realUi = getIntent().getBooleanExtra("ui_real", false);
-                    if (realUi) KeyboardUiFixture.configure(this, bridge, generation);
+                    if (realUi) KeyboardUiFixture.configure(this, bridge, generation,
+                            getIntent().getBooleanExtra("ui_stop", false));
                     KeyboardFixture.configure(bridge, generation, realUi);
                     step("realUiResponse_ACTIVATED");
                 }

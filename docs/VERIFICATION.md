@@ -5819,3 +5819,12 @@ presenter/coordinator, реальный JNI и оба ядра прошли ав
 не физическим touch или IME. С production пустым callback ответа нет;
 выпуск по-прежнему заблокирован. Старый SDL падает (`SDL_EXIT=1`), Snake,
 HID matrix и современный SDL проходят. [Логи](https://github.com/sj0404-collab/symbiosis/actions/runs/42683293664/artifacts/13704077237).
+
+[Run 42684640892](https://github.com/sj0404-collab/symbiosis/actions/runs/42684640892),
+`d54abd3`: на обоих ядрах кандидат presenter/coordinator с программным нажатием
+сначала оставил открытым диалог при недопустимой пустой строке (min=1), затем
+вернул гостю точные байты `Привет🎮`; второй последовательный диалог отменён,
+и гостевой libnx увидел ожидаемый `LibAppletBadExit` `0x00005d59`. Это не
+проверка физического IME и безопасного закрытия игры с открытым диалогом.
+Обычный production callback остаётся пустым; старый SDL продолжает падать;
+`SWKBD_UI_EXIT=0` при общем failed. [Логи](https://github.com/sj0404-collab/symbiosis/actions/runs/42684640892/artifacts/13704591726).

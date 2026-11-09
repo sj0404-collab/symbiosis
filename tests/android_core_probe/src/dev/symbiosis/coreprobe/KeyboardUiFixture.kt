@@ -28,7 +28,7 @@ object KeyboardUiFixture {
         }
         return null
     }
-    @JvmStatic fun configure(activity: Activity, bridge: KenjiBridge, generation: Long) {
+    @JvmStatic fun configure(activity: Activity, bridge: KenjiBridge, generation: Long, stopOnFirst: Boolean) {
         lateinit var presenter: KenjiUiPresenter
         lateinit var active: KenjiUiCoordinator
         val dialogs = AtomicInteger()
@@ -47,7 +47,10 @@ object KeyboardUiFixture {
                         check(dialog.isShowing)
                         val input = checkNotNull(findEdit(dialog.window!!.decorView))
                         check(input.text.toString() == "Seed")
-                        if (number == 1) {
+                        if (number == 1 && stopOnFirst) {
+                            active.stop()
+                            Log.i("SymEngineStage", "UI_REAL_STOP_REQUESTED")
+                        } else if (number == 1) {
                             input.setText("")
                             check(dialog.getButton(AlertDialog.BUTTON_POSITIVE).performClick())
                             check(input.error != null && dialog.isShowing)
@@ -73,6 +76,10 @@ object KeyboardUiFixture {
             onError = { Log.e("SymEngineStage", "UI_REAL_FAIL $it") },
         )
         coordinator = active
+    }
+    @JvmStatic fun closeAfterDeviceStopped() {
+        checkNotNull(coordinator).closeAfterGuestStopped()
+        Log.i("SymEngineStage", "UI_REAL_REPLY_WORKER_STOPPED")
     }
     private fun copy(pointer: Long): String {
         val method = KenjinxNative::class.java.getMethod("nativeCopyUiText", java.lang.Long.TYPE)
