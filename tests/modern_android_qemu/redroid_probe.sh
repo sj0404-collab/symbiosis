@@ -37,7 +37,10 @@ from binderfs_create import allocate
 path = Path(sys.argv[1])
 for name in ('binder', 'hwbinder', 'vndbinder'):
     major, minor = allocate(path / 'binder-control', name)
-    print('ACTUAL_BINDERFS_DEVICE', name, major, minor)
+    import os
+    fd = os.open(path / name, os.O_RDWR | os.O_CLOEXEC)
+    os.close(fd)
+    print('ACTUAL_BINDERFS_DEVICE_OPEN_OK', name, major, minor)
 PY
 sudo chmod 666 "$B/binder" "$B/hwbinder" "$B/vndbinder"
 # This is a pinned upstream Redroid Android image; not a Google image.
@@ -47,7 +50,9 @@ sudo chmod 666 "$B/binder" "$B/hwbinder" "$B/vndbinder"
 docker pull --platform linux/arm64 "$IMAGE"
 # Keep the stopped container until logs are captured; cleanup removes it.
 docker run -d --name symbiosis-redroid --privileged \
-  --device "$B/binder:/dev/binder" --device "$B/hwbinder:/dev/hwbinder" --device "$B/vndbinder:/dev/vndbinder" \
+  --mount "type=bind,src=$B/binder,dst=/dev/binder" \
+  --mount "type=bind,src=$B/hwbinder,dst=/dev/hwbinder" \
+  --mount "type=bind,src=$B/vndbinder,dst=/dev/vndbinder" \
   --mount "type=bind,src=$B,dst=/dev/binderfs" -p 127.0.0.1:5558:5555 \
   "$IMAGE" androidboot.use_memfd=1 androidboot.redroid_gpu_mode=guest >/dev/null
 container_started=1

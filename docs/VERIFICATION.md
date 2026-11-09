@@ -5451,3 +5451,14 @@ OCI ARM image скачан с закреплённым digest. Redroid конт�
 сразу при выходе. Никакие core/Android tests не проводились. Следующая попытка
 сохраняет stopped container до сбора state/log и kernel log, затем удаляет его.
 Это не результат проверки ядра и не основание выпускать APK.
+
+[Run 42656713209](https://github.com/sj0404-collab/symbiosis/actions/runs/42656713209),
+`ad389c4`: Redroid запустил Android init и несколько системных процессов, затем
+`vold` и другие процессы получили ошибку открытия `/dev/binder`/`/dev/vndbinder`
+`ENXIO`, после чего init выполнил `reboot,vold-failed`; Docker exit 129.
+Подтверждение — [журнал kernel](https://github.com/sj0404-collab/symbiosis/actions/runs/42656713209/artifacts/13691713960).
+Binderfs устройства на хосте создавались kernel ioctl; ранее `docker --device`
+создавал узлы по major/minor вместо bind mount фактических binderfs файлов.
+Кандидат следующего запуска проверяет реальное `open(O_RDWR)` каждого файла на
+хосте и пробрасывает сам inode bind mount в контейнер; это гипотеза, а не
+заявление об исправлении, требуется повторный тест. APK и ядра не запускались.
