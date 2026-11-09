@@ -22,7 +22,9 @@ for core in sym space; do
   log="$PROBE_WORK/$core-$sample-homebrew-logcat.txt"
   adb logcat -c # disposable Android only
   adb logcat -T 1 -v time > "$log" 2>&1 & logpid=$!
-  adb shell am start -n "$APP/.EngineStageActivity" --es core "$core" --ez homebrew true || true
+  input_probe=false
+  [ "$sample" = snake ] && input_probe=true
+  adb shell am start -n "$APP/.EngineStageActivity" --es core "$core" --ez homebrew true --ez input_probe "$input_probe" || true
   outcome=timeout
   for ((i=0; i<120; i++)); do
     if grep -qE 'ENGINE_FAIL|FATAL EXCEPTION|Fatal signal|ActivityManager.*Process dev\.symbiosis\.coreprobe \(pid [0-9]+\) has died' "$log"; then outcome=fail; break; fi
@@ -30,8 +32,21 @@ for core in sym space; do
     starts=$(grep -c "ENGINE_STAGE core=$core START " "$log" || true)
     if [ "$starts" -gt 1 ]; then outcome=process-restarted; break; fi
     if grep -q "HOMEBREW_FRAME_CALLBACK core=$core " "$log"; then
+      if [ "$input_probe" = true ]; then
+        # Before/after images only; input delivery needs independent observation.
+        timeout 10s adb exec-out screencap -p > "$PROBE_WORK/$core-$sample-before-screen.png" || true
+        for ((j=0; j<15; j++)); do
+          grep -q "HOMEBREW_INPUT_SENT core=$core " "$log" && break
+          sleep 1
+        done
+        if ! grep -q "HOMEBREW_INPUT_SENT core=$core " "$log"; then outcome=input-not-sent; break; fi
+      fi
       sleep 4
-      if grep -qE 'ENGINE_FAIL|FATAL EXCEPTION|Fatal signal|ActivityManager.*Process dev\.symbiosis\.coreprobe \(pid [0-9]+\) has died' "$log"; then outcome=fail; else outcome=frame-callback-observed; fi
+      if grep -qE 'ENGINE_FAIL|FATAL EXCEPTION|Fatal signal|ActivityManager.*Process dev\.symbiosis\.coreprobe \(pid [0-9]+\) has died' "$log"; then
+        outcome=fail
+      elif timeout 5s adb exec-out run-as "$APP" cat files/engine-crash.txt 2>/dev/null | grep '^crash signal=' >/dev/null; then
+        outcome=native-crash
+      else outcome=frame-callback-observed; fi
       break
     fi
     sleep 1

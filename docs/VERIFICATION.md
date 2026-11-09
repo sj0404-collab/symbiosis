@@ -5577,3 +5577,26 @@ DequeueBuffer`: имеющийся буфер 1×1, запрос 1280×720, `NoI
 libnx-программу [Cpp-Snake-NX 1.1.0](https://github.com/CompSciOrBust/Cpp-Snake-NX/releases/tag/1.1.0),
 SHA256 `982ff14c538bb94eb6d18411efe71e885006cf3e944da270d18cd2fa88442f16`,
 в том же окружении; это не утверждение об устранении crash или 710.
+
+[Run 42662674546](https://github.com/sj0404-collab/symbiosis/actions/runs/42662674546),
+`75f700f`: на обоих настоящих ядрах старый SDL sample снова дошёл до гостевого
+ошибочного буфера 1×1 и SIGABRT (`native-crash`); их сообщения .NET worker
+содержат NullReferenceException без разрешённых имён. Другой открытый NRO,
+Cpp-Snake-NX, загрузился и выполнялся на обоих ядрах с настоящим Android
+Surface и SwiftShader Vulkan: frame callbacks 43 (`sym`) и 37 (`space`),
+через 4 секунды после callback падение не наблюдалось. Скриншоты Android в
+[артефакте](https://github.com/sj0404-collab/symbiosis/actions/runs/42662674546/artifacts/13694428505)
+показывают игровое поле, змейку, цель и счёт, а не только счётчик callback;
+оба изображения имеют одинаковый SHA256
+`fdeab52d664a1b3b4fe0baf7a9b4e55850b97406d6415bc716c1cc9df52a9990`.
+Гостевой HID вызвал CreateAppletResource, ActivateNpad и SetSupportedNpadStyleSet,
+но вызова AcquireNpadStyleSetUpdateEventHandle и ошибки 710 в логах этого
+сэмпла нет. Управление, игра пользователя, телефон, штатное завершение и
+длительная стабильность не проверены. Весь workflow завершился failure из-за
+SDL sample. Сравниваются два конкретных core-бинарника второго семейства,
+а не Eden против Kenji.
+
+Следующее испытание отправляет через production JNI моста настоящий Plus
+(значение 16 по родственному enum) и сохраняет снимки snake до/после; сам
+факт отправки команды не является доказательством её получения игрой и не
+проверяет экранный overlay. Нужна проверка фактической реакции по изображениям.

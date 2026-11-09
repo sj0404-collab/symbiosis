@@ -59,6 +59,18 @@ public final class EngineStageActivity extends Activity {
                             long frames = KenjinxNative.INSTANCE.getFrames().get();
                             if (frames > 0) {
                                 Log.i(TAG, "HOMEBREW_FRAME_CALLBACK core=" + flavor + " frames=" + frames);
+                                if (getIntent().getBooleanExtra("input_probe", false)) {
+                                    // Test directly through the production JNI bridge, not
+                                    // through the Eden overlay. Ordinal 16 is Plus in the
+                                    // related Ryujinx input enum; behavior must be observed.
+                                    Thread.sleep(3000);
+                                    bridge.nativeInputButton(16, 0, true);
+                                    bridge.nativeUpdateInput();
+                                    Thread.sleep(500);
+                                    bridge.nativeInputButton(16, 0, false);
+                                    bridge.nativeUpdateInput();
+                                    Log.i(TAG, "HOMEBREW_INPUT_SENT core=" + flavor + " plus=16 pad=0");
+                                }
                                 return;
                             }
                         }
