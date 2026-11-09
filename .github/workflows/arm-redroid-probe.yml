@@ -63,7 +63,7 @@ jobs:
                 -specs=/opt/devkitpro/libnx/switch.specs -march=armv8-a+crc+crypto \
                 -mtune=cortex-a57 -mtp=soft -fPIE -O2 -Wall -Wextra -D__SWITCH__ \
                 -I/opt/devkitpro/libnx/include $("$SDL_CONFIG" --cflags) /input/main.c \
-                -L/opt/devkitpro/libnx/lib $("$SDL_CONFIG" --libs) -o /output/sdl-surface.elf
+                -L/opt/devkitpro/libnx/lib $("$SDL_CONFIG" --libs) -lm -o /output/sdl-surface.elf
               nacptool --create "CI SDL surface" "Symbiosis CI" "1.0.0" /output/sdl-surface.nacp
               elf2nro /output/sdl-surface.elf /output/sdl-surface.nro \
                 --nacp=/output/sdl-surface.nacp --icon=/opt/devkitpro/libnx/default_icon.jpg

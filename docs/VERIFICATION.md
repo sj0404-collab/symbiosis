@@ -5700,3 +5700,10 @@ Snake показали кадры, press/release/update завершились; 
 SDL_EXIT=1 SNAKE_EXIT=0 MATRIX_EXIT=0`, общий job failed из-за SDL.
 [Логи и снимки](https://github.com/sj0404-collab/symbiosis/actions/runs/42669130451/artifacts/13697863180).
 710 в пользовательской игре по-прежнему не воспроизведена и не доказана исправленной.
+
+[Run 42672564138](https://github.com/sj0404-collab/symbiosis/actions/runs/42672564138),
+`1c22f18`: новый самостоятельный SDL surface probe не прошёл линковку в CI:
+образ devkitPro содержит `switch-sdl2 2.28.5-4` и `libnx 4.12.0-1`, но в
+команде не хватило `-lm` (undefined references `atan2`, `cos`, `powf` и др.).
+Android job не запускался, выводов о SDL/ядрах из этой попытки нет. В команду
+добавлена настоящая математическая библиотека, повторная проверка необходима.
