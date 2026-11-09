@@ -54,12 +54,12 @@ for core in sym space; do
       fi
       if [ "$sample" = sdl-surface ]; then
         for ((j=0; j<20; j++)); do
-          grep -q 'SDL_SURFACE_PRESENT_OK frame=59' "$log" && break
+          grep -q 'SDL_SURFACE_QUIT_RETURNED' "$log" && break
           grep -q 'SDL_SURFACE_FAIL' "$log" && break
           sleep 1
         done
-        if grep -q 'SDL_SURFACE_FAIL' "$log" || ! grep -q 'SDL_SURFACE_PRESENT_OK frame=59' "$log"; then
-          outcome=surface-present-incomplete; break
+        if grep -q 'SDL_SURFACE_FAIL' "$log" || ! grep -q 'SDL_SURFACE_PRESENT_OK frame=59' "$log" || ! grep -q 'SDL_SURFACE_QUIT_RETURNED' "$log"; then
+          outcome=surface-present-or-close-incomplete; break
         fi
       fi
       if [ "$input_probe" = true ]; then

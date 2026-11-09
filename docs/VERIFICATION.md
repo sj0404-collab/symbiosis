@@ -5707,3 +5707,18 @@ SDL_EXIT=1 SNAKE_EXIT=0 MATRIX_EXIT=0`, общий job failed из-за SDL.
 команде не хватило `-lm` (undefined references `atan2`, `cos`, `powf` и др.).
 Android job не запускался, выводов о SDL/ядрах из этой попытки нет. В команду
 добавлена настоящая математическая библиотека, повторная проверка необходима.
+
+[Run 42672975856](https://github.com/sj0404-collab/symbiosis/actions/runs/42672975856),
+`fb0c794`: после исправления линковки настоящий self-authored SDL surface NRO
+построен с `switch-sdl2 2.28.5-4`, `libnx 4.12.0-1`, SHA256
+`6dc318223e29003b5ede7ac95bd42a6650b9c73703175aa4022406e5ad25c743`.
+На обоих настоящих ядрах в ARM Redroid 15 `SDL_Init`, создание окна и surface
+1280×720 (`pitch=5120`) прошли; `SDL_UpdateWindowSurface` дошёл до кадров 0 и
+59, callback ядра был, на снимках видна синяя заливка. После проверки тестовый
+процесс принудительно завершён: штатное закрытие SDL отдельно не проверено.
+Старый SDL NRO снова показал buffer 1×1 против запрошенного 1280×720 и позже
+SIGABRT после .NET `SurfaceFlinger.Compose` NullReferenceException; это не
+устранено, и новый SDL не доказывает стабильность старого. Snake и HID matrix
+прошли на обоих ядрах, Plus в общей памяти 0→1→0. Итог Android job failed из-за
+старого SDL (`SDL_EXIT=1`, `SDL_SURFACE_EXIT=0`). Это не игра, не телефон и не
+проверка Eden overlay. [Логи и снимки](https://github.com/sj0404-collab/symbiosis/actions/runs/42672975856/artifacts/13699143333).

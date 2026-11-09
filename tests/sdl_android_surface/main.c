@@ -34,7 +34,7 @@ int main(int argc, char **argv) {
     SDL_Surface *surface = SDL_GetWindowSurface(w);
     if (!surface) { logline("SDL_SURFACE_FAIL get=%s", SDL_GetError()); SDL_DestroyWindow(w); SDL_Quit(); return 1; }
     logline("SDL_SURFACE_GET_OK width=%d height=%d pitch=%d", surface->w, surface->h, surface->pitch);
-    for (int frame = 0; frame < 600 && appletMainLoop(); ++frame) {
+    for (int frame = 0; frame < 180 && appletMainLoop(); ++frame) {
         Uint32 color = SDL_MapRGBA(surface->format, (frame / 60) % 2 ? 20 : 36, 110, 190, 255);
         if (SDL_FillRect(surface, NULL, color) < 0) {
             logline("SDL_SURFACE_FAIL fill=%s", SDL_GetError()); break;
@@ -45,8 +45,13 @@ int main(int argc, char **argv) {
         if (frame == 0 || frame == 59) logline("SDL_SURFACE_PRESENT_OK frame=%d", frame);
         SDL_Delay(16);
     }
-    logline("SDL_SURFACE_LOOP_ENDED");
+    logline("SDL_SURFACE_CLOSE_BEGIN");
     SDL_DestroyWindow(w);
+    logline("SDL_SURFACE_WINDOW_DESTROYED");
     SDL_Quit();
+    logline("SDL_SURFACE_QUIT_RETURNED");
+    /* Keep the guest alive after cleanup so the host observes delayed faults.
+       Test harness force-stops this disposable diagnostic after observation. */
+    svcSleepThread(30000000000LL);
     return 0;
 }
