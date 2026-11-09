@@ -1,0 +1,80 @@
+package dev.symbiosis.coreprobe
+
+import android.app.Activity
+import android.app.AlertDialog
+import android.os.Handler
+import android.os.Looper
+import android.util.Log
+import android.view.View
+import android.view.ViewGroup
+import android.widget.EditText
+import org.kenjinx.android.KenjinxNative
+import org.yuzu.yuzu_emu.activities.KenjiUiPresenter
+import org.yuzu.yuzu_emu.utils.KenjiBridge
+import org.yuzu.yuzu_emu.utils.KenjiUiCoordinator
+import org.yuzu.yuzu_emu.utils.KenjiUiRequest
+import org.yuzu.yuzu_emu.utils.KenjiUiText
+
+/** Test-only wiring: actual candidate presenter/coordinator and real JNI.
+ * Button input is automated. This object is never compiled into release. */
+object KeyboardUiFixture {
+    @Volatile private var coordinator: KenjiUiCoordinator? = null
+    private val main = Handler(Looper.getMainLooper())
+    private fun findEdit(view: View): EditText? {
+        if (view is EditText) return view
+        if (view is ViewGroup) for (i in 0 until view.childCount) {
+            findEdit(view.getChildAt(i))?.let { return it }
+        }
+        return null
+    }
+    @JvmStatic fun configure(activity: Activity, bridge: KenjiBridge, generation: Long) {
+        lateinit var presenter: KenjiUiPresenter
+        lateinit var active: KenjiUiCoordinator
+        presenter = KenjiUiPresenter(activity) { id, accepted, text -> active.answer(id, accepted, text) }
+        active = KenjiUiCoordinator(
+            postMain = { task -> main.post { task() } },
+            present = { id, request ->
+                presenter.show(id, request)
+                Log.i("SymEngineStage", "UI_REAL_DIALOG title=${request.title} initial=${request.initialText}")
+                main.postDelayed({
+                    try {
+                        val field = KenjiUiPresenter::class.java.getDeclaredField("dialog")
+                        field.isAccessible = true
+                        val dialog = field.get(presenter) as AlertDialog
+                        check(dialog.isShowing)
+                        val input = checkNotNull(findEdit(dialog.window!!.decorView))
+                        check(input.text.toString() == "Seed")
+                        input.setText("Привет🎮")
+                        check(dialog.getButton(AlertDialog.BUTTON_POSITIVE).performClick())
+                        Log.i("SymEngineStage", "UI_REAL_CLICK_OK")
+                    } catch (t: Throwable) {
+                        Log.e("SymEngineStage", "UI_REAL_FAIL dialog", t)
+                    }
+                }, 250)
+            },
+            dismiss = { presenter.dismiss() },
+            reply = { accepted, bytes ->
+                val ok = bridge.nativeUiRespond(generation, accepted, bytes)
+                Log.i("SymEngineStage", "UI_REAL_RESPONSE accepted=$accepted result=$ok")
+                ok
+            },
+            onError = { Log.e("SymEngineStage", "UI_REAL_FAIL $it") },
+        )
+        coordinator = active
+    }
+    private fun copy(pointer: Long): String {
+        val method = KenjinxNative::class.java.getMethod("nativeCopyUiText", java.lang.Long.TYPE)
+        val bytes = method.invoke(null, pointer) as? ByteArray ?: error("native text copy failed")
+        return KenjiUiText.decode(bytes) ?: error("text is not valid UTF-8")
+    }
+    @JvmStatic fun request(title: Long, message: Long, watermark: Long, type: Int,
+            min: Int, max: Int, mode: Int, subtitle: Long, initial: Long) {
+        try {
+            // Copy synchronously; guest-owned pointers may expire on return.
+            val request = KenjiUiRequest(copy(title), copy(message), copy(watermark), type,
+                min, max, mode, copy(subtitle), copy(initial))
+            Log.i("SymEngineStage", "UI_REAL_COPIED title=${request.title} message=${request.message} watermark=${request.watermark} subtitle=${request.subtitle} initial=${request.initialText} type=$type min=$min max=$max mode=$mode")
+            checkNotNull(coordinator).request(request)
+        } catch (t: Throwable) { Log.e("SymEngineStage", "UI_REAL_FAIL callback copy", t) }
+    }
+}

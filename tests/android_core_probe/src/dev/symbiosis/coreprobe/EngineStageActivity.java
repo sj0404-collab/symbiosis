@@ -6,6 +6,8 @@ import android.util.Log;
 import android.view.SurfaceHolder;
 import android.view.SurfaceView;
 import java.io.File;
+import java.io.FileOutputStream;
+import java.nio.charset.StandardCharsets;
 import org.kenjinx.android.KenjinxNative;
 import org.yuzu.yuzu_emu.utils.KenjiBridge;
 
@@ -17,6 +19,14 @@ public final class EngineStageActivity extends Activity {
     private String flavor;
     private static native int nativeWindowWidth(long handle);
     private void step(String name) { Log.i(TAG, "ENGINE_STAGE core=" + flavor + " " + name); }
+    // Test-only durable breadcrumb: logcat may drop lines under guest load.
+    private void inputStep(String name) {
+        try (FileOutputStream output = new FileOutputStream(new File(getFilesDir(), "input-stage.txt"))) {
+            output.write(name.getBytes(StandardCharsets.UTF_8));
+            output.flush();
+        } catch (Exception e) { Log.e(TAG, "ENGINE_FAIL input breadcrumb", e); }
+        step(name);
+    }
     private boolean check(String name, String value) {
         if (value == null || !value.isEmpty()) {
             Log.e(TAG, "ENGINE_FAIL core=" + flavor + " " + name + " result=" + value);
@@ -64,24 +74,30 @@ public final class EngineStageActivity extends Activity {
                                     // through the Eden overlay. Ordinal 16 is Plus in the
                                     // related Ryujinx input enum; behavior must be observed.
                                     Thread.sleep(3000);
-                                    step("BEFORE_plus_press");
+                                    inputStep("BEFORE_plus_press");
                                     bridge.nativeInputButton(16, 0, true);
-                                    step("AFTER_plus_press BEFORE_update_pressed");
+                                    inputStep("AFTER_plus_press BEFORE_update_pressed");
                                     bridge.nativeUpdateInput();
-                                    step("AFTER_update_pressed");
+                                    inputStep("AFTER_update_pressed");
                                     Thread.sleep(1500);
-                                    step("BEFORE_plus_release");
+                                    inputStep("BEFORE_plus_release");
                                     bridge.nativeInputButton(16, 0, false);
-                                    step("AFTER_plus_release BEFORE_update_released");
+                                    inputStep("AFTER_plus_release BEFORE_update_released");
                                     bridge.nativeUpdateInput();
-                                    step("AFTER_update_released");
+                                    inputStep("AFTER_update_released");
                                     Log.i(TAG, "HOMEBREW_INPUT_SENT core=" + flavor + " plus=16 pad=0");
                                 }
                                 return;
                             }
                         }
                         Log.e(TAG, "ENGINE_FAIL homebrew no frame callback in 60 seconds");
-                    } catch (InterruptedException e) { Thread.currentThread().interrupt(); }
+                    } catch (InterruptedException e) {
+                        inputStep("observer_INTERRUPTED");
+                        Thread.currentThread().interrupt();
+                    } catch (Throwable t) {
+                        inputStep("observer_EXCEPTION");
+                        Log.e(TAG, "ENGINE_FAIL frame observer exception", t);
+                    }
                 }}, "frame-observer").start();
                 step("BEFORE_realRendererRunLoop");
                 String result = bridge.nativeRunLoop();
@@ -129,7 +145,9 @@ public final class EngineStageActivity extends Activity {
                 if (getIntent().getBooleanExtra("ui_response", false)) {
                     long generation = bridge.nativeUiActivate();
                     if (generation <= 0) { Log.e(TAG, "ENGINE_FAIL UI response activation"); return; }
-                    KeyboardFixture.configure(bridge, generation);
+                    boolean realUi = getIntent().getBooleanExtra("ui_real", false);
+                    if (realUi) KeyboardUiFixture.configure(this, bridge, generation);
+                    KeyboardFixture.configure(bridge, generation, realUi);
                     step("realUiResponse_ACTIVATED");
                 }
                 step("BEFORE_realUiSetup");

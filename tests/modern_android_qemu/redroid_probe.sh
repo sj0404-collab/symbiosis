@@ -102,6 +102,7 @@ matrix_rc=not-run
 sdl_surface_rc=not-run
 swkbd_rc=not-run
 swkbd_response_rc=not-run
+swkbd_ui_rc=not-run
 if [ "$engine_rc" = 0 ]; then
   HOMEBREW_SAMPLE=sdl timeout 600s bash tests/android_core_probe/homebrew.sh
   sdl_rc=$?
@@ -119,8 +120,10 @@ if [ "$engine_rc" = 0 ]; then
   if [ "$install_rc" = 0 ]; then
     HOMEBREW_SAMPLE=swkbd-response timeout 600s bash tests/android_core_probe/homebrew.sh
     swkbd_response_rc=$?
-  else swkbd_response_rc=install-failed; fi
+    HOMEBREW_SAMPLE=swkbd-ui timeout 600s bash tests/android_core_probe/homebrew.sh
+    swkbd_ui_rc=$?
+  else swkbd_response_rc=install-failed; swkbd_ui_rc=install-failed; fi
 fi
 set -e
-printf 'STANDALONE_EXIT=%s ACTIVITY_EXIT=%s ENGINE_EXIT=%s SDL_EXIT=%s SNAKE_EXIT=%s MATRIX_EXIT=%s SDL_SURFACE_EXIT=%s SWKBD_EXIT=%s SWKBD_RESPONSE_EXIT=%s\n' "$standalone_rc" "$activity_rc" "$engine_rc" "$sdl_rc" "$snake_rc" "$matrix_rc" "$sdl_surface_rc" "$swkbd_rc" "$swkbd_response_rc" | tee -a "$W/redroid-status.txt"
-if [ "$standalone_rc" != 0 ] || [ "$activity_rc" != 0 ] || [ "$engine_rc" != 0 ] || [ "$sdl_rc" != 0 ] || [ "$snake_rc" != 0 ] || [ "$matrix_rc" != 0 ] || [ "$sdl_surface_rc" != 0 ] || [ "$swkbd_rc" != 0 ] || [ "$swkbd_response_rc" != 0 ]; then exit 1; fi
+printf 'STANDALONE_EXIT=%s ACTIVITY_EXIT=%s ENGINE_EXIT=%s SDL_EXIT=%s SNAKE_EXIT=%s MATRIX_EXIT=%s SDL_SURFACE_EXIT=%s SWKBD_EXIT=%s SWKBD_RESPONSE_EXIT=%s SWKBD_UI_EXIT=%s\n' "$standalone_rc" "$activity_rc" "$engine_rc" "$sdl_rc" "$snake_rc" "$matrix_rc" "$sdl_surface_rc" "$swkbd_rc" "$swkbd_response_rc" "$swkbd_ui_rc" | tee -a "$W/redroid-status.txt"
+if [ "$standalone_rc" != 0 ] || [ "$activity_rc" != 0 ] || [ "$engine_rc" != 0 ] || [ "$sdl_rc" != 0 ] || [ "$snake_rc" != 0 ] || [ "$matrix_rc" != 0 ] || [ "$sdl_surface_rc" != 0 ] || [ "$swkbd_rc" != 0 ] || [ "$swkbd_response_rc" != 0 ] || [ "$swkbd_ui_rc" != 0 ]; then exit 1; fi

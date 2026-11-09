@@ -8,12 +8,18 @@ import java.nio.charset.StandardCharsets;
 public final class KeyboardFixture {
     private static volatile KenjiBridge bridge;
     private static volatile long generation;
-    public static void configure(KenjiBridge value, long token) {
+    private static volatile boolean realUi;
+    public static void configure(KenjiBridge value, long token, boolean useRealUi) {
         bridge = value;
         generation = token;
+        realUi = useRealUi;
     }
     public static void onRequest(long title, long message, long watermark, int type,
             int min, int max, int mode, long subtitle, long initial) {
+        if (realUi) {
+            KeyboardUiFixture.request(title, message, watermark, type, min, max, mode, subtitle, initial);
+            return;
+        }
         final KenjiBridge target = bridge;
         final long token = generation;
         Log.i("SymEngineStage", "UI_TEST_CALLBACK type=" + type + " min=" + min + " max=" + max + " mode=" + mode);

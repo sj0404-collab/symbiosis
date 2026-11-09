@@ -66,6 +66,8 @@ done
   "$ROOT/patch/android/utils/KenjiUiCoordinator.kt" \
   "$ROOT/patch/android/activities/KenjiUiPresenter.kt" \
   "$ROOT/tests/android_core_probe/src/dev/symbiosis/coreprobe/UiProbeActivity.kt" \
+  "$ROOT/tests/android_core_probe/src/dev/symbiosis/coreprobe/KeyboardUiFixture.kt" \
+  "$ROOT/tests/android_core_probe/src/org/yuzu/yuzu_emu/utils/KenjiBridge.java" \
   -jvm-target 17 -classpath "$ANDROID_JAR" -d "$WORK/classes"
 javac -encoding UTF-8 -source 8 -target 8 -bootclasspath "$ANDROID_JAR" \
   -classpath "$WORK/classes:$KOTLINC_HOME/lib/kotlin-stdlib.jar" -d "$WORK/classes" \
@@ -110,7 +112,8 @@ old = ') { /* software keyboard — ignore */ }'
 new = (') {\n'
        '        dev.symbiosis.coreprobe.KeyboardFixture.onRequest(newTitlePointer, newMessagePointer,\n'
        '            newWatermarkPointer, newType, min, max, nMode, newSubtitlePointer, newInitialTextPointer)\n'
-       '    }')
+       '    }\n\n'
+       '    @JvmStatic external fun nativeCopyUiText(pointer: Long): ByteArray?')
 if source.count(old) != 1: raise SystemExit('production callback changed; test instrumentation aborted')
 Path(sys.argv[2]).write_text(source.replace(old, new))
 PYCODE

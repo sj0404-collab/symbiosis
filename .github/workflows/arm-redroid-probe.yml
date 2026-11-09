@@ -141,6 +141,7 @@ jobs:
             /tmp/redroid-probe/*-logcat.txt
             /tmp/redroid-probe/*-probe-crash.txt
             /tmp/redroid-probe/*-input-hang-*.txt
+            /tmp/redroid-probe/*-input-stage.txt
             /tmp/redroid-probe/*-kenji-stdout.txt
             /tmp/redroid-probe/*-kenji-jni.txt
             /tmp/redroid-probe/*-homebrew-screen.png

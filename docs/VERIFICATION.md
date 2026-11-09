@@ -5777,3 +5777,20 @@ SDL прошли; `SWKBD_EXIT=1`. [Логи](https://github.com/sj0404-collab/sy
 callback, отправляющая в настоящее ядро по JNI фиксированный тестовый ответ;
 оригинальный callback и release guard не изменены. Успех будет считаться только
 при реально возвращённом ответе гостя, а не при вызове JNI.
+
+[Run 42680037094](https://github.com/sj0404-collab/symbiosis/actions/runs/42680037094),
+`0a73034`: после baseline с неизменённым пустым production callback в отдельной
+**только тестовой** APK callback отправил диагностический текст `CI_Arena`
+в настоящее ядро через production JNI response gate. На обоих ядрах реально
+получен callback `type=2 min=1 max=24 mode=2`, функция ответа вернулась true,
+а гостевой `swkbdShow` вернул `rc=0` и текст `CI_Arena`. Это доказывает
+один сценарий передачи ответа, но не Android-диалог, кодировку и копирование
+входных указателей, отмену, параллельные запросы или безопасное завершение и
+не оправдывает выпуск. Сценарий baseline остался без ответа, старый SDL упал.
+Snake Sym снова показал `input-not-sent`: после `AFTER_update_pressed` прочих
+этапов в logcat нет. Root `debuggerd` успешно сохранил реальный стек всех
+потоков; к моменту снятия поток `frame-observer` не виден, следовательно
+нельзя утверждать что он тогда висел внутри `inputUpdate`. Возможны потеря
+логов или завершение/прерывание потока — причина не установлена. Итого
+`SDL_EXIT=1 SNAKE_EXIT=1 MATRIX_EXIT=0 SDL_SURFACE_EXIT=0 SWKBD_EXIT=1
+SWKBD_RESPONSE_EXIT=0`. [Логи и стек](https://github.com/sj0404-collab/symbiosis/actions/runs/42680037094/artifacts/13701913851).
