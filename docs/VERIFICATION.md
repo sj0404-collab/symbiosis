@@ -5495,3 +5495,13 @@ reference + Android SurfaceView прошли независимо. [Логи](ht
 данных; естественный отказ, timeout или crash сохраняются как отказ, без
 фиктивных заглушек. `graphicsInitializeRenderer` returning true само по себе
 не доказывает создание Vulkan surface и кадры.
+
+[Run 42658790475](https://github.com/sj0404-collab/symbiosis/actions/runs/42658790475),
+`c71dea6`: Android 15 ARM64 вновь загрузился, оба настоящих ядра повторно
+прошли `javaInitialize` и вернули успех от `graphicsInitialize`. Дополнительная
+диагностика до вызова рендерера остановилась на `native window unavailable`
+из-за собственного теста `window <= 0`: пока неясно, был ли это -1 (ошибка) или
+отрицательный Java `long` с допустимым ARM64 адресом. [Логи](https://github.com/sj0404-collab/symbiosis/actions/runs/42658790475/artifacts/13693871656).
+Тест уточняется: логирует битовый шаблон, проверяет sentinel -1 и 0, затем
+проверяет фактический `ANativeWindow_getWidth` на полученном адресе. До
+получения результатов причину и применимость к приложению не считать доказанными.

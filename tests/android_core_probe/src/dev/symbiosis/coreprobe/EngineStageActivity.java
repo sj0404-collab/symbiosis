@@ -15,6 +15,7 @@ public final class EngineStageActivity extends Activity {
     private static final String TAG = "SymEngineStage";
     private boolean started;
     private String flavor;
+    private static native int nativeWindowWidth(long handle);
     private void step(String name) { Log.i(TAG, "ENGINE_STAGE core=" + flavor + " " + name); }
     private boolean check(String name, String value) {
         if (value == null || !value.isEmpty()) {
@@ -45,6 +46,7 @@ public final class EngineStageActivity extends Activity {
         try {
             step("START no_firmware_no_keys_no_game");
             System.loadLibrary("symbiosis_kenji");
+            System.loadLibrary("graphics_reference_probe");
             KenjiBridge bridge = new KenjiBridge();
             bridge.nativeSetCrashLog(new File(getFilesDir(), "engine-crash.txt").getAbsolutePath());
             File core = new File(getApplicationInfo().nativeLibraryDir, "libcore_" + flavor + ".so");
@@ -57,7 +59,14 @@ public final class EngineStageActivity extends Activity {
             if (!check("graphicsInitialize", bridge.nativeGraphicsInit(1f, 0f, true, true,
                     false, true, true, false, 1))) return;
             long window = bridge.nativeWindowOf(holder.getSurface());
-            if (window <= 0) { Log.e(TAG, "ENGINE_FAIL native window unavailable"); return; }
+            // Native pointers are bit patterns, not signed Java numbers. ARM64
+            // top-byte tags may set the sign bit. JNI returns -1 on failure.
+            step("nativeWindow valid=" + holder.getSurface().isValid() +
+                    " bits=0x" + Long.toHexString(window));
+            if (window == 0 || window == -1) { Log.e(TAG, "ENGINE_FAIL native window unavailable"); return; }
+            int width = nativeWindowWidth(window);
+            step("nativeWindowWidth=" + width);
+            if (width <= 0) { Log.e(TAG, "ENGINE_FAIL invalid native window width"); return; }
             KenjinxNative.INSTANCE.setNativeSurface(window);
             KenjinxNative.INSTANCE.setNativeWindow(window);
             step("BEFORE_graphicsInitializeRenderer");

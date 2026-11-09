@@ -113,3 +113,12 @@ Java_dev_symbiosis_coreprobe_GraphicsProbeActivity_nativeRun(JNIEnv* env, jclass
                         "GRAPHICS_REFERENCE_OK cases=%d public_surface=8", cases);
     return env->NewStringUTF("");
 }
+
+// This pointer comes directly from ANativeWindow_fromSurface in the bridge.
+// A positive width proves that Android can actually use that returned pointer,
+// including on ARM64 when its top byte makes the corresponding jlong negative.
+extern "C" JNIEXPORT jint JNICALL
+Java_dev_symbiosis_coreprobe_EngineStageActivity_nativeWindowWidth(JNIEnv*, jclass, jlong handle) {
+    if (handle == 0 || handle == -1) return -1;
+    return ANativeWindow_getWidth(reinterpret_cast<ANativeWindow*>(handle));
+}
