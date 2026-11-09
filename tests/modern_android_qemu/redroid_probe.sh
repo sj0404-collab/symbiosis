@@ -89,6 +89,13 @@ timeout 900s python3 tests/standalone_core_probe/run.py "$W" --preload-tls
 standalone_rc=$?
 timeout 900s bash tests/android_core_probe/run.sh
 activity_rc=$?
+# Real, further engine calls run only after the preceding independent tests.
+# Missing firmware/keys may legitimately block them; do not invent success.
+engine_rc=not-run
+if [ "$standalone_rc" = 0 ] && [ "$activity_rc" = 0 ]; then
+  timeout 900s bash tests/android_core_probe/engine_stages.sh
+  engine_rc=$?
+fi
 set -e
-printf 'STANDALONE_EXIT=%s ACTIVITY_EXIT=%s\n' "$standalone_rc" "$activity_rc" | tee -a "$W/redroid-status.txt"
-if [ "$standalone_rc" != 0 ] || [ "$activity_rc" != 0 ]; then exit 1; fi
+printf 'STANDALONE_EXIT=%s ACTIVITY_EXIT=%s ENGINE_EXIT=%s\n' "$standalone_rc" "$activity_rc" "$engine_rc" | tee -a "$W/redroid-status.txt"
+if [ "$standalone_rc" != 0 ] || [ "$activity_rc" != 0 ] || [ "$engine_rc" != 0 ]; then exit 1; fi

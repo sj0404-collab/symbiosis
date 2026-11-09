@@ -5475,3 +5475,23 @@ ARM64 manifest digest `sha256:dc2024a999dd0acb1112a23cddc9537ec8cb60a0dbe5a87ce9
 самотеста: 64-битный образ должен выполнить свои настоящие проверки сам.
 Системный `prng_seeder` также сообщал об отсутствии `/dev/hw_random`; причина
 и влияние ещё не проверены, фиктивный RNG не подставляется.
+
+[Run 42657966425](https://github.com/sj0404-collab/symbiosis/actions/runs/42657966425),
+`78bdb99`: опубликованный upstream 64-bit-only Redroid Android 15 на настоящем
+ARM64-хосте, `sys.boot_completed=1`, SDK 35, ABI `arm64-v8a`, native bridge 0,
+`HWCAP=0xeeffffff`, отсутствующих необходимых битов 0. Оба закреплённых реальных
+ядра отдельно загрузились (`dlopen`, 11/11 exports) и выполнили в ART
+`javaInitialize=true` и TLS context smoke с пакетным OpenSSL. Отдельные процессы
+в диагностическом Activity с production C++ мостом также дали
+`PROBE_OK core=sym` и `PROBE_OK core=space` для `javaInitialize` (через 2 с без
+наблюдаемого падения). Synthetic UI, test-only mock JNI и сравнение transform
+reference + Android SurfaceView прошли независимо. [Логи](https://github.com/sj0404-collab/symbiosis/actions/runs/42657966425/artifacts/13693516360).
+
+Это **не** официальный Android Emulator и не телефон. Здесь не было игры,
+прошивки, ключей, запуска реального рендерера, кадра или HID 710; UI/graphics
+тесты выше не доказывают графику ядра. Следующая CI-only стадия вызывает у
+каждого ядра по очереди графическую конфигурацию, инициализацию рендерера,
+устройства и ввода через настоящий мост с SurfaceView, без пользовательских
+данных; естественный отказ, timeout или crash сохраняются как отказ, без
+фиктивных заглушек. `graphicsInitializeRenderer` returning true само по себе
+не доказывает создание Vulkan surface и кадры.

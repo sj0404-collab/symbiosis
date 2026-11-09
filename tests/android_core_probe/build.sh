@@ -63,8 +63,10 @@ done
   "$ROOT/patch/android/activities/KenjiUiPresenter.kt" \
   "$ROOT/tests/android_core_probe/src/dev/symbiosis/coreprobe/UiProbeActivity.kt" \
   -jvm-target 17 -classpath "$ANDROID_JAR" -d "$WORK/classes"
-javac -encoding UTF-8 -source 8 -target 8 -bootclasspath "$ANDROID_JAR" -d "$WORK/classes" \
+javac -encoding UTF-8 -source 8 -target 8 -bootclasspath "$ANDROID_JAR" \
+  -classpath "$WORK/classes:$KOTLINC_HOME/lib/kotlin-stdlib.jar" -d "$WORK/classes" \
   "$ROOT/tests/android_core_probe/src/org/yuzu/yuzu_emu/utils/KenjiBridge.java" \
+  "$ROOT/tests/android_core_probe/src/dev/symbiosis/coreprobe/EngineStageActivity.java" \
   "$ROOT/tests/android_core_probe/src/dev/symbiosis/coreprobe/ProbeActivity.java" \
   "$ROOT/tests/android_core_probe/src/dev/symbiosis/coreprobe/GraphicsProbeActivity.java"
 # A tiny app_process entry and the actual production callback class, packaged
