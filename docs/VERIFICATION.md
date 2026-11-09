@@ -5722,3 +5722,22 @@ SIGABRT после .NET `SurfaceFlinger.Compose` NullReferenceException; это 
 прошли на обоих ядрах, Plus в общей памяти 0→1→0. Итог Android job failed из-за
 старого SDL (`SDL_EXIT=1`, `SDL_SURFACE_EXIT=0`). Это не игра, не телефон и не
 проверка Eden overlay. [Логи и снимки](https://github.com/sj0404-collab/symbiosis/actions/runs/42672975856/artifacts/13699143333).
+
+[Run 42673877876](https://github.com/sj0404-collab/symbiosis/actions/runs/42673877876),
+`580ac94`: основной набор тестов прошёл, Android job был пропущен, build job
+отсутствует в списке GitHub API, workflow завершился failure без Android-лога;
+причина scheduler failure неизвестна. Повтор failed jobs API отклонил (`This
+workflow run cannot be retried`), выполнен новый запуск.
+
+[Run 42675512327](https://github.com/sj0404-collab/symbiosis/actions/runs/42675512327),
+тот же `580ac94`: SDL 2.28.5 surface на обоих ядрах дошёл до present frame 59,
+выполнил `SDL_DestroyWindow` и `SDL_Quit`, после чего наблюдался ещё около
+четырёх секунд без зафиксированного краша; затем процесс принудительно остановлен.
+Полный выход guest/закрытие плеера не проверено. Старый SDL всё ещё падает.
+HID matrix и кнопки прошли на обоих; повтор Snake на Sym отобразил кадры и
+прошёл press/update и release, но `nativeUpdateInput` после release до
+таймаута не вернулся; на Space все шаги прошли. Причина задержки неизвестна,
+это не следует автоматически списывать на runner или игру. Для следующего
+таймаута добавлен сбор native backtrace до force-stop. Итог: `SDL_EXIT=1
+SNAKE_EXIT=1 MATRIX_EXIT=0 SDL_SURFACE_EXIT=0`, workflow failed.
+[Логи](https://github.com/sj0404-collab/symbiosis/actions/runs/42675512327/artifacts/13701085568).

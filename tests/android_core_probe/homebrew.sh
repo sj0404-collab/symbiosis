@@ -90,6 +90,16 @@ for core in sym space; do
     fi
     sleep 1
   done
+  if [ "$outcome" = input-not-sent ]; then
+    # The test observer may be stuck inside a real core call. Collect an actual
+    # native backtrace before force-stop rather than guessing or declaring pass.
+    pid=$(timeout 5s adb shell pidof "$APP" 2>/dev/null | tr -d '\r' | awk '{print $1}' || true)
+    printf 'outcome=%s pid=%s\n' "$outcome" "$pid" > "$PROBE_WORK/$core-$sample-input-hang-state.txt"
+    if [[ "$pid" =~ ^[0-9]+$ ]]; then
+      timeout 25s adb shell debuggerd -b "$pid" > "$PROBE_WORK/$core-$sample-input-hang-backtrace.txt" 2>&1 || true
+      timeout 5s adb shell "cat /proc/$pid/status" >> "$PROBE_WORK/$core-$sample-input-hang-state.txt" 2>&1 || true
+    fi
+  fi
   adb exec-out run-as "$APP" cat files/engine-crash.txt > "$PROBE_WORK/$core-$sample-homebrew-probe-crash.txt" 2>/dev/null || true
   # Retain a screenshot even on an inconclusive input result if frames were
   # observed. It is evidence to inspect, not an automatic pass.
