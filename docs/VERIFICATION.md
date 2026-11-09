@@ -5755,3 +5755,12 @@ required`, поэтому стек в этом run недоступен. Исп�
 наблюдения гостя; при настоящем таймауте вызвать debuggerd от root исключительно
 в disposable Redroid. Это не отменяет отсутствие `AFTER_update_released` в
 предыдущем run 42675512327. [Логи и снимки](https://github.com/sj0404-collab/symbiosis/actions/runs/42676491441/artifacts/13701356385).
+
+[Run 42677566218](https://github.com/sj0404-collab/symbiosis/actions/runs/42677566218),
+`4138b8f`: Snake и HID matrix на обоих ядрах дошли до `AFTER_update_released`;
+у matrix дополнительно наблюдался реальный переход гостевого HID 0→1→0. SDL
+2.28.5 прошёл кадры и закрытие на обоих ядрах, старый SDL оба раза SIGABRT.
+Итог Android job failed: `SDL_EXIT=1 SNAKE_EXIT=0 MATRIX_EXIT=0 SDL_SURFACE_EXIT=0`.
+Root-сбор backtrace в этом run не сработал, потому что таймаута ввода не было;
+его работоспособность остаётся непроверенной, прежний эпизод отсутствия
+`AFTER_update_released` не объяснён. [Логи](https://github.com/sj0404-collab/symbiosis/actions/runs/42677566218/artifacts/13701566501).
