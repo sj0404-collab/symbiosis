@@ -1,0 +1,81 @@
+name: Native ARM Android container probe (not a release)
+on:
+  workflow_call:
+permissions:
+  contents: read
+jobs:
+  build-probe:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      PROBE_WORK: /tmp/redroid-probe
+      KOTLINC_HOME: /tmp/kotlinc
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v4
+      - name: Build disposable diagnostic harness, never a release APK
+        run: |
+          set -euo pipefail
+          sdkmanager --install 'ndk;28.2.13676358' 'platforms;android-35' 'build-tools;35.0.0'
+          curl -fsSL --retry 3 -o /tmp/kotlin.zip https://github.com/JetBrains/kotlin/releases/download/v2.0.21/kotlin-compiler-2.0.21.zip
+          unzip -q /tmp/kotlin.zip -d /tmp
+          bash tests/android_core_probe/build.sh
+      - name: Transfer temporary test-only harness to the ARM test job
+        uses: actions/upload-artifact@v4
+        with:
+          name: temporary-redroid-tests-not-a-release
+          path: |
+            /tmp/redroid-probe/core-probe.apk
+            /tmp/redroid-probe/standalone-core-probe
+            /tmp/redroid-probe/standalone.jar
+            /tmp/redroid-probe/libstandalonejni.so
+            /tmp/redroid-probe/core_sym.so
+            /tmp/redroid-probe/core_space.so
+            /tmp/redroid-probe/apk/lib/arm64-v8a/libkenjinxjni.so
+            /tmp/redroid-probe/apk/lib/arm64-v8a/libcrypto.so
+            /tmp/redroid-probe/apk/lib/arm64-v8a/libssl.so
+          if-no-files-found: error
+          retention-days: 1
+
+  android-on-arm:
+    needs: build-probe
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 40
+    env:
+      PROBE_WORK: /tmp/redroid-probe
+      ANDROID_SERIAL: 127.0.0.1:5558
+      PROBE_WAIT_SECONDS: '180'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        with:
+          name: temporary-redroid-tests-not-a-release
+          path: /tmp/redroid-probe
+      - name: Install genuine Android Debug Bridge
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends adb
+      - name: Boot pinned ARM Android container and run independent probes
+        run: bash tests/modern_android_qemu/redroid_probe.sh
+      - name: Save logs only (never test APK, cores, or system image)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: redroid-arm64-android15-test-logs
+          path: |
+            /tmp/redroid-probe/redroid-*.txt
+            /tmp/redroid-probe/standalone-*.txt
+            /tmp/redroid-probe/*-logcat.txt
+            /tmp/redroid-probe/*-probe-crash.txt
+            /tmp/redroid-probe/*-kenji-stdout.txt
+            /tmp/redroid-probe/*-kenji-jni.txt
+          if-no-files-found: warn
+          retention-days: 3

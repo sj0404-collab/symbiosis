@@ -5418,3 +5418,27 @@ Handshake запускался отдельным процессом, а не и
 trust store, реальная сеть, полная совместимость TLS-функций приложения,
 16-КБ система и выравнивание APK всё ещё не проверены. Candidate не установлен
 в продукт и release guard остаётся включён; OpenSSL 1.1.1l остаётся EOL.
+
+### 101. ARM-host emulator: Java работает, ISA не хватает
+
+[Run 42651789894](https://github.com/sj0404-collab/symbiosis/actions/runs/42651789894),
+`0de2c50`, ARM-host AOSP emulator 35.6.3 с TCG и оригинальным Android 15 ARM:
+ADB shell и standalone ART smoke прошли (`JAVA_SMOKE_OK`, exit 0), оба реальных
+ядра отдельно `DLOPEN_OK`, exports 11/11. Фактический HWCAP гостя `0x8ff`, нет
+ATOMICS/ASIMDRDM (`0x1100`). После настоящего preload TLS и начала `javaInitialize`
+оба ядра независимо завершились SIGABRT 134 с `The required instruction sets
+are not supported by the current CPU`. Нет успеха JNI, игра не запускалась;
+`sys.boot_completed=0` и Activity не тестировалась. QEMU был запущен с `-cpu
+max`, но его фактически объявленные возможности недостаточны. Это ограничение
+виртуальной CPU-модели, а не доказательство того же на устройстве.
+[Журналы](https://github.com/sj0404-collab/symbiosis/actions/runs/42651789894/artifacts/13691970991).
+
+Следующий независимый эксперимент — Redroid Android 15 ARM64 как контейнер
+на настоящем ARM runner, используя реальный Binder kernel driver и программную
+графику. Это **контейнеризированная Android-система, не официальный Android
+Emulator и не физический телефон**. Исходный Docker image зафиксирован по
+ARM64 digest `sha256:b21c57533662275928832602f7c09b83cb198aa9b271135ae49d978857d6795f`;
+никакой контент контейнера не поставляется в приложение. Одноразовый probe APK
+с тестовыми фикстурами передаётся только между CI jobs на 1 день и никогда не
+является релизом. Нужны реальные `sys.boot_completed`, ABI, затем отдельные
+loader/JNI и Activity/graphics; до результата успешной загрузки нет.
