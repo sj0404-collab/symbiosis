@@ -96,11 +96,14 @@ if [ "$standalone_rc" = 0 ] && [ "$activity_rc" = 0 ]; then
   timeout 900s bash tests/android_core_probe/engine_stages.sh
   engine_rc=$?
 fi
-homebrew_rc=not-run
+sdl_rc=not-run
+snake_rc=not-run
 if [ "$engine_rc" = 0 ]; then
-  timeout 600s bash tests/android_core_probe/homebrew.sh
-  homebrew_rc=$?
+  HOMEBREW_SAMPLE=sdl timeout 600s bash tests/android_core_probe/homebrew.sh
+  sdl_rc=$?
+  HOMEBREW_SAMPLE=snake timeout 600s bash tests/android_core_probe/homebrew.sh
+  snake_rc=$?
 fi
 set -e
-printf 'STANDALONE_EXIT=%s ACTIVITY_EXIT=%s ENGINE_EXIT=%s HOMEBREW_EXIT=%s\n' "$standalone_rc" "$activity_rc" "$engine_rc" "$homebrew_rc" | tee -a "$W/redroid-status.txt"
-if [ "$standalone_rc" != 0 ] || [ "$activity_rc" != 0 ] || [ "$engine_rc" != 0 ] || [ "$homebrew_rc" != 0 ]; then exit 1; fi
+printf 'STANDALONE_EXIT=%s ACTIVITY_EXIT=%s ENGINE_EXIT=%s SDL_EXIT=%s SNAKE_EXIT=%s\n' "$standalone_rc" "$activity_rc" "$engine_rc" "$sdl_rc" "$snake_rc" | tee -a "$W/redroid-status.txt"
+if [ "$standalone_rc" != 0 ] || [ "$activity_rc" != 0 ] || [ "$engine_rc" != 0 ] || [ "$sdl_rc" != 0 ] || [ "$snake_rc" != 0 ]; then exit 1; fi

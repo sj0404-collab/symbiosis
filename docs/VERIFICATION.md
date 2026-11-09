@@ -5557,3 +5557,23 @@ NRO SHA256 `2c591bf8030f38567d8a1076b97203a98003f4faf2fbd9fbf7b1ced115f120b9`.
 Android stub `android.jar` в текущем `javac -bootclasspath` не содержит
 `LambdaMetafactory.metafactory`. В тестовом Activity лямбды заменены обычными
 `Runnable`; это только исправление тестовой оснастки, а не приложения/ядра.
+
+[Run 42661308560](https://github.com/sj0404-collab/symbiosis/actions/runs/42661308560),
+`e47a25f`: оба ядра загрузили открытый SDL NRO (`Application Loaded: Hello
+World`), вошли в настоящий renderer loop, определили Google SwiftShader Vulkan
+1.3 и исполнили гостевой код до `initialized SDL`, `created window`, `got
+window surface`. Затем оба ядра сообщили *гостевой* `SurfaceFlinger
+DequeueBuffer`: имеющийся буфер 1×1, запрос 1280×720, `NoInit`; кадра callback
+не было. Позже гостевая программа вышла, а в crash-файлах обоих процессов
+записан `SIGABRT` на стадии `graphicsRendererRunLoop`; у SymbEK logcat также
+содержит `NullReferenceException` в .NET worker без именованных функций.
+Классификация Symbiosis как `timeout` в исходном тесте ошибочна: crash-файл
+подтверждает SIGABRT даже без своевременного сообщения о смерти процесса.
+Это не доказательство причины падения и не установлено, вызвано ли оно
+буфером, завершением guest, тестовым плеером или программным Vulkan. Сохранены
+[полные логи](https://github.com/sj0404-collab/symbiosis/actions/runs/42661308560/artifacts/13694602277).
+
+Тест детектирует crash-файл во время ожидания и сравнивает вторую публичную
+libnx-программу [Cpp-Snake-NX 1.1.0](https://github.com/CompSciOrBust/Cpp-Snake-NX/releases/tag/1.1.0),
+SHA256 `982ff14c538bb94eb6d18411efe71e885006cf3e944da270d18cd2fa88442f16`,
+в том же окружении; это не утверждение об устранении crash или 710.
