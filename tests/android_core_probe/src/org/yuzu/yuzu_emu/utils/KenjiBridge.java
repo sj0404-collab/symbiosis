@@ -24,4 +24,7 @@ public final class KenjiBridge {
     public native String nativeInputInit(int width, int height);
     public native int nativeConnectPad(int index);
     public native boolean nativeUpdateInput();
+    public native String nativeLoadGame(int fd, int type);
+    public native String nativeRendererKick(int width, int height, int rotation);
+    public native String nativeRunLoop();
 }

@@ -42,6 +42,35 @@ public final class EngineStageActivity extends Activity {
         });
         setContentView(view);
     }
+    private void startHomebrew(KenjiBridge bridge) {
+        // Real, hash-pinned open-source NRO, copied only into this disposable
+        // CI app. Never included in a release and never a commercial game.
+        new Thread(() -> {
+            try (android.os.ParcelFileDescriptor fd = android.os.ParcelFileDescriptor.open(
+                    new File(getFilesDir(), "homebrew.nro"), android.os.ParcelFileDescriptor.MODE_READ_ONLY)) {
+                step("BEFORE_homebrewLoad_NRO");
+                if (!check("homebrewLoad", bridge.nativeLoadGame(fd.getFd(), 3))) return;
+                step("BEFORE_rendererKick");
+                if (!check("rendererKick", bridge.nativeRendererKick(1280, 720, 0))) return;
+                new Thread(() -> {
+                    try {
+                        for (int i = 0; i < 60; i++) {
+                            Thread.sleep(1000);
+                            long frames = KenjinxNative.INSTANCE.getFrames().get();
+                            if (frames > 0) {
+                                Log.i(TAG, "HOMEBREW_FRAME_CALLBACK core=" + flavor + " frames=" + frames);
+                                return;
+                            }
+                        }
+                        Log.e(TAG, "ENGINE_FAIL homebrew no frame callback in 60 seconds");
+                    } catch (InterruptedException e) { Thread.currentThread().interrupt(); }
+                }, "frame-observer").start();
+                step("BEFORE_realRendererRunLoop");
+                String result = bridge.nativeRunLoop();
+                Log.e(TAG, "ENGINE_FAIL renderer loop returned result=" + result);
+            } catch (Throwable t) { Log.e(TAG, "ENGINE_FAIL homebrew exception", t); }
+        }, "real-homebrew-engine").start();
+    }
     private void runProbe(SurfaceHolder holder) {
         try {
             step("START no_firmware_no_keys_no_game");
@@ -88,6 +117,7 @@ public final class EngineStageActivity extends Activity {
             step("inputConnectGamepad id=" + pad);
             if (pad < 0 || !bridge.nativeUpdateInput()) { Log.e(TAG, "ENGINE_FAIL input setup"); return; }
             Log.i(TAG, "ENGINE_STAGES_OK core=" + flavor + " no_game=true no_firmware=true frames_tested=false");
+            if (getIntent().getBooleanExtra("homebrew", false)) startHomebrew(bridge);
         } catch (Throwable t) { Log.e(TAG, "ENGINE_FAIL Java exception", t); }
     }
 }

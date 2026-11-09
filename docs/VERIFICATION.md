@@ -5528,3 +5528,26 @@ SHA256 `d63ccb1227308b331fd11bc5041671c3ac2842484779e309acd1bbf3bf061a4`;
 это исключительно тестовая зависимость и не идентична автоматически OpenAL,
 который самостоятельно собирает release workflow. Ни ошибка 710, ни игра не
 проверены, выпуск по-прежнему заблокирован.
+
+[Run 42660221800](https://github.com/sj0404-collab/symbiosis/actions/runs/42660221800),
+`064c4d5`: Android 15 ARM64 контейнер загрузился. С настоящими ядрами,
+production мостом и настоящей тестовой OpenAL из SymbEK отдельно для каждого
+ядра вернули успех `javaInitialize`, `graphicsInitialize`,
+`graphicsInitializeRenderer`, `deviceInitialize`, `inputInitialize`,
+`inputConnectGamepad` (id 0) и `inputUpdate`; ядро Symbiosis также сообщило
+ProController configured/connected. Живая Surface с отрицательным как `long`
+адресом дала ширину 720; в обоих процессах вызван production JNI release
+для второй ссылки и первая продолжала работать. [Логи](https://github.com/sj0404-collab/symbiosis/actions/runs/42660221800/artifacts/13693414696).
+Не проверялись игра, прошивка, кадр, Vulkan swapchain, звук на выходе,
+собранная release OpenAL, телефон и 710; `deviceInitialize` не означает
+запуск игры. Тест наблюдал 4 секунды после маркера и затем принудительно
+остановил процесс, штатное завершение/teardown не проверено.
+
+Следующий CI-only тест пробует публичный open-source sample
+[vgmoose/sdl-hello-world 1.1](https://github.com/vgmoose/sdl-hello-world/releases/tag/1.1),
+NRO SHA256 `2c591bf8030f38567d8a1076b97203a98003f4faf2fbd9fbf7b1ced115f120b9`.
+Без ключей и прошивки, без помещения NRO в релиз: для обоих ядер проверяются
+реальные `deviceLoadDescriptor`, настройки рендерера, цикл и frame callback;
+при callback сохраняется снимок экрана для отдельной проверки. Отказ, crash
+или отсутствие кадров не заменяются фиктивным результатом. Это homebrew, не
+игра пользователя и не воспроизведение его ошибки 710.

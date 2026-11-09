@@ -77,5 +77,6 @@ jobs:
             /tmp/redroid-probe/*-probe-crash.txt
             /tmp/redroid-probe/*-kenji-stdout.txt
             /tmp/redroid-probe/*-kenji-jni.txt
+            /tmp/redroid-probe/*-homebrew-screen.png
           if-no-files-found: warn
           retention-days: 3
