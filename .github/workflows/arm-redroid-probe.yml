@@ -47,6 +47,28 @@ jobs:
                 --nacp=/output/hid-matrix.nacp --icon=/opt/devkitpro/libnx/default_icon.jpg
               sha256sum /output/hid-matrix.nro
             '
+      - name: Compile self-authored modern SDL surface diagnostic
+        run: |
+          set -euo pipefail
+          IMAGE=devkitpro/devkita64@sha256:82575ea78651b530b2e232bb3799cfd1fe331514e053d5f724bb4b28191fb79d
+          docker run --rm --network none --cap-drop ALL --security-opt no-new-privileges \
+            --user "$(id -u):$(id -g)" --read-only --tmpfs /tmp:rw,nosuid,size=512m \
+            --mount "type=bind,src=$PWD/tests/sdl_android_surface,dst=/input,readonly" \
+            --mount "type=bind,src=$PROBE_WORK,dst=/output" --entrypoint /bin/bash "$IMAGE" -euc '
+              SDL_CONFIG=/opt/devkitpro/portlibs/switch/bin/sdl2-config
+              test -x "$SDL_CONFIG"
+              "$SDL_CONFIG" --version
+              dkp-pacman -Q switch-sdl2 libnx || true
+              /opt/devkitpro/devkitA64/bin/aarch64-none-elf-gcc \
+                -specs=/opt/devkitpro/libnx/switch.specs -march=armv8-a+crc+crypto \
+                -mtune=cortex-a57 -mtp=soft -fPIE -O2 -Wall -Wextra -D__SWITCH__ \
+                -I/opt/devkitpro/libnx/include $("$SDL_CONFIG" --cflags) /input/main.c \
+                -L/opt/devkitpro/libnx/lib $("$SDL_CONFIG" --libs) -o /output/sdl-surface.elf
+              nacptool --create "CI SDL surface" "Symbiosis CI" "1.0.0" /output/sdl-surface.nacp
+              elf2nro /output/sdl-surface.elf /output/sdl-surface.nro \
+                --nacp=/output/sdl-surface.nacp --icon=/opt/devkitpro/libnx/default_icon.jpg
+              sha256sum /output/sdl-surface.nro
+            '
       - name: Transfer temporary test-only harness to the ARM test job
         uses: actions/upload-artifact@v4
         with:
@@ -54,6 +76,7 @@ jobs:
           path: |
             /tmp/redroid-probe/core-probe.apk
             /tmp/redroid-probe/hid-matrix.nro
+            /tmp/redroid-probe/sdl-surface.nro
             /tmp/redroid-probe/standalone-core-probe
             /tmp/redroid-probe/standalone.jar
             /tmp/redroid-probe/libstandalonejni.so

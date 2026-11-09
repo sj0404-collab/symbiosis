@@ -99,6 +99,7 @@ fi
 sdl_rc=not-run
 snake_rc=not-run
 matrix_rc=not-run
+sdl_surface_rc=not-run
 if [ "$engine_rc" = 0 ]; then
   HOMEBREW_SAMPLE=sdl timeout 600s bash tests/android_core_probe/homebrew.sh
   sdl_rc=$?
@@ -106,7 +107,9 @@ if [ "$engine_rc" = 0 ]; then
   snake_rc=$?
   HOMEBREW_SAMPLE=matrix timeout 600s bash tests/android_core_probe/homebrew.sh
   matrix_rc=$?
+  HOMEBREW_SAMPLE=sdl-surface timeout 600s bash tests/android_core_probe/homebrew.sh
+  sdl_surface_rc=$?
 fi
 set -e
-printf 'STANDALONE_EXIT=%s ACTIVITY_EXIT=%s ENGINE_EXIT=%s SDL_EXIT=%s SNAKE_EXIT=%s MATRIX_EXIT=%s\n' "$standalone_rc" "$activity_rc" "$engine_rc" "$sdl_rc" "$snake_rc" "$matrix_rc" | tee -a "$W/redroid-status.txt"
-if [ "$standalone_rc" != 0 ] || [ "$activity_rc" != 0 ] || [ "$engine_rc" != 0 ] || [ "$sdl_rc" != 0 ] || [ "$snake_rc" != 0 ] || [ "$matrix_rc" != 0 ]; then exit 1; fi
+printf 'STANDALONE_EXIT=%s ACTIVITY_EXIT=%s ENGINE_EXIT=%s SDL_EXIT=%s SNAKE_EXIT=%s MATRIX_EXIT=%s SDL_SURFACE_EXIT=%s\n' "$standalone_rc" "$activity_rc" "$engine_rc" "$sdl_rc" "$snake_rc" "$matrix_rc" "$sdl_surface_rc" | tee -a "$W/redroid-status.txt"
+if [ "$standalone_rc" != 0 ] || [ "$activity_rc" != 0 ] || [ "$engine_rc" != 0 ] || [ "$sdl_rc" != 0 ] || [ "$snake_rc" != 0 ] || [ "$matrix_rc" != 0 ] || [ "$sdl_surface_rc" != 0 ]; then exit 1; fi
