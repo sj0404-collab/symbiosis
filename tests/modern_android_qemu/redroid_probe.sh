@@ -5,7 +5,10 @@ set -Eeuo pipefail
 : "${PROBE_WORK:?}" "${ANDROID_SERIAL:?}"
 W=$PROBE_WORK
 B=/tmp/redroid-binderfs
-IMAGE=redroid/redroid@sha256:b21c57533662275928832602f7c09b83cb198aa9b271135ae49d978857d6795f
+# Published 64-bit-only Android 15 ARM64 image: the ARM host kernel cannot
+# execute the 32-bit service from the multi-ABI variant. This does not skip or
+# fake BoringSSL self-tests; the image must execute its real 64-bit checks.
+IMAGE=redroid/redroid@sha256:dc2024a999dd0acb1112a23cddc9537ec8cb60a0dbe5a87ce9fbd75a2f5e94d2
 mkdir -p "$W" "$B"
 mounted=0
 container_started=0

@@ -5462,3 +5462,16 @@ Binderfs устройства на хосте создавались kernel ioct
 Кандидат следующего запуска проверяет реальное `open(O_RDWR)` каждого файла на
 хосте и пробрасывает сам inode bind mount в контейнер; это гипотеза, а не
 заявление об исправлении, требуется повторный тест. APK и ядра не запускались.
+
+[Run 42657311995](https://github.com/sj0404-collab/symbiosis/actions/runs/42657311995),
+`e3a4442`: все три настоящих binderfs устройства открылись на ARM хосте. После
+bind-mount файлов Android init продвинулся до самотеста BoringSSL, который не
+запустился из-за `Exec format error` для 32-битного
+`/vendor/bin/boringssl_self_test32`; init завершил систему с
+`reboot,boringssl-self-check-failed`, не проверив ядра. [Kernel log](https://github.com/sj0404-collab/symbiosis/actions/runs/42657311995/artifacts/13692837352).
+Неизменённый upstream образ Android 15 `15.0.0_64only-latest` имеет отдельный
+ARM64 manifest digest `sha256:dc2024a999dd0acb1112a23cddc9537ec8cb60a0dbe5a87ce9fbd75a2f5e94d2`;
+проверка повторяется с ним вместо multi-ABI образа. Это не обход BoringSSL
+самотеста: 64-битный образ должен выполнить свои настоящие проверки сам.
+Системный `prng_seeder` также сообщал об отсутствии `/dev/hw_random`; причина
+и влияние ещё не проверены, фиктивный RNG не подставляется.
