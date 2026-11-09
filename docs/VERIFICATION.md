@@ -5685,3 +5685,18 @@ SIGABRT. Повтор Snake на Sym прошёл, на Space frame и press/upd
 причина неизвестна, считать повтор inconclusive, а не успешным по прежнему run.
 `STANDALONE_EXIT=0 ACTIVITY_EXIT=0 ENGINE_EXIT=0 SDL_EXIT=1 SNAKE_EXIT=1 MATRIX_EXIT=0`.
 [Логи](https://github.com/sj0404-collab/symbiosis/actions/runs/42668159327/artifacts/13697587597).
+
+[Run 42669130451](https://github.com/sj0404-collab/symbiosis/actions/runs/42669130451),
+`fd290f9`: расширенный тест на обоих ядрах получил `HID_MATRIX_COMPLETE count=35`,
+кадры и реальную последовательность в гостевой общей памяти `Plus=0 → 1 → 0`:
+при нажатии JNI на стороне гостя `buttons=0x400`, после отпускания `0x0`,
+`connected=1`, `style=0x1`. Это тестовый NRO через production JNI, не Eden
+InputOverlay и не пользовательская игра. При настройке 12 сочетаний стилей/ID
+через 50 мс в данных теста каждый раз наблюдался `style0=1`, `style20=0`,
+`connected=1`; сами успешные вызовы установки поэтому не доказывают, что
+фактическое состояние контроллера поменялось. SDL снова SIGABRT, оба повтора
+Snake показали кадры, press/release/update завершились; прежний единичный
+таймаут остаётся необъяснённым. `STANDALONE_EXIT=0 ACTIVITY_EXIT=0 ENGINE_EXIT=0
+SDL_EXIT=1 SNAKE_EXIT=0 MATRIX_EXIT=0`, общий job failed из-за SDL.
+[Логи и снимки](https://github.com/sj0404-collab/symbiosis/actions/runs/42669130451/artifacts/13697863180).
+710 в пользовательской игре по-прежнему не воспроизведена и не доказана исправленной.
