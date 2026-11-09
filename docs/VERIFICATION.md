@@ -5402,3 +5402,19 @@ ATOMICS и ASIMDRDM. Старый официальный backend 34.2.16 не д
 подтверждена. [Диагностика](https://github.com/sj0404-collab/symbiosis/actions/runs/42650670558/artifacts/13691343650).
 Это отдельный результат от kernel-only QEMU 16K (§95), где реальная маска
 `0xffffffff`; разные QEMU/CPU модели нельзя приравнивать.
+
+### 100. TLS handshake на реальном ARM/Bionic
+
+[Run 42654724948](https://github.com/sj0404-collab/symbiosis/actions/runs/42654724948),
+`852dc66`, job `129291778059` завершён success. В отдельных процессах native
+ARM Linux + оригинальный Android 8.1 Bionic обе реальные пары `.so` — bundled
+1.1.1l (`0x101010cf`) и candidate 3.5.9 (`0x30500090`) — прошли TLSv1.3 с
+проверкой локального тестового сертификата/hostname и обменом шифрованными
+данными (`TLS_VERIFIED_HANDSHAKE_OK`, exit 0). Проверка `wrong.invalid` на обеих
+дала клиентский отказ с verify=62 и exit 5; `dladdr` подтвердил выбранные файлы.
+Также повторно оба ядра вернули `javaInitialize=true` с каждой парой,
+`TLS_CONTEXT_SMOKE=ok`. [Журнал](https://github.com/sj0404-collab/symbiosis/actions/runs/42654724948/artifacts/13691697081).
+Handshake запускался отдельным процессом, а не из .NET ядра; собственное Android
+trust store, реальная сеть, полная совместимость TLS-функций приложения,
+16-КБ система и выравнивание APK всё ещё не проверены. Candidate не установлен
+в продукт и release guard остаётся включён; OpenSSL 1.1.1l остаётся EOL.
