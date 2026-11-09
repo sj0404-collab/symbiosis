@@ -21,6 +21,8 @@ import org.yuzu.yuzu_emu.utils.KenjiUiText
 object KeyboardUiFixture {
     @Volatile private var coordinator: KenjiUiCoordinator? = null
     private val main = Handler(Looper.getMainLooper())
+    private val overlapCallbacks = AtomicInteger()
+    @Volatile private var overlapping = false
     private fun findEdit(view: View): EditText? {
         if (view is EditText) return view
         if (view is ViewGroup) for (i in 0 until view.childCount) {
@@ -28,7 +30,9 @@ object KeyboardUiFixture {
         }
         return null
     }
-    @JvmStatic fun configure(activity: Activity, bridge: KenjiBridge, generation: Long, stopOnFirst: Boolean) {
+    @JvmStatic fun configure(activity: Activity, bridge: KenjiBridge, generation: Long, stopOnFirst: Boolean, overlap: Boolean) {
+        overlapping = overlap
+        overlapCallbacks.set(0)
         lateinit var presenter: KenjiUiPresenter
         lateinit var active: KenjiUiCoordinator
         val dialogs = AtomicInteger()
@@ -39,18 +43,32 @@ object KeyboardUiFixture {
                 presenter.show(id, request)
                 val number = dialogs.incrementAndGet()
                 Log.i("SymEngineStage", "UI_REAL_DIALOG title=${request.title} initial=${request.initialText}")
-                main.postDelayed({
+                var waits = 0
+                lateinit var task: Runnable
+                task = Runnable {
+                    if (overlap && number == 1 && overlapCallbacks.get() < 2 && waits++ < 24) {
+                        main.postDelayed(task, 250)
+                        return@Runnable
+                    }
                     try {
                         val field = KenjiUiPresenter::class.java.getDeclaredField("dialog")
                         field.isAccessible = true
                         val dialog = field.get(presenter) as AlertDialog
                         check(dialog.isShowing)
                         val input = checkNotNull(findEdit(dialog.window!!.decorView))
-                        check(input.text.toString() == "Seed")
-                        if (number == 1 && stopOnFirst) {
+                        if (overlap) {
+                            val seed = input.text.toString()
+                            check(seed == "SeedA" || seed == "SeedB")
+                            val answer = if (seed == "SeedA") "AnswerA" else "AnswerB"
+                            input.setText(answer)
+                            Log.i("SymEngineStage", "UI_OVERLAP_CLICK seed=$seed callbacks=${overlapCallbacks.get()}")
+                            check(dialog.getButton(AlertDialog.BUTTON_POSITIVE).performClick())
+                        } else if (number == 1 && stopOnFirst) {
+                            check(input.text.toString() == "Seed")
                             active.stop()
                             Log.i("SymEngineStage", "UI_REAL_STOP_REQUESTED")
                         } else if (number == 1) {
+                            check(input.text.toString() == "Seed")
                             input.setText("")
                             check(dialog.getButton(AlertDialog.BUTTON_POSITIVE).performClick())
                             check(input.error != null && dialog.isShowing)
@@ -65,7 +83,8 @@ object KeyboardUiFixture {
                     } catch (t: Throwable) {
                         Log.e("SymEngineStage", "UI_REAL_FAIL dialog", t)
                     }
-                }, 250)
+                }
+                main.postDelayed(task, if (overlap && number > 1) 2000 else 250)
             },
             dismiss = { presenter.dismiss() },
             reply = { accepted, bytes ->
@@ -92,6 +111,7 @@ object KeyboardUiFixture {
             // Copy synchronously; guest-owned pointers may expire on return.
             val request = KenjiUiRequest(copy(title), copy(message), copy(watermark), type,
                 min, max, mode, copy(subtitle), copy(initial))
+            if (overlapping) Log.i("SymEngineStage", "UI_OVERLAP_CALLBACK count=${overlapCallbacks.incrementAndGet()} seed=${request.initialText}")
             Log.i("SymEngineStage", "UI_REAL_COPIED title=${request.title} message=${request.message} watermark=${request.watermark} subtitle=${request.subtitle} initial=${request.initialText} type=$type min=$min max=$max mode=$mode")
             checkNotNull(coordinator).request(request)
         } catch (t: Throwable) { Log.e("SymEngineStage", "UI_REAL_FAIL callback copy", t) }

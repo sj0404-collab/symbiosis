@@ -214,7 +214,8 @@ public class EngineStageActivity extends Activity {
                     if (generation <= 0) { Log.e(TAG, "ENGINE_FAIL UI response activation"); return; }
                     boolean realUi = getIntent().getBooleanExtra("ui_real", false);
                     if (realUi) KeyboardUiFixture.configure(this, bridge, generation,
-                            getIntent().getBooleanExtra("ui_stop", false));
+                            getIntent().getBooleanExtra("ui_stop", false),
+                            getIntent().getBooleanExtra("ui_overlap", false));
                     KeyboardFixture.configure(bridge, generation, realUi);
                     step("realUiResponse_ACTIVATED");
                 }
