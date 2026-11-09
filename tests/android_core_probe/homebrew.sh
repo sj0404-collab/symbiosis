@@ -66,10 +66,13 @@ for core in sym space; do
         # Before/after images only; input delivery needs independent observation.
         timeout 10s adb exec-out screencap -p > "$PROBE_WORK/$core-$sample-before-screen.png" || true
         for ((j=0; j<40; j++)); do
-          grep -q "HOMEBREW_INPUT_SENT core=$core " "$log" && break
+          grep -q "ENGINE_STAGE core=$core AFTER_update_released" "$log" && break
           sleep 1
         done
-        if ! grep -q "HOMEBREW_INPUT_SENT core=$core " "$log"; then outcome=input-not-sent; break; fi
+        # The breadcrumb is emitted after the actual release and update return.
+        # Requiring an additional consecutive log line caused false negatives
+        # when logcat lost that line; guest delivery is a separate assertion.
+        if ! grep -q "ENGINE_STAGE core=$core AFTER_update_released" "$log"; then outcome=input-not-sent; break; fi
         if [ "$sample" = matrix ]; then
           for ((j=0; j<10; j++)); do
             if awk '/HID_BUTTONS plus=1/{pressed=1} pressed && /HID_BUTTONS plus=0/{ok=1} END{exit !ok}' "$log"; then break; fi
@@ -96,7 +99,9 @@ for core in sym space; do
     pid=$(timeout 5s adb shell pidof "$APP" 2>/dev/null | tr -d '\r' | awk '{print $1}' || true)
     printf 'outcome=%s pid=%s\n' "$outcome" "$pid" > "$PROBE_WORK/$core-$sample-input-hang-state.txt"
     if [[ "$pid" =~ ^[0-9]+$ ]]; then
-      timeout 25s adb shell debuggerd -b "$pid" > "$PROBE_WORK/$core-$sample-input-hang-backtrace.txt" 2>&1 || true
+      # Android debuggerd requires root. Only this disposable local Redroid
+      # container is queried, never a phone or a user process.
+      timeout 25s docker exec -u 0 symbiosis-redroid debuggerd -b "$pid" > "$PROBE_WORK/$core-$sample-input-hang-backtrace.txt" 2>&1 || true
       timeout 5s adb shell "cat /proc/$pid/status" >> "$PROBE_WORK/$core-$sample-input-hang-state.txt" 2>&1 || true
     fi
   fi

@@ -5741,3 +5741,17 @@ HID matrix и кнопки прошли на обоих; повтор Snake на
 таймаута добавлен сбор native backtrace до force-stop. Итог: `SDL_EXIT=1
 SNAKE_EXIT=1 MATRIX_EXIT=0 SDL_SURFACE_EXIT=0`, workflow failed.
 [Логи](https://github.com/sj0404-collab/symbiosis/actions/runs/42675512327/artifacts/13701085568).
+
+[Run 42676491441](https://github.com/sj0404-collab/symbiosis/actions/runs/42676491441),
+`8f48f2c`: старый SDL упал, SDL 2.28.5 surface/close и HID matrix прошли на
+обоих, Snake на Sym прошёл, на Space verdict `input-not-sent`. Однако подробный
+журнал Space содержит все шаги вплоть до `AFTER_update_released` — то есть в
+**этом** повторе вызовы press/release и оба update вернулись; потерян/отсутствует
+следующий отдельный маркер `HOMEBREW_INPUT_SENT`. На снимке `Game over!` —
+приложение увидело нажатие. Отсутствие маркера не является доказательством
+зависания `inputUpdate`. Сбор `debuggerd` через adb shell выдал `root is
+required`, поэтому стек в этом run недоступен. Исправление test harness:
+подтверждение завершения вызовов через `AFTER_update_released`, отдельно от
+наблюдения гостя; при настоящем таймауте вызвать debuggerd от root исключительно
+в disposable Redroid. Это не отменяет отсутствие `AFTER_update_released` в
+предыдущем run 42675512327. [Логи и снимки](https://github.com/sj0404-collab/symbiosis/actions/runs/42676491441/artifacts/13701356385).
