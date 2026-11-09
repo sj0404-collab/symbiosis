@@ -12,14 +12,13 @@ import java.util.concurrent.atomic.AtomicInteger
 import org.kenjinx.android.KenjinxNative
 import org.yuzu.yuzu_emu.activities.KenjiUiPresenter
 import org.yuzu.yuzu_emu.utils.KenjiBridge
-import org.yuzu.yuzu_emu.utils.KenjiUiCoordinator
+import org.yuzu.yuzu_emu.utils.KenjiUiDispatcher
 import org.yuzu.yuzu_emu.utils.KenjiUiRequest
-import org.yuzu.yuzu_emu.utils.KenjiUiText
 
 /** Test-only wiring: actual candidate presenter/coordinator and real JNI.
  * Button input is automated. This object is never compiled into release. */
 object KeyboardUiFixture {
-    @Volatile private var coordinator: KenjiUiCoordinator? = null
+    @Volatile private var coordinator: KenjiUiDispatcher? = null
     private val main = Handler(Looper.getMainLooper())
     private val overlapCallbacks = AtomicInteger()
     @Volatile private var overlapping = false
@@ -34,14 +33,15 @@ object KeyboardUiFixture {
         overlapping = overlap
         overlapCallbacks.set(0)
         lateinit var presenter: KenjiUiPresenter
-        lateinit var active: KenjiUiCoordinator
+        lateinit var active: KenjiUiDispatcher
         val dialogs = AtomicInteger()
         presenter = KenjiUiPresenter(activity) { id, accepted, text -> active.answer(id, accepted, text) }
-        active = KenjiUiCoordinator(
+        active = KenjiUiDispatcher(
             postMain = { task -> main.post { task() } },
             present = { id, request ->
                 presenter.show(id, request)
                 val number = dialogs.incrementAndGet()
+                Log.i("SymEngineStage", "UI_REAL_COPIED title=${request.title} message=${request.message} watermark=${request.watermark} subtitle=${request.subtitle} initial=${request.initialText} type=${request.type} min=${request.min} max=${request.max} mode=${request.mode}")
                 Log.i("SymEngineStage", "UI_REAL_DIALOG title=${request.title} initial=${request.initialText}")
                 var waits = 0
                 lateinit var task: Runnable
@@ -103,20 +103,13 @@ object KeyboardUiFixture {
         checkNotNull(coordinator).closeAfterGuestStopped()
         Log.i("SymEngineStage", "UI_REAL_REPLY_WORKER_STOPPED")
     }
-    private fun copy(pointer: Long): String {
-        val method = KenjinxNative::class.java.getMethod("nativeCopyUiText", java.lang.Long.TYPE)
-        val bytes = method.invoke(null, pointer) as? ByteArray ?: error("native text copy failed")
-        return KenjiUiText.decode(bytes) ?: error("text is not valid UTF-8")
-    }
     @JvmStatic fun request(title: Long, message: Long, watermark: Long, type: Int,
             min: Int, max: Int, mode: Int, subtitle: Long, initial: Long) {
         try {
-            // Copy synchronously; guest-owned pointers may expire on return.
-            val request = KenjiUiRequest(copy(title), copy(message), copy(watermark), type,
-                min, max, mode, copy(subtitle), copy(initial))
-            if (overlapping) Log.i("SymEngineStage", "UI_OVERLAP_CALLBACK count=${overlapCallbacks.incrementAndGet()} seed=${request.initialText}")
-            Log.i("SymEngineStage", "UI_REAL_COPIED title=${request.title} message=${request.message} watermark=${request.watermark} subtitle=${request.subtitle} initial=${request.initialText} type=$type min=$min max=$max mode=$mode")
-            checkNotNull(coordinator).request(request)
-        } catch (t: Throwable) { Log.e("SymEngineStage", "UI_REAL_FAIL callback copy", t) }
+            if (overlapping) Log.i("SymEngineStage", "UI_OVERLAP_CALLBACK count=${overlapCallbacks.incrementAndGet()}")
+            // Production dispatcher synchronously copies all native pointers.
+            checkNotNull(coordinator).onRequest(title, message, watermark, type,
+                min, max, mode, subtitle, initial)
+        } catch (t: Throwable) { Log.e("SymEngineStage", "UI_REAL_FAIL callback", t) }
     }
 }

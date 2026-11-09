@@ -65,6 +65,7 @@ done
   "$ROOT/patch/android/utils/GameSessionLock.kt" \
   "$ROOT/patch/android/utils/KenjiUiText.kt" \
   "$ROOT/patch/android/utils/KenjiUiCoordinator.kt" \
+  "$ROOT/patch/android/utils/KenjiUiDispatcher.kt" \
   "$ROOT/patch/android/activities/KenjiUiPresenter.kt" \
   "$ROOT/tests/android_core_probe/src/dev/symbiosis/coreprobe/UiProbeActivity.kt" \
   "$ROOT/tests/android_core_probe/src/dev/symbiosis/coreprobe/KeyboardUiFixture.kt" \

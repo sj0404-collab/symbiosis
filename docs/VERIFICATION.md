@@ -5923,3 +5923,13 @@ JNI-передача ответа (клавиатуры), и оба гостя �
 `SWKBD_MESSAGE_STOP_EXIT=0`, но тест намеренно затем завершил процесс и не
 проверял production Activity, его полный teardown или сохранения.
 [Логи](https://github.com/sj0404-collab/symbiosis/actions/runs/42702690523/artifacts/13712897222).
+
+[Run 42704817863](https://github.com/sj0404-collab/symbiosis/actions/runs/42704817863),
+`f581650`: оба тестовых APK имеют идентичный DEX с **настоящим**
+`KenjinxNative.updateUiHandler`, без переписывания callback при сборке. Только
+эксперимент регистрирует тестовый listener. Оба ядра прошли Unicode, отмену,
+пересечение сообщения и клавиатуры и отмену очереди; без listener ответа нет,
+поскольку player его ещё не устанавливает. Изолированный выход прошёл на обоих;
+с `dlclose` сбои продолжаются. Host suite success, общий Android job failed;
+подключение listener и lifecycle реального плеера не проверены.
+[Логи](https://github.com/sj0404-collab/symbiosis/actions/runs/42704817863/artifacts/13713394045).
