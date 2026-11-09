@@ -6,6 +6,8 @@
         android:extractNativeLibs="true" android:theme="@android:style/Theme.Material.NoActionBar">
         <activity android:name=".ProbeActivity" android:exported="true" />
         <activity android:name=".EngineStageActivity" android:exported="true" />
+        <activity android:name=".IsolatedEngineStageActivity" android:process=":kenji" android:exported="true" />
+        <activity android:name=".LockProbeActivity" android:exported="true" />
         <activity android:name=".GraphicsProbeActivity" android:exported="true"
             android:configChanges="orientation|screenSize|keyboardHidden" />
         <activity android:name=".UiProbeActivity" android:exported="true"

@@ -62,6 +62,7 @@ done
   "$ROOT/tests/android_core_probe/graphics_reference_probe.cpp" \
   -llog -ldl -landroid -lnativewindow -o "$WORK/apk/lib/arm64-v8a/libgraphics_reference_probe.so"
 "$KOTLINC_HOME/bin/kotlinc" "$ROOT/patch/android/kenjinx/KenjinxNative.kt" \
+  "$ROOT/patch/android/utils/GameSessionLock.kt" \
   "$ROOT/patch/android/utils/KenjiUiText.kt" \
   "$ROOT/patch/android/utils/KenjiUiCoordinator.kt" \
   "$ROOT/patch/android/activities/KenjiUiPresenter.kt" \
@@ -73,6 +74,8 @@ javac -encoding UTF-8 -source 8 -target 8 -bootclasspath "$ANDROID_JAR" \
   -classpath "$WORK/classes:$KOTLINC_HOME/lib/kotlin-stdlib.jar" -d "$WORK/classes" \
   "$ROOT/tests/android_core_probe/src/org/yuzu/yuzu_emu/utils/KenjiBridge.java" \
   "$ROOT/tests/android_core_probe/src/dev/symbiosis/coreprobe/EngineStageActivity.java" \
+  "$ROOT/tests/android_core_probe/src/dev/symbiosis/coreprobe/IsolatedEngineStageActivity.java" \
+  "$ROOT/tests/android_core_probe/src/dev/symbiosis/coreprobe/LockProbeActivity.java" \
   "$ROOT/tests/android_core_probe/src/dev/symbiosis/coreprobe/KeyboardFixture.java" \
   "$ROOT/tests/android_core_probe/src/dev/symbiosis/coreprobe/ProbeActivity.java" \
   "$ROOT/tests/android_core_probe/src/dev/symbiosis/coreprobe/GraphicsProbeActivity.java"

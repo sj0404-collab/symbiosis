@@ -19,6 +19,7 @@ public final class EngineStageActivity extends Activity {
     private String flavor;
     private final java.util.concurrent.CountDownLatch rendererReturned = new java.util.concurrent.CountDownLatch(1);
     private volatile boolean rendererStoppedOk;
+    private org.yuzu.yuzu_emu.utils.GameSessionLock sessionLease;
     private static native int nativeWindowWidth(long handle);
     private void step(String name) {
         if (name.startsWith("TEARDOWN_")) {
@@ -50,6 +51,18 @@ public final class EngineStageActivity extends Activity {
         flavor = getIntent().getStringExtra("core");
         if (!"sym".equals(flavor) && !"space".equals(flavor)) {
             Log.e(TAG, "ENGINE_FAIL invalid core"); return;
+        }
+        if (getIntent().getBooleanExtra("process_exit", false)) {
+            if (!android.app.Application.getProcessName().equals(getPackageName() + ":kenji")) {
+                Log.e(TAG, "ENGINE_FAIL process isolation"); finish(); return;
+            }
+            org.yuzu.yuzu_emu.utils.GameSessionLock.Result result =
+                    org.yuzu.yuzu_emu.utils.GameSessionLock.tryAcquire(new File(getFilesDir(), "ci-session.lock"));
+            if (!(result instanceof org.yuzu.yuzu_emu.utils.GameSessionLock.Result.Acquired)) {
+                Log.e(TAG, "ENGINE_FAIL session lease"); finish(); return;
+            }
+            sessionLease = ((org.yuzu.yuzu_emu.utils.GameSessionLock.Result.Acquired)result).getLease();
+            step("SESSION_LOCK_HELD");
         }
         SurfaceView view = new SurfaceView(this);
         view.getHolder().addCallback(new SurfaceHolder.Callback() {
@@ -141,6 +154,13 @@ public final class EngineStageActivity extends Activity {
                         } else step("TEARDOWN_WINDOW_KEPT");
                         step("TEARDOWN_COMPLETE");
                         Log.i(TAG, "TEARDOWN_COMPLETE core=" + flavor);
+                        if (getIntent().getBooleanExtra("process_exit", false)) {
+                            File exitRequest = new File(getFilesDir(), "exit-request.txt");
+                            for (int i = 0; i < 300 && !exitRequest.exists(); i++) Thread.sleep(100);
+                            if (!exitRequest.exists()) { Log.e(TAG, "ENGINE_FAIL no exit request"); return; }
+                            step("TEARDOWN_PROCESS_EXIT_REQUESTED");
+                            android.os.Process.killProcess(android.os.Process.myPid());
+                        }
                     } catch (Throwable t) { Log.e(TAG, "ENGINE_FAIL teardown exception", t); }
                 }}, "test-stop-observer").start();
                 step("BEFORE_realRendererRunLoop");
