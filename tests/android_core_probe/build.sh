@@ -71,6 +71,7 @@ javac -encoding UTF-8 -source 8 -target 8 -bootclasspath "$ANDROID_JAR" \
   -classpath "$WORK/classes:$KOTLINC_HOME/lib/kotlin-stdlib.jar" -d "$WORK/classes" \
   "$ROOT/tests/android_core_probe/src/org/yuzu/yuzu_emu/utils/KenjiBridge.java" \
   "$ROOT/tests/android_core_probe/src/dev/symbiosis/coreprobe/EngineStageActivity.java" \
+  "$ROOT/tests/android_core_probe/src/dev/symbiosis/coreprobe/KeyboardFixture.java" \
   "$ROOT/tests/android_core_probe/src/dev/symbiosis/coreprobe/ProbeActivity.java" \
   "$ROOT/tests/android_core_probe/src/dev/symbiosis/coreprobe/GraphicsProbeActivity.java"
 # A tiny app_process entry and the actual production callback class, packaged
@@ -96,3 +97,34 @@ keytool -genkeypair -keystore "$WORK/debug.keystore" -storepass android -keypass
   --ks-pass pass:android --key-pass pass:android --out "$WORK/core-probe.apk" "$WORK/aligned.apk"
 "$BT/apksigner" verify "$WORK/core-probe.apk"
 echo 'Disposable diagnostic APK built; not a release artifact.'
+# A second, explicitly test-only APK changes ONLY the callback to forward a
+# real native request to an automated test responder. The normal probe APK
+# above uses the unchanged production callback. Neither is a release.
+mkdir -p "$WORK/ui-classes" "$WORK/ui-dex" "$WORK/ui-src" "$WORK/ui-apk"
+cp -a "$WORK/classes/." "$WORK/ui-classes/"
+python3 - "$ROOT/patch/android/kenjinx/KenjinxNative.kt" "$WORK/ui-src/KenjinxNative.kt" <<'PYCODE'
+from pathlib import Path
+import sys
+source = Path(sys.argv[1]).read_text()
+old = ') { /* software keyboard — ignore */ }'
+new = (') {\n'
+       '        dev.symbiosis.coreprobe.KeyboardFixture.onRequest(newTitlePointer, newMessagePointer,\n'
+       '            newWatermarkPointer, newType, min, max, nMode, newSubtitlePointer, newInitialTextPointer)\n'
+       '    }')
+if source.count(old) != 1: raise SystemExit('production callback changed; test instrumentation aborted')
+Path(sys.argv[2]).write_text(source.replace(old, new))
+PYCODE
+"$KOTLINC_HOME/bin/kotlinc" "$WORK/ui-src/KenjinxNative.kt" \
+  -jvm-target 17 -classpath "$ANDROID_JAR:$WORK/classes" -d "$WORK/ui-classes"
+mapfile -d '' UI_CLASSES < <(find "$WORK/ui-classes" -name '*.class' -print0)
+"$BT/d8" --min-api "$PROBE_MIN_API" --lib "$ANDROID_JAR" --output "$WORK/ui-dex" \
+  "${UI_CLASSES[@]}" "$KOTLINC_HOME/lib/kotlin-stdlib.jar"
+"$BT/aapt2" link -I "$ANDROID_JAR" --manifest "$MANIFEST" -o "$WORK/ui-unsigned.apk"
+cp "$WORK/ui-dex/classes.dex" "$WORK/ui-apk/classes.dex"
+cp -a "$WORK/apk/lib" "$WORK/ui-apk/lib"
+(cd "$WORK/ui-apk" && zip -q -X -r -9 "$WORK/ui-unsigned.apk" classes.dex lib)
+"$BT/zipalign" -f -p 4 "$WORK/ui-unsigned.apk" "$WORK/ui-aligned.apk"
+"$BT/apksigner" sign --ks "$WORK/debug.keystore" --ks-key-alias ci \
+  --ks-pass pass:android --key-pass pass:android --out "$WORK/core-probe-ui-fixture.apk" "$WORK/ui-aligned.apk"
+"$BT/apksigner" verify "$WORK/core-probe-ui-fixture.apk"
+echo 'Disposable callback fixture APK built; never a release.'

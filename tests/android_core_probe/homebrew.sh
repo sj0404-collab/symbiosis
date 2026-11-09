@@ -7,15 +7,15 @@ sample=${HOMEBREW_SAMPLE:-sdl}
 case "$sample" in
  sdl) url='https://github.com/vgmoose/sdl-hello-world/releases/download/1.1/sdl-hello.nro'; sha=2c591bf8030f38567d8a1076b97203a98003f4faf2fbd9fbf7b1ced115f120b9 ;;
  snake) url='https://github.com/CompSciOrBust/Cpp-Snake-NX/releases/download/1.1.0/Cpp-Snake-NX.nro'; sha=982ff14c538bb94eb6d18411efe71e885006cf3e944da270d18cd2fa88442f16 ;;
- matrix|sdl-surface|swkbd) url=; sha= ;;
+ matrix|sdl-surface|swkbd|swkbd-response) url=; sha= ;;
  *) echo 'Unknown pinned NRO sample' >&2; exit 1 ;;
 esac
-if [ "$sample" = matrix ] || [ "$sample" = sdl-surface ] || [ "$sample" = swkbd ]; then
+if [ "$sample" = matrix ] || [ "$sample" = sdl-surface ] || [ "$sample" = swkbd ] || [ "$sample" = swkbd-response ]; then
   # Built from this repository in the separate isolated CI build job.
   case "$sample" in
     matrix) nro="$PROBE_WORK/hid-matrix.nro" ;;
     sdl-surface) nro="$PROBE_WORK/sdl-surface.nro" ;;
-    swkbd) nro="$PROBE_WORK/swkbd.nro" ;;
+    swkbd|swkbd-response) nro="$PROBE_WORK/swkbd.nro" ;;
   esac
   test -s "$nro"; sha256sum "$nro"
 else
@@ -39,8 +39,10 @@ for core in sym space; do
   input_probe=false
   [ "$sample" = snake ] || [ "$sample" = matrix ] && input_probe=true
   ui_setup=false
-  [ "$sample" = swkbd ] && ui_setup=true
-  adb shell am start -n "$APP/.EngineStageActivity" --es core "$core" --ez homebrew true --ez input_probe "$input_probe" --ez ui_setup "$ui_setup" || true
+  ui_response=false
+  if [ "$sample" = swkbd ] || [ "$sample" = swkbd-response ]; then ui_setup=true; fi
+  [ "$sample" = swkbd-response ] && ui_response=true
+  adb shell am start -n "$APP/.EngineStageActivity" --es core "$core" --ez homebrew true --ez input_probe "$input_probe" --ez ui_setup "$ui_setup" --ez ui_response "$ui_response" || true
   outcome=timeout
   for ((i=0; i<120; i++)); do
     if grep -qE 'ENGINE_FAIL|SDL_SURFACE_FAIL|Unhandled exception in guest thread|FATAL EXCEPTION|Fatal signal|ActivityManager.*Process dev\.symbiosis\.coreprobe \(pid [0-9]+\) has died' "$log"; then outcome=fail; break; fi
@@ -58,15 +60,21 @@ for core in sym space; do
           outcome=matrix-incomplete; break
         fi
       fi
-      if [ "$sample" = swkbd ]; then
-        # Production callback is still intentionally unimplemented. Never
-        # auto-answer or assume the keyboard works: record the actual result.
+      if [ "$sample" = swkbd ] || [ "$sample" = swkbd-response ]; then
+        # swkbd: unchanged production callback; swkbd-response: explicitly
+        # separate test-only callback sends a real JNI response.
         for ((j=0; j<25; j++)); do
           grep -q 'SWKBD_GUEST_DONE' "$log" && break
           grep -qE 'ENGINE_FAIL|Unhandled exception in guest thread|Fatal signal' "$log" && break
           sleep 1
         done
-        if grep -q 'SWKBD_SHOW_RETURN' "$log"; then outcome=swkbd-result-observed
+        if [ "$sample" = swkbd-response ] &&
+           grep -q 'UI_TEST_CALLBACK ' "$log" &&
+           grep -q 'UI_TEST_RESPONSE_RETURN result=true' "$log" &&
+           grep -q 'SWKBD_SHOW_RETURN rc=0x00000000 module=0 description=0 text=CI_Arena' "$log" &&
+           grep -q 'SWKBD_GUEST_DONE' "$log"; then
+          outcome=frame-callback-observed
+        elif grep -q 'SWKBD_SHOW_RETURN' "$log"; then outcome=swkbd-result-observed
         elif grep -q 'SWKBD_SHOW_BEGIN' "$log"; then outcome=swkbd-unanswered
         elif grep -q 'SWKBD_CREATE' "$log"; then outcome=swkbd-create-failed
         else outcome=swkbd-not-reached; fi

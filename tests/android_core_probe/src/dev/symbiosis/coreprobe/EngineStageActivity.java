@@ -126,6 +126,12 @@ public final class EngineStageActivity extends Activity {
             step("BEFORE_graphicsInitializeRenderer");
             if (!check("graphicsInitializeRenderer", bridge.nativeAttachSurface(holder.getSurface(), 1280, 720))) return;
             if (getIntent().getBooleanExtra("ui_setup", false)) {
+                if (getIntent().getBooleanExtra("ui_response", false)) {
+                    long generation = bridge.nativeUiActivate();
+                    if (generation <= 0) { Log.e(TAG, "ENGINE_FAIL UI response activation"); return; }
+                    KeyboardFixture.configure(bridge, generation);
+                    step("realUiResponse_ACTIVATED");
+                }
                 step("BEFORE_realUiSetup");
                 if (!bridge.nativeUiSetup()) { Log.e(TAG, "ENGINE_FAIL UI setup"); return; }
                 step("realUiSetup_RETURNED_OK");

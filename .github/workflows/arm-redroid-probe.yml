@@ -93,6 +93,7 @@ jobs:
           name: temporary-redroid-tests-not-a-release
           path: |
             /tmp/redroid-probe/core-probe.apk
+            /tmp/redroid-probe/core-probe-ui-fixture.apk
             /tmp/redroid-probe/hid-matrix.nro
             /tmp/redroid-probe/sdl-surface.nro
             /tmp/redroid-probe/swkbd.nro

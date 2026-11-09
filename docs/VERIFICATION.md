@@ -5764,3 +5764,16 @@ required`, поэтому стек в этом run недоступен. Исп�
 Root-сбор backtrace в этом run не сработал, потому что таймаута ввода не было;
 его работоспособность остаётся непроверенной, прежний эпизод отсутствия
 `AFTER_update_released` не объяснён. [Логи](https://github.com/sj0404-collab/symbiosis/actions/runs/42677566218/artifacts/13701566501).
+
+[Run 42678687203](https://github.com/sj0404-collab/symbiosis/actions/runs/42678687203),
+`251cd4a`: самописный libnx NRO на обоих ядрах на ARM Redroid с неизменённым
+production callback и настоящим `uiHandlerSetup` получил `SWKBD_CREATE rc=0`,
+дошёл до `SWKBD_SHOW_BEGIN`, оба ядра создали applet `SoftwareKeyboard`; ответа
+за 25 секунд нет. Тестовый плеер не выдаёт автоматический ответ; это не
+доказывает какой именно внутренний callback сработал и не проверяет прошивку,
+реальное Android UI или коммерческую игру. SDL старый падает, Snake/HID/новый
+SDL прошли; `SWKBD_EXIT=1`. [Логи](https://github.com/sj0404-collab/symbiosis/actions/runs/42678687203/artifacts/13700964653).
+Для следующего испытания добавлена отдельная *исключительно тестовая* APK-версия
+callback, отправляющая в настоящее ядро по JNI фиксированный тестовый ответ;
+оригинальный callback и release guard не изменены. Успех будет считаться только
+при реально возвращённом ответе гостя, а не при вызове JNI.
