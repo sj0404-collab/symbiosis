@@ -29,7 +29,7 @@ object KeyboardUiFixture {
         }
         return null
     }
-    @JvmStatic fun configure(activity: Activity, bridge: KenjiBridge, generation: Long, stopOnFirst: Boolean, overlap: Boolean) {
+    @JvmStatic fun configure(activity: Activity, bridge: KenjiBridge, generation: Long, stopOnFirst: Boolean, overlap: Boolean, onStop: Runnable?) {
         overlapping = overlap
         overlapCallbacks.set(0)
         lateinit var presenter: KenjiUiPresenter
@@ -60,6 +60,7 @@ object KeyboardUiFixture {
                             check(overlapCallbacks.get() == 2)
                             active.stop()
                             Log.i("SymEngineStage", "UI_OVERLAP_STOP callbacks=${overlapCallbacks.get()}")
+                            onStop?.run()
                         } else if (overlap) {
                             val seed = if (request.type == 1) "MESSAGE" else checkNotNull(input).text.toString()
                             check(seed == "SeedA" || seed == "SeedB" || seed == "MESSAGE")
@@ -70,6 +71,7 @@ object KeyboardUiFixture {
                             check(checkNotNull(input).text.toString() == "Seed")
                             active.stop()
                             Log.i("SymEngineStage", "UI_REAL_STOP_REQUESTED")
+                            onStop?.run()
                         } else if (number == 1) {
                             check(checkNotNull(input).text.toString() == "Seed")
                             input!!.setText("")

@@ -7,15 +7,15 @@ sample=${HOMEBREW_SAMPLE:-sdl}
 case "$sample" in
  sdl) url='https://github.com/vgmoose/sdl-hello-world/releases/download/1.1/sdl-hello.nro'; sha=2c591bf8030f38567d8a1076b97203a98003f4faf2fbd9fbf7b1ced115f120b9 ;;
  snake) url='https://github.com/CompSciOrBust/Cpp-Snake-NX/releases/download/1.1.0/Cpp-Snake-NX.nro'; sha=982ff14c538bb94eb6d18411efe71e885006cf3e944da270d18cd2fa88442f16 ;;
- matrix|sdl-surface|swkbd|swkbd-response|swkbd-ui|swkbd-stop|swkbd-stop-keep|swkbd-stop-hold|swkbd-stop-keep-release|swkbd-exit|swkbd-overlap|swkbd-message|swkbd-message-stop) url=; sha= ;;
+ matrix|sdl-surface|swkbd|swkbd-response|swkbd-ui|swkbd-stop|swkbd-stop-keep|swkbd-stop-hold|swkbd-stop-keep-release|swkbd-exit|swkbd-overlap|swkbd-message|swkbd-message-stop|swkbd-exit-race) url=; sha= ;;
  *) echo 'Unknown pinned NRO sample' >&2; exit 1 ;;
 esac
-if [ "$sample" = matrix ] || [ "$sample" = sdl-surface ] || [ "$sample" = swkbd ] || [ "$sample" = swkbd-response ] || [ "$sample" = swkbd-ui ] || [ "$sample" = swkbd-stop ] || [ "$sample" = swkbd-stop-keep ] || [ "$sample" = swkbd-stop-hold ] || [ "$sample" = swkbd-stop-keep-release ] || [ "$sample" = swkbd-exit ] || [ "$sample" = swkbd-overlap ] || [ "$sample" = swkbd-message ] || [ "$sample" = swkbd-message-stop ]; then
+if [ "$sample" = matrix ] || [ "$sample" = sdl-surface ] || [ "$sample" = swkbd ] || [ "$sample" = swkbd-response ] || [ "$sample" = swkbd-ui ] || [ "$sample" = swkbd-stop ] || [ "$sample" = swkbd-stop-keep ] || [ "$sample" = swkbd-stop-hold ] || [ "$sample" = swkbd-stop-keep-release ] || [ "$sample" = swkbd-exit ] || [ "$sample" = swkbd-overlap ] || [ "$sample" = swkbd-message ] || [ "$sample" = swkbd-message-stop ] || [ "$sample" = swkbd-exit-race ]; then
   # Built from this repository in the separate isolated CI build job.
   case "$sample" in
     matrix) nro="$PROBE_WORK/hid-matrix.nro" ;;
     sdl-surface) nro="$PROBE_WORK/sdl-surface.nro" ;;
-    swkbd|swkbd-response|swkbd-ui|swkbd-stop|swkbd-stop-keep|swkbd-stop-hold|swkbd-stop-keep-release|swkbd-exit) nro="$PROBE_WORK/swkbd.nro" ;;
+    swkbd|swkbd-response|swkbd-ui|swkbd-stop|swkbd-stop-keep|swkbd-stop-hold|swkbd-stop-keep-release|swkbd-exit|swkbd-exit-race) nro="$PROBE_WORK/swkbd.nro" ;;
     swkbd-overlap) nro="$PROBE_WORK/swkbd-overlap.nro" ;;
     swkbd-message|swkbd-message-stop) nro="$PROBE_WORK/swkbd-message.nro" ;;
   esac
@@ -48,19 +48,21 @@ for core in sym space; do
   keep_core=false
   keep_window=false
   process_exit=false
+  race_stop=false
   ui_overlap=false
   activity=.EngineStageActivity
   process_name="$APP"
-  if [ "$sample" = swkbd ] || [ "$sample" = swkbd-response ] || [ "$sample" = swkbd-ui ] || [ "$sample" = swkbd-stop ] || [ "$sample" = swkbd-stop-keep ] || [ "$sample" = swkbd-stop-hold ] || [ "$sample" = swkbd-stop-keep-release ] || [ "$sample" = swkbd-exit ] || [ "$sample" = swkbd-overlap ] || [ "$sample" = swkbd-message ] || [ "$sample" = swkbd-message-stop ]; then ui_setup=true; fi
-  if [ "$sample" = swkbd-response ] || [ "$sample" = swkbd-ui ] || [ "$sample" = swkbd-stop ] || [ "$sample" = swkbd-stop-keep ] || [ "$sample" = swkbd-stop-hold ] || [ "$sample" = swkbd-stop-keep-release ] || [ "$sample" = swkbd-exit ] || [ "$sample" = swkbd-overlap ] || [ "$sample" = swkbd-message ] || [ "$sample" = swkbd-message-stop ]; then ui_response=true; fi
-  if [ "$sample" = swkbd-ui ] || [ "$sample" = swkbd-stop ] || [ "$sample" = swkbd-stop-keep ] || [ "$sample" = swkbd-stop-hold ] || [ "$sample" = swkbd-stop-keep-release ] || [ "$sample" = swkbd-exit ] || [ "$sample" = swkbd-overlap ] || [ "$sample" = swkbd-message ] || [ "$sample" = swkbd-message-stop ]; then ui_real=true; fi
-  if [ "$sample" = swkbd-stop ] || [ "$sample" = swkbd-stop-keep ] || [ "$sample" = swkbd-stop-hold ] || [ "$sample" = swkbd-stop-keep-release ] || [ "$sample" = swkbd-exit ]; then ui_stop=true; stop_probe=true; fi
+  if [ "$sample" = swkbd ] || [ "$sample" = swkbd-response ] || [ "$sample" = swkbd-ui ] || [ "$sample" = swkbd-stop ] || [ "$sample" = swkbd-stop-keep ] || [ "$sample" = swkbd-stop-hold ] || [ "$sample" = swkbd-stop-keep-release ] || [ "$sample" = swkbd-exit ] || [ "$sample" = swkbd-overlap ] || [ "$sample" = swkbd-message ] || [ "$sample" = swkbd-message-stop ] || [ "$sample" = swkbd-exit-race ]; then ui_setup=true; fi
+  if [ "$sample" = swkbd-response ] || [ "$sample" = swkbd-ui ] || [ "$sample" = swkbd-stop ] || [ "$sample" = swkbd-stop-keep ] || [ "$sample" = swkbd-stop-hold ] || [ "$sample" = swkbd-stop-keep-release ] || [ "$sample" = swkbd-exit ] || [ "$sample" = swkbd-overlap ] || [ "$sample" = swkbd-message ] || [ "$sample" = swkbd-message-stop ] || [ "$sample" = swkbd-exit-race ]; then ui_response=true; fi
+  if [ "$sample" = swkbd-ui ] || [ "$sample" = swkbd-stop ] || [ "$sample" = swkbd-stop-keep ] || [ "$sample" = swkbd-stop-hold ] || [ "$sample" = swkbd-stop-keep-release ] || [ "$sample" = swkbd-exit ] || [ "$sample" = swkbd-overlap ] || [ "$sample" = swkbd-message ] || [ "$sample" = swkbd-message-stop ] || [ "$sample" = swkbd-exit-race ]; then ui_real=true; fi
+  if [ "$sample" = swkbd-stop ] || [ "$sample" = swkbd-stop-keep ] || [ "$sample" = swkbd-stop-hold ] || [ "$sample" = swkbd-stop-keep-release ] || [ "$sample" = swkbd-exit ] || [ "$sample" = swkbd-exit-race ]; then ui_stop=true; stop_probe=true; fi
   [ "$sample" = swkbd-message-stop ] && ui_stop=true
-  if [ "$sample" = swkbd-stop-keep ] || [ "$sample" = swkbd-stop-keep-release ] || [ "$sample" = swkbd-exit ]; then keep_core=true; fi
-  if [ "$sample" = swkbd-stop-keep ] || [ "$sample" = swkbd-stop-hold ] || [ "$sample" = swkbd-exit ]; then keep_window=true; fi
+  if [ "$sample" = swkbd-stop-keep ] || [ "$sample" = swkbd-stop-keep-release ] || [ "$sample" = swkbd-exit ] || [ "$sample" = swkbd-exit-race ]; then keep_core=true; fi
+  if [ "$sample" = swkbd-stop-keep ] || [ "$sample" = swkbd-stop-hold ] || [ "$sample" = swkbd-exit ] || [ "$sample" = swkbd-exit-race ]; then keep_window=true; fi
   if [ "$sample" = swkbd-overlap ] || [ "$sample" = swkbd-message ] || [ "$sample" = swkbd-message-stop ]; then ui_overlap=true; fi
-  if [ "$sample" = swkbd-exit ]; then process_exit=true; activity=.IsolatedEngineStageActivity; process_name="$APP:kenji"; fi
-  adb shell am start -n "$APP/$activity" --es core "$core" --ez homebrew true --ez input_probe "$input_probe" --ez ui_setup "$ui_setup" --ez ui_response "$ui_response" --ez ui_real "$ui_real" --ez ui_stop "$ui_stop" --ez stop_probe "$stop_probe" --ez keep_core "$keep_core" --ez keep_window "$keep_window" --ez process_exit "$process_exit" --ez ui_overlap "$ui_overlap" || true
+  if [ "$sample" = swkbd-exit ] || [ "$sample" = swkbd-exit-race ]; then process_exit=true; activity=.IsolatedEngineStageActivity; process_name="$APP:kenji"; fi
+  [ "$sample" = swkbd-exit-race ] && race_stop=true
+  adb shell am start -n "$APP/$activity" --es core "$core" --ez homebrew true --ez input_probe "$input_probe" --ez ui_setup "$ui_setup" --ez ui_response "$ui_response" --ez ui_real "$ui_real" --ez ui_stop "$ui_stop" --ez stop_probe "$stop_probe" --ez keep_core "$keep_core" --ez keep_window "$keep_window" --ez process_exit "$process_exit" --ez ui_overlap "$ui_overlap" --ez race_stop "$race_stop" || true
   outcome=timeout
   for ((i=0; i<120; i++)); do
     if grep -qE 'ENGINE_FAIL|SDL_SURFACE_FAIL|Unhandled exception in guest thread|FATAL EXCEPTION|Fatal signal|ActivityManager.*Process dev\.symbiosis\.coreprobe \(pid [0-9]+\) has died' "$log"; then outcome=fail; break; fi
@@ -131,7 +133,7 @@ for core in sym space; do
         else outcome=overlap-incomplete; fi
         break
       fi
-      if [ "$sample" = swkbd ] || [ "$sample" = swkbd-response ] || [ "$sample" = swkbd-ui ] || [ "$sample" = swkbd-stop ] || [ "$sample" = swkbd-stop-keep ] || [ "$sample" = swkbd-stop-hold ] || [ "$sample" = swkbd-stop-keep-release ] || [ "$sample" = swkbd-exit ]; then
+      if [ "$sample" = swkbd ] || [ "$sample" = swkbd-response ] || [ "$sample" = swkbd-ui ] || [ "$sample" = swkbd-stop ] || [ "$sample" = swkbd-stop-keep ] || [ "$sample" = swkbd-stop-hold ] || [ "$sample" = swkbd-stop-keep-release ] || [ "$sample" = swkbd-exit ] || [ "$sample" = swkbd-exit-race ]; then
         # swkbd: unchanged production callback; swkbd-response: explicitly
         # separate test-only callback sends a real JNI response.
         for ((j=0; j<25; j++)); do
@@ -139,11 +141,11 @@ for core in sym space; do
           grep -qE 'ENGINE_FAIL|Unhandled exception in guest thread|Fatal signal' "$log" && break
           sleep 1
         done
-        if { [ "$sample" = swkbd-stop ] || [ "$sample" = swkbd-stop-keep ] || [ "$sample" = swkbd-stop-hold ] || [ "$sample" = swkbd-stop-keep-release ] || [ "$sample" = swkbd-exit ]; } && grep -q 'UI_REAL_STOP_REQUESTED' "$log" &&
+        if { [ "$sample" = swkbd-stop ] || [ "$sample" = swkbd-stop-keep ] || [ "$sample" = swkbd-stop-hold ] || [ "$sample" = swkbd-stop-keep-release ] || [ "$sample" = swkbd-exit ] || [ "$sample" = swkbd-exit-race ]; } && grep -q 'UI_REAL_STOP_REQUESTED' "$log" &&
            grep -q 'UI_REAL_RESPONSE accepted=false result=true' "$log" &&
            grep -q 'SWKBD_SHOW_RETURN rc=0x00005d59 ' "$log" && grep -q 'SWKBD_GUEST_DONE' "$log"; then
           observed_pid=$(adb shell pidof "$process_name" | tr -d '\r' || true)
-          adb shell run-as "$APP" touch files/stop-request.txt
+          if [ "$race_stop" != true ]; then adb shell run-as "$APP" touch files/stop-request.txt; fi
           teardown_stage=''
           for ((j=0; j<45; j++)); do
             teardown_stage=$(timeout 5s adb exec-out run-as "$APP" cat files/teardown-stage.txt 2>/dev/null | tr -d '\r' || true)
@@ -181,7 +183,7 @@ for core in sym space; do
               done
               parent_after=$(adb shell pidof "$APP" | tr -d '\r' || true)
               printf 'ISOLATED_EXIT core=%s lock_before=%s lock_after=%s parent=%s parent_after=%s child=%s child_after=%s\n' "$core" "$before" "$after" "$parent_pid" "$parent_after" "$observed_pid" "$current_pid" | tee "$PROBE_WORK/$core-isolated-exit.txt"
-              if [ "$before" = busy ] && [ "$after" = acquired ] && [ -n "$parent_pid" ] && [ "$parent_pid" = "$parent_after" ] && [ -z "$current_pid" ] && printf '%s\n' "$teardown_stage" | grep -q '^TEARDOWN_PROCESS_EXIT_REQUESTED$'; then
+              if { [ "$race_stop" != true ] || printf '%s\n' "$teardown_stage" | grep -q '^TEARDOWN_RACING_UI_REPLY$'; } && [ "$before" = busy ] && [ "$after" = acquired ] && [ -n "$parent_pid" ] && [ "$parent_pid" = "$parent_after" ] && [ -z "$current_pid" ] && printf '%s\n' "$teardown_stage" | grep -q '^TEARDOWN_PROCESS_EXIT_REQUESTED$'; then
                 outcome=frame-callback-observed
               else outcome=isolated-exit-incomplete; fi
             else

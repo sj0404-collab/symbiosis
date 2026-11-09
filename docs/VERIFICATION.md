@@ -5933,3 +5933,13 @@ JNI-передача ответа (клавиатуры), и оба гостя �
 с `dlclose` сбои продолжаются. Host suite success, общий Android job failed;
 подключение listener и lifecycle реального плеера не проверены.
 [Логи](https://github.com/sj0404-collab/symbiosis/actions/runs/42704817863/artifacts/13713394045).
+
+[Run 42706822665](https://github.com/sj0404-collab/symbiosis/actions/runs/42706822665),
+`5572d67`: общая production `KenjiUiDispatcher` копирует временные указатели
+синхронно через реальный JNI и передаёт значения coordinator. В Android-тесте
+с неизменённым production callback и тестовым listener оба ядра снова прошли
+Unicode, подтверждение/отмену, пересечение сообщения/ввода и отмену очереди.
+`SWKBD_UI_EXIT=0`, `SWKBD_MESSAGE_EXIT=0`, `SWKBD_MESSAGE_STOP_EXIT=0`.
+Без listener ответа нет; production плеер пока dispatcher не устанавливает.
+Job failed из-за ранее указанных негативных проб; устройство и игра не проверены.
+[Логи](https://github.com/sj0404-collab/symbiosis/actions/runs/42706822665/artifacts/13715565373).

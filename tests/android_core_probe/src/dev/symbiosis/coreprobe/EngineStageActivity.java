@@ -17,6 +17,7 @@ public class EngineStageActivity extends Activity {
     private static final String TAG = "SymEngineStage";
     private boolean started;
     private String flavor;
+    private final java.util.concurrent.CountDownLatch uiStopIssued = new java.util.concurrent.CountDownLatch(1);
     private final java.util.concurrent.CountDownLatch rendererReturned = new java.util.concurrent.CountDownLatch(1);
     private volatile boolean rendererStoppedOk;
     private org.yuzu.yuzu_emu.utils.GameSessionLock sessionLease;
@@ -125,9 +126,16 @@ public class EngineStageActivity extends Activity {
                 boolean stopProbe = getIntent().getBooleanExtra("stop_probe", false);
                 if (stopProbe) new Thread(new Runnable() { public void run() {
                     try {
-                        File request = new File(getFilesDir(), "stop-request.txt");
-                        for (int i = 0; i < 900 && !request.exists(); i++) Thread.sleep(100);
-                        if (!request.exists()) { Log.e(TAG, "ENGINE_FAIL no stop request"); return; }
+                        if (getIntent().getBooleanExtra("race_stop", false)) {
+                            if (!uiStopIssued.await(90, java.util.concurrent.TimeUnit.SECONDS)) {
+                                Log.e(TAG, "ENGINE_FAIL no UI stop event"); return;
+                            }
+                            step("TEARDOWN_RACING_UI_REPLY");
+                        } else {
+                            File request = new File(getFilesDir(), "stop-request.txt");
+                            for (int i = 0; i < 900 && !request.exists(); i++) Thread.sleep(100);
+                            if (!request.exists()) { Log.e(TAG, "ENGINE_FAIL no stop request"); return; }
+                        }
                         step("TEARDOWN_BEFORE_SIGNAL");
                         if (!bridge.nativeSignalPlayStop()) { Log.e(TAG, "ENGINE_FAIL signal stop"); return; }
                         step("TEARDOWN_SIGNAL_RETURNED");
@@ -215,7 +223,10 @@ public class EngineStageActivity extends Activity {
                     boolean realUi = getIntent().getBooleanExtra("ui_real", false);
                     if (realUi) KeyboardUiFixture.configure(this, bridge, generation,
                             getIntent().getBooleanExtra("ui_stop", false),
-                            getIntent().getBooleanExtra("ui_overlap", false));
+                            getIntent().getBooleanExtra("ui_overlap", false),
+                            getIntent().getBooleanExtra("race_stop", false) ? new Runnable() {
+                                @Override public void run() { uiStopIssued.countDown(); }
+                            } : null);
                     KeyboardFixture.configure(bridge, generation, realUi);
                     step("realUiResponse_ACTIVATED");
                 }
