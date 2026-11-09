@@ -46,6 +46,8 @@ def main():
         for name, source in files.items():
             adb('push', source, f'{REMOTE}/{name}', timeout=300)
         adb('shell', 'chmod', '755', f'{REMOTE}/probe')
+        # Android 14+ can reject dynamically loaded writable DEX files.
+        adb('shell', 'chmod', '0444', f'{REMOTE}/standalone.jar')
         outcomes = []
         for core in ('sym', 'space'):
             command = (f'LD_LIBRARY_PATH={shlex.quote("/system/lib64:" + REMOTE)} '

@@ -5321,3 +5321,23 @@ kernel, проверяет CRC ZIP entry и SHA-256 именно kernel (не в
 не подтверждает zip-alignment и не заменяет тест полного Android 16 КБ.
 Добавлен отдельный независимый job в экспериментальный workflow; CI результата
 для него ещё нет.
+
+### 96. CI: оба варианта Android 15 пока не загрузились полностью
+
+[Run 42501956373](https://github.com/sj0404-collab/symbiosis/actions/runs/42501956373):
+обычный QEMU после 10 минут `ANDROID_ADB_BOOT_COMPLETED=0`, повторные аварии
+`surfaceflinger` и `goldfish-logcat`; [журнал](https://github.com/sj0404-collab/symbiosis/actions/runs/42501956373/artifacts/13625824095).
+Host suite и native ARM/Bionic тесты прошли; общий run завершён с ошибкой стенда.
+
+[Run 42502528041](https://github.com/sj0404-collab/symbiosis/actions/runs/42502528041):
+официальный backend при 4 ГБ и software TCG за 20 минут также не подтвердил
+`sys.boot_completed`; в конце ADB видел `device product:sdk_gphone64_arm64`, но
+это не доказательство работоспособной shell или завершённой загрузки. Host suite
+прошёл, тесты Android приложения и ядер на этом запуске не выполнялись.
+[Логи](https://github.com/sj0404-collab/symbiosis/actions/runs/42502528041/artifacts/13626013892).
+Kernel console был выключен, поэтому причина второго зависания пока неизвестна.
+Следующий запуск включает `-show-kernel`, собирает системный logcat при неудаче
+и при действительно отвечающей shell запускает независимый loader/JNI отдельно,
+даже если полный Android ещё не запустился; результат сохраняется отдельно и
+не превращает незавершённую загрузку в успех. DEX диагностического app_process
+делается read-only для ограничений Android 14+. Релизный APK не собирался.

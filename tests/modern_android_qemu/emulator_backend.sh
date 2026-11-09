@@ -41,7 +41,7 @@ E=/tmp/android-emulator-pinned/emulator
 # pipe and real SwiftShader host graphics. This is unsupported, not a phone.
 env LD_LIBRARY_PATH="$E/lib64:$E/lib64/gles_swiftshader${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" \
   "$E/qemu/linux-x86_64/qemu-system-aarch64-headless" -avd probe -port 5560 \
-  -no-window -no-audio -no-boot-anim -no-snapshot -no-metrics -accel off \
+  -no-window -no-audio -no-boot-anim -no-snapshot -no-metrics -show-kernel -accel off \
   -gpu swiftshader_indirect -memory 4096 -cores 2 -verbose \
   -qemu -machine virt -cpu max > "$PROBE_WORK/emulator.log" 2>&1 &
 emu_pid=$!
@@ -52,7 +52,9 @@ cleanup() {
 }
 trap cleanup EXIT
 booted=0
-deadline=$((SECONDS + 1200))
+early_attempted=0
+start=$SECONDS
+deadline=$((start + 1200))
 while (( SECONDS < deadline )); do
   if ! kill -0 "$emu_pid" 2>/dev/null; then
     echo 'EMULATOR_EXITED_BEFORE_BOOT' | tee "$PROBE_WORK/boot-status.txt"
@@ -61,11 +63,30 @@ while (( SECONDS < deadline )); do
   fi
   value=$(timeout 8s adb -s "$ANDROID_SERIAL" shell getprop sys.boot_completed 2>/dev/null | tr -d '\r' || true)
   if [ "$value" = 1 ]; then booted=1; break; fi
+  if (( early_attempted == 0 && SECONDS - start >= 300 )) && timeout 10s adb -s "$ANDROID_SERIAL" shell true >/dev/null 2>&1; then
+    early_attempted=1
+    echo 'ADB_SHELL_READY_BUT_ANDROID_NOT_FULLY_BOOTED: testing standalone only'
+    set +e
+    timeout 600s python3 tests/standalone_core_probe/run.py "$PROBE_WORK" --preload-tls
+    early_rc=$?
+    set -e
+    printf 'EARLY_STANDALONE_EXIT=%s (ANDROID NOT FULLY BOOTED)\n' "$early_rc" | tee -a "$PROBE_WORK/boot-status.txt"
+  fi
   sleep 5
 done
-printf 'ANDROID_BOOT_COMPLETED=%s\n' "$booted" | tee "$PROBE_WORK/boot-status.txt"
+printf 'ANDROID_BOOT_COMPLETED=%s\n' "$booted" | tee -a "$PROBE_WORK/boot-status.txt"
 if [ "$booted" != 1 ]; then
   timeout 15s adb devices -l >> "$PROBE_WORK/boot-status.txt" 2>&1 || true
+  timeout 20s adb -s "$ANDROID_SERIAL" logcat -d -v threadtime > "$PROBE_WORK/boot-logcat.txt" 2>&1 || true
+  # An early responsive shell can still support a useful independent loader
+  # test, but must never be reported as a fully booted Android system.
+  if (( early_attempted == 0 )) && timeout 10s adb -s "$ANDROID_SERIAL" shell true >/dev/null 2>&1; then
+    set +e
+    timeout 900s python3 tests/standalone_core_probe/run.py "$PROBE_WORK" --preload-tls
+    early_rc=$?
+    set -e
+    printf 'EARLY_STANDALONE_EXIT=%s (ANDROID NOT FULLY BOOTED)\n' "$early_rc" | tee -a "$PROBE_WORK/boot-status.txt"
+  fi
   tail -120 "$PROBE_WORK/emulator.log"
   exit 1
 fi
