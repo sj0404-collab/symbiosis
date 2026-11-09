@@ -45,14 +45,14 @@ public final class EngineStageActivity extends Activity {
     private void startHomebrew(KenjiBridge bridge) {
         // Real, hash-pinned open-source NRO, copied only into this disposable
         // CI app. Never included in a release and never a commercial game.
-        new Thread(() -> {
+        new Thread(new Runnable() { public void run() {
             try (android.os.ParcelFileDescriptor fd = android.os.ParcelFileDescriptor.open(
                     new File(getFilesDir(), "homebrew.nro"), android.os.ParcelFileDescriptor.MODE_READ_ONLY)) {
                 step("BEFORE_homebrewLoad_NRO");
                 if (!check("homebrewLoad", bridge.nativeLoadGame(fd.getFd(), 3))) return;
                 step("BEFORE_rendererKick");
                 if (!check("rendererKick", bridge.nativeRendererKick(1280, 720, 0))) return;
-                new Thread(() -> {
+                new Thread(new Runnable() { public void run() {
                     try {
                         for (int i = 0; i < 60; i++) {
                             Thread.sleep(1000);
@@ -64,12 +64,12 @@ public final class EngineStageActivity extends Activity {
                         }
                         Log.e(TAG, "ENGINE_FAIL homebrew no frame callback in 60 seconds");
                     } catch (InterruptedException e) { Thread.currentThread().interrupt(); }
-                }, "frame-observer").start();
+                }}, "frame-observer").start();
                 step("BEFORE_realRendererRunLoop");
                 String result = bridge.nativeRunLoop();
                 Log.e(TAG, "ENGINE_FAIL renderer loop returned result=" + result);
             } catch (Throwable t) { Log.e(TAG, "ENGINE_FAIL homebrew exception", t); }
-        }, "real-homebrew-engine").start();
+        }}, "real-homebrew-engine").start();
     }
     private void runProbe(SurfaceHolder holder) {
         try {
