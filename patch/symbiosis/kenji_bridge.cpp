@@ -2040,7 +2040,8 @@ Java_org_yuzu_yuzu_1emu_utils_KenjiBridge_nativeWindowOf(JNIEnv* env, jobject, j
 // after device close and all known native callers have stopped.
 JNIEXPORT void JNICALL
 Java_org_yuzu_yuzu_1emu_utils_KenjiBridge_nativeReleaseWindow(JNIEnv*, jobject, jlong handle) {
-    if (handle > 0) ANativeWindow_release(reinterpret_cast<ANativeWindow*>(handle));
+    // ARM64 tagged pointers may be negative when represented as jlong.
+    if (handle != 0 && handle != -1) ANativeWindow_release(reinterpret_cast<ANativeWindow*>(handle));
 }
 
 } // extern "C"

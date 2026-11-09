@@ -19,6 +19,7 @@ public final class KenjiBridge {
         boolean evict, boolean internet, boolean integrity, int fsLog, String timezone,
         boolean ignoreMissingServices);
     public native long nativeWindowOf(android.view.Surface surface);
+    public native void nativeReleaseWindow(long handle);
     public native void nativeSetWindowHandle(long handle);
     public native String nativeInputInit(int width, int height);
     public native int nativeConnectPad(int index);

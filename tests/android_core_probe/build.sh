@@ -38,6 +38,10 @@ cp "$ROOT/patch/libs/arm64-v8a/libcrypto.so" "$ROOT/patch/libs/arm64-v8a/libssl.
 unzip -p "$WORK/symbek.apk" lib/arm64-v8a/libkenjinxjni.so > "$WORK/apk/lib/arm64-v8a/libreference_kenji_jni.so"
 echo '71de6400f5f8e2e9cba272405431e7cc497bd96631449dd3e7af35a6618e18a8  '"$WORK/apk/lib/arm64-v8a/libreference_kenji_jni.so" | sha256sum -c -
 unzip -p "$WORK/symbek.apk" lib/arm64-v8a/libc++_shared.so > "$WORK/apk/lib/arm64-v8a/libc++_shared.so"
+# Genuine, pinned SymbEK OpenAL for this diagnostic only. The release workflow
+# builds its own OpenAL; success here does not establish binary identity.
+unzip -p "$WORK/symbek.apk" lib/arm64-v8a/libopenal.so > "$WORK/apk/lib/arm64-v8a/libopenal.so"
+echo 'd63ccb1227308b331fd11bc5041671c3ac2842484779e309acd1bb9f3bf061a4  '"$WORK/apk/lib/arm64-v8a/libopenal.so" | sha256sum -c -
 for lib in symbiosis_kenji kenjinxjni; do
   "$CXX" -std=c++17 -O2 -shared -fPIC -static-libstdc++ -Wl,-z,max-page-size=16384 \
     -Wl,-soname,"lib$lib.so" -I"$WORK" \

@@ -350,7 +350,9 @@ class KenjiPlayerActivity : Activity(), SurfaceHolder.Callback {
 
             if (startup.isCancelled()) return@Thread
             val nw = KenjiBridge.nativeWindow(holder.surface)
-            if (nw <= 0L) {
+            // ARM64 pointers can carry top-byte tags and appear negative as
+            // Kotlin Long. Only the JNI error sentinel or null is invalid.
+            if (nw == -1L || nw == 0L) {
                 if (!startup.isCancelled()) runOnUiThread { fail("Не удалось получить поверхность игры.") }
                 return@Thread
             }

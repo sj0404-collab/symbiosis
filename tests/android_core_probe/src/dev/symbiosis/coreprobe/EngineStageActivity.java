@@ -67,6 +67,13 @@ public final class EngineStageActivity extends Activity {
             int width = nativeWindowWidth(window);
             step("nativeWindowWidth=" + width);
             if (width <= 0) { Log.e(TAG, "ENGINE_FAIL invalid native window width"); return; }
+            // Acquire and release a second real reference via the production
+            // bridge, retaining the first reference throughout the probe.
+            long second = bridge.nativeWindowOf(holder.getSurface());
+            if (second == 0 || second == -1) { Log.e(TAG, "ENGINE_FAIL second window"); return; }
+            bridge.nativeReleaseWindow(second);
+            if (nativeWindowWidth(window) != width) { Log.e(TAG, "ENGINE_FAIL window after release"); return; }
+            step("nativeWindowSecondReferenceRelease_RETURNED_OK");
             KenjinxNative.INSTANCE.setNativeSurface(window);
             KenjinxNative.INSTANCE.setNativeWindow(window);
             step("BEFORE_graphicsInitializeRenderer");

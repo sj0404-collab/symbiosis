@@ -5505,3 +5505,26 @@ reference + Android SurfaceView прошли независимо. [Логи](ht
 Тест уточняется: логирует битовый шаблон, проверяет sentinel -1 и 0, затем
 проверяет фактический `ANativeWindow_getWidth` на полученном адресе. До
 получения результатов причину и применимость к приложению не считать доказанными.
+
+[Run 42659516038](https://github.com/sj0404-collab/symbiosis/actions/runs/42659516038),
+`cc510fb`: при истинной `Surface.isValid=true` Android вернул из
+`ANativeWindow_fromSurface` для двух процессов адреса с верхним байтом `b4`;
+Java `long` отрицателен, но `ANativeWindow_getWidth` через исходный указатель
+вернул 720. Оба настоящих ядра после этого вернули успех от
+`graphicsInitializeRenderer`; это не доказывает Vulkan surface/кадры. Далее
+ядро Symbiosis аварийно завершилось в `deviceInitialize` с настоящим
+`DllNotFoundException: libopenal.so`; у SymbEK тот же неудачный `dlopen
+libopenal.so` и SIGABRT на `deviceInitialize`, но его текст исключения в
+выведенном logcat отсутствует. Важно: OpenAL не был добавлен в *тестовый*
+APK, тогда как release workflow имеет отдельный шаг сборки OpenAL; это не
+доказательство отсутствия OpenAL в пользовательской сборке. [Логи](https://github.com/sj0404-collab/symbiosis/actions/runs/42659516038/artifacts/13693897157).
+
+Production-проверки исправляются на явные sentinel `0` и `-1` вместо signed
+`<= 0` для получения и освобождения окна; host-тест проверяет также отрицательный
+битовый шаблон, а следующий Android-тест отдельно вызывает настоящее
+освобождение второй ссылки. Для исследования `deviceInitialize` в disposable
+APK добавляется настоящий `libopenal.so` из проверенного APK SymbEK 1.0.121,
+SHA256 `d63ccb1227308b331fd11bc5041671c3ac2842484779e309acd1bbf3bf061a4`;
+это исключительно тестовая зависимость и не идентична автоматически OpenAL,
+который самостоятельно собирает release workflow. Ни ошибка 710, ни игра не
+проверены, выпуск по-прежнему заблокирован.

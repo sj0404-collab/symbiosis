@@ -1035,7 +1035,8 @@ object KenjiBridge {
         runCatching { nativeWindowOf(surface) }.getOrDefault(-1L)
 
     fun releaseNativeWindow(handle: Long): Boolean {
-        if (handle <= 0L) return true
+        // ANativeWindow pointers are opaque bit patterns, not signed numbers.
+        if (handle == -1L || handle == 0L) return true
         return bridgeLoaded && runCatching { nativeReleaseWindow(handle); true }.getOrDefault(false)
     }
 

@@ -14,10 +14,10 @@ BRIDGE_CPP = (ROOT / 'patch/symbiosis/kenji_bridge.cpp').read_text()
 class NativeWindowOwnership(unittest.TestCase):
     def test_acquired_window_is_kept_and_invalid_window_is_rejected(self):
         init = ACTIVITY.split('private fun startGame(', 1)[1].split('private fun startWatchdog(', 1)[0]
-        self.assertLess(init.index('KenjiBridge.nativeWindow(holder.surface)'), init.index('if (nw <= 0L)'))
-        self.assertLess(init.index('if (nw <= 0L)'), init.index('ownedNativeWindow = nw'))
+        self.assertLess(init.index('KenjiBridge.nativeWindow(holder.surface)'), init.index('if (nw == -1L || nw == 0L)'))
+        self.assertLess(init.index('if (nw == -1L || nw == 0L)'), init.index('ownedNativeWindow = nw'))
         self.assertLess(init.index('ownedNativeWindow = nw'), init.index('KenjiBridge.preparePlay('))
-        self.assertIn('return@Thread', init.split('if (nw <= 0L)', 1)[1].split('ownedNativeWindow = nw', 1)[0])
+        self.assertIn('return@Thread', init.split('if (nw == -1L || nw == 0L)', 1)[1].split('ownedNativeWindow = nw', 1)[0])
 
     def test_release_happens_after_join_and_unload_before_unlock(self):
         destroy = ACTIVITY.split('override fun onDestroy()', 1)[1].split('private fun leave()', 1)[0]
@@ -31,6 +31,7 @@ class NativeWindowOwnership(unittest.TestCase):
         self.assertIn('if (!KenjiBridge.releaseNativeWindow(owned))', destroy)
         self.assertIn('android.os.Process.killProcess', destroy)
         self.assertIn('private external fun nativeReleaseWindow(handle: Long)', BRIDGE_KT)
+        self.assertIn('if (handle == -1L || handle == 0L) return true', BRIDGE_KT)
 
     @unittest.skipUnless(shutil.which('g++'), 'host C++ compiler not installed')
     def test_release_function_on_mock_window(self):
@@ -59,6 +60,10 @@ int main() {
   assert(handle > 0);
   ''' + signature + '''(nullptr, nullptr, handle);
   assert(calls == 1 && last == &obj);
+  // Only compare the bit pattern: this mock never dereferences tagged.
+  jlong tagged = INT64_MIN + 0x1234;
+  ''' + signature + '''(nullptr, nullptr, tagged);
+  assert(calls == 2 && reinterpret_cast<jlong>(last) == tagged);
 }
 '''
         with tempfile.TemporaryDirectory() as d:
