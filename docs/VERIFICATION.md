@@ -5956,3 +5956,18 @@ callback в коротком окне после close и освобождени
 подтверждённое выполнение гостя. [Логи](https://github.com/sj0404-collab/symbiosis/actions/runs/42708987871/artifacts/13715118858).
 Первый запуск [42708836813](https://github.com/sj0404-collab/symbiosis/actions/runs/42708836813)
 не достиг Android из-за ошибки чтения скачанного архива NDK; повтор собрался.
+
+[Run 42711202300](https://github.com/sj0404-collab/symbiosis/actions/runs/42711202300),
+`fdcca2c`: на обоих ядрах одновременно инициированы stop и отмена диалога;
+JNI принял отмену, renderer и device close вернулись. После возврата close в
+3-секундном окне через тестовый listener не наблюдалось новых callback
+(`TEARDOWN_POST_CLOSE_CALLBACKS_0`); изолированный процесс затем завершён,
+lease перешёл от busy к acquired, родительский процесс остался тем же.
+`SWKBD_RACE_EXIT=0` означает именно эти наблюдения, а не возврат гостя из
+`swkbdShow`: гостевого маркера нет. Это одна гонка на ядро и короткое окно,
+не доказательство отсутствия поздних callback или безопасного сохранения.
+Host/build jobs success, Android job failure из-за ранее известных отрицательных
+проб. [Логи](https://github.com/sj0404-collab/symbiosis/actions/runs/42711202300/artifacts/13716397725).
+Промежуточный [42711161322](https://github.com/sj0404-collab/symbiosis/actions/runs/42711161322)
+не собрал диагностический APK из-за незавершённой мной тестовой инструментализации;
+это исправлено в `fdcca2c` и проверено в указанном повторе.
