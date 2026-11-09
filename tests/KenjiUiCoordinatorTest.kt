@@ -75,6 +75,37 @@ fun main() {
         h.finish()
     }
     run {
+        // A real Android/core test demonstrated that an error-message callback
+        // is already complete; replying to it can wake an unrelated keyboard.
+        val h = Harness()
+        h.coordinator.request(request().copy(type = 1, min = 0, max = 0))
+        h.coordinator.request(request("waiting-keyboard"))
+        h.pump()
+        val message = checkNotNull(h.shown.poll())
+        check(h.coordinator.answer(message.first, true, ""))
+        h.pump()
+        val keyboard = checkNotNull(h.shown.poll())
+        check(keyboard.second.initialText == "waiting-keyboard")
+        check(h.answers.isEmpty())
+        check(h.coordinator.answer(keyboard.first, true, "correct"))
+        val result = h.takeAnswer()
+        check(result.ok && result.text == "correct")
+        h.finish()
+        check(h.answers.isEmpty())
+    }
+    run {
+        // Stopping must not answer either an active or queued notification.
+        val h = Harness()
+        h.coordinator.request(request().copy(type = 1, min = 0, max = 0))
+        h.coordinator.request(request().copy(type = 1, min = 0, max = 0))
+        h.coordinator.request(request())
+        h.coordinator.stop()
+        h.coordinator.request(request().copy(type = 1, min = 0, max = 0))
+        h.coordinator.closeAfterGuestStopped()
+        h.pump()
+        check(!h.takeAnswer().ok && h.answers.isEmpty())
+    }
+    run {
         // Two teardown callers must both wait for an in-flight native reply.
         // This models executor draining only, not real guest-thread shutdown.
         val main = LinkedBlockingQueue<() -> Unit>()

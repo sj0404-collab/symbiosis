@@ -87,8 +87,9 @@ for core in sym space; do
            grep -q 'MIX_MESSAGE_RETURN rc=0x00000000' "$log" &&
            [ "$(grep -c 'UI_OVERLAP_CALLBACK' "$log" || true)" = 2 ] &&
            [ "$(grep -c 'UI_OVERLAP_CLICK' "$log" || true)" = 2 ] &&
+           [ "$(grep -c 'UI_REAL_RESPONSE accepted=true result=true' "$log" || true)" = 1 ] &&
            ! grep -qE 'UI_REAL_FAIL|ENGINE_FAIL|Fatal signal|FATAL EXCEPTION' "$log"; then
-          if grep -m1 'UI_OVERLAP_CLICK ' "$log" | grep -q 'callbacks=2'; then outcome=frame-callback-observed
+          if grep -m1 'UI_OVERLAP_CLICK ' "$log" | grep -q 'seed=MESSAGE callbacks=2'; then outcome=frame-callback-observed
           else outcome=mixed-serialized; fi
         elif grep -q 'MIX_BOTH_DONE' "$log"; then outcome=mixed-wrong-response
         else outcome=mixed-incomplete; fi

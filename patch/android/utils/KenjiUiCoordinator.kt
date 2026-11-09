@@ -48,12 +48,12 @@ class KenjiUiCoordinator(
     fun request(value: KenjiUiRequest) {
         if (closed) return // owner has declared every core caller stopped
         if (stopping) {
-            enqueueReply(false, byteArrayOf())
+            if (value.type != 1) enqueueReply(false, byteArrayOf())
             return
         }
         if (value.error != null || value.type !in 1..2 ||
             (value.type == 2 && (value.min < 0 || value.max < value.min))) {
-            enqueueReply(false, byteArrayOf())
+            if (value.type != 1) enqueueReply(false, byteArrayOf())
             postMain { onError(value.error ?: "Второе ядро запросило неподдерживаемый диалог.") }
             return
         }
@@ -78,6 +78,15 @@ class KenjiUiCoordinator(
     fun answer(id: Long, accepted: Boolean, text: String): Boolean {
         val current = active ?: return false
         if (stopping || current.id != id) return false
+        // Both pinned cores return from an error-message callback immediately.
+        // Replying later writes to the shared input response channel and can
+        // wake a different keyboard request (Android ARM mixed-applet test).
+        // This does not establish semantics of every possible type-1 caller.
+        if (current.request.type == 1) {
+            active = null
+            showNext()
+            return true
+        }
         val actual = if (accepted && current.request.type == 2) text else ""
         if (accepted && current.request.type == 2 &&
             !KenjiUiText.withinBounds(actual, current.request.min, current.request.max)) return false
@@ -109,8 +118,11 @@ class KenjiUiCoordinator(
     fun stop() {
         if (stopping || closed) return
         stopping = true
-        if (active != null) { active = null; enqueueReply(false, byteArrayOf()) }
-        while (pending.isNotEmpty()) { pending.removeFirst(); enqueueReply(false, byteArrayOf()) }
+        active?.let { if (it.request.type != 1) enqueueReply(false, byteArrayOf()) }
+        active = null
+        while (pending.isNotEmpty()) {
+            if (pending.removeFirst().request.type != 1) enqueueReply(false, byteArrayOf())
+        }
         postMain(dismiss)
     }
 

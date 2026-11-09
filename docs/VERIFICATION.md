@@ -5893,3 +5893,14 @@ callback, а второй только после ответа на первый
 а не доказательство отсутствия конкурирующих callback других типов. Номер теста
 `SWKBD_OVERLAP_EXIT=1` оставлен fail-closed: истинного одновременного входа двух
 callback эксперимент не вызвал. [Логи](https://github.com/sj0404-collab/symbiosis/actions/runs/42696389756/artifacts/13709209706).
+
+[Run 42698485900](https://github.com/sj0404-collab/symbiosis/actions/runs/42698485900),
+`7e48e3e`: реальный libnx ErrorApplication applet (callback type=1) вернулся
+гостю до закрытия Android-сообщения. Когда другая гостевая нить одновременно
+открыла клавиатуру (type=2), оба callback уже были получены до нажатия OK на
+сообщении. Кандидат coordinator отправил ответ сообщения по общему каналу;
+клавиатура до показа/ответа её диалога вернулась с `rc=0` и строкой из пробела
+вместо `AnswerB`. На обоих ядрах `mixed-wrong-response`, `SWKBD_MESSAGE_EXIT=1`.
+Это реальная ошибка кандидата в тестовом APK, не подтверждение дефекта в
+production (там callback пока пустой). Отправлять ответ на это сообщение нельзя;
+поведение других видов type=1 требует отдельных тестов. [Логи](https://github.com/sj0404-collab/symbiosis/actions/runs/42698485900/artifacts/13710003625).
