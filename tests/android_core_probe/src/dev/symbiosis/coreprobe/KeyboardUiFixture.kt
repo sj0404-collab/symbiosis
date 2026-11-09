@@ -56,7 +56,11 @@ object KeyboardUiFixture {
                         val dialog = field.get(presenter) as AlertDialog
                         check(dialog.isShowing)
                         val input = findEdit(dialog.window!!.decorView)
-                        if (overlap) {
+                        if (overlap && stopOnFirst) {
+                            check(overlapCallbacks.get() == 2)
+                            active.stop()
+                            Log.i("SymEngineStage", "UI_OVERLAP_STOP callbacks=${overlapCallbacks.get()}")
+                        } else if (overlap) {
                             val seed = if (request.type == 1) "MESSAGE" else checkNotNull(input).text.toString()
                             check(seed == "SeedA" || seed == "SeedB" || seed == "MESSAGE")
                             if (input != null) input.setText(if (seed == "SeedA") "AnswerA" else "AnswerB")

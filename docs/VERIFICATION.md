@@ -5904,3 +5904,14 @@ callback эксперимент не вызвал. [Логи](https://github.com
 Это реальная ошибка кандидата в тестовом APK, не подтверждение дефекта в
 production (там callback пока пустой). Отправлять ответ на это сообщение нельзя;
 поведение других видов type=1 требует отдельных тестов. [Логи](https://github.com/sj0404-collab/symbiosis/actions/runs/42698485900/artifacts/13710003625).
+
+[Run 42700609612](https://github.com/sj0404-collab/symbiosis/actions/runs/42700609612),
+`f37e572`: кандидат coordinator больше не отвечает на type=1 в проверенном
+сценарии ErrorApplication. Оба настоящих ядра одновременно прислали сообщение и
+клавиатуру, автоматизация закрыла сообщение, затем ввела `AnswerB`; только одна
+JNI-передача ответа (клавиатуры), и оба гостя получили `AnswerB`, rc=0.
+`SWKBD_MESSAGE_EXIT=0`; Unicode, отмена и изолированный выход предыдущих тестов
+также прошли. Два независимых swkbd по-прежнему сериализуются до второго callback,
+поэтому `SWKBD_OVERLAP_EXIT=1` и общий Android job failed наряду со старыми
+известными отказами. Другие источники type=1 и реальный production callback не
+проверены. [Логи](https://github.com/sj0404-collab/symbiosis/actions/runs/42700609612/artifacts/13711997326).
