@@ -13,6 +13,8 @@ public final class KeyboardFixture {
     public static void configure(KenjiBridge value, long token, boolean useRealUi) {
         bridge = value;
         generation = token;
+        deviceClosed = false;
+        callbacksAfterClose.set(0);
         realUi = useRealUi;
         KenjinxNative.INSTANCE.setUiCallback(new KenjinxNative.UiCallback() {
             @Override public void onRequest(long title, long message, long watermark, int type,
@@ -23,6 +25,10 @@ public final class KeyboardFixture {
     }
     public static void onRequest(long title, long message, long watermark, int type,
             int min, int max, int mode, long subtitle, long initial) {
+        if (deviceClosed) {
+            callbacksAfterClose.incrementAndGet();
+            Log.e("SymEngineStage", "UI_CALLBACK_AFTER_CLOSE");
+        }
         if (realUi) {
             KeyboardUiFixture.request(title, message, watermark, type, min, max, mode, subtitle, initial);
             return;

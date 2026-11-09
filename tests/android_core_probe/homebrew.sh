@@ -138,12 +138,13 @@ for core in sym space; do
         # separate test-only callback sends a real JNI response.
         for ((j=0; j<25; j++)); do
           grep -q 'SWKBD_GUEST_DONE' "$log" && break
+          [ "$race_stop" = true ] && grep -q 'TEARDOWN_COMPLETE core=' "$log" && break
           grep -qE 'ENGINE_FAIL|Unhandled exception in guest thread|Fatal signal' "$log" && break
           sleep 1
         done
         if { [ "$sample" = swkbd-stop ] || [ "$sample" = swkbd-stop-keep ] || [ "$sample" = swkbd-stop-hold ] || [ "$sample" = swkbd-stop-keep-release ] || [ "$sample" = swkbd-exit ] || [ "$sample" = swkbd-exit-race ]; } && grep -q 'UI_REAL_STOP_REQUESTED' "$log" &&
            grep -q 'UI_REAL_RESPONSE accepted=false result=true' "$log" &&
-           grep -q 'SWKBD_SHOW_RETURN rc=0x00005d59 ' "$log" && grep -q 'SWKBD_GUEST_DONE' "$log"; then
+           { [ "$race_stop" = true ] || { grep -q 'SWKBD_SHOW_RETURN rc=0x00005d59 ' "$log" && grep -q 'SWKBD_GUEST_DONE' "$log"; }; }; then
           observed_pid=$(adb shell pidof "$process_name" | tr -d '\r' || true)
           if [ "$race_stop" != true ]; then adb shell run-as "$APP" touch files/stop-request.txt; fi
           teardown_stage=''
@@ -183,7 +184,7 @@ for core in sym space; do
               done
               parent_after=$(adb shell pidof "$APP" | tr -d '\r' || true)
               printf 'ISOLATED_EXIT core=%s lock_before=%s lock_after=%s parent=%s parent_after=%s child=%s child_after=%s\n' "$core" "$before" "$after" "$parent_pid" "$parent_after" "$observed_pid" "$current_pid" | tee "$PROBE_WORK/$core-isolated-exit.txt"
-              if { [ "$race_stop" != true ] || printf '%s\n' "$teardown_stage" | grep -q '^TEARDOWN_RACING_UI_REPLY$'; } && [ "$before" = busy ] && [ "$after" = acquired ] && [ -n "$parent_pid" ] && [ "$parent_pid" = "$parent_after" ] && [ -z "$current_pid" ] && printf '%s\n' "$teardown_stage" | grep -q '^TEARDOWN_PROCESS_EXIT_REQUESTED$'; then
+              if { [ "$race_stop" != true ] || { printf '%s\n' "$teardown_stage" | grep -q '^TEARDOWN_RACING_UI_REPLY$' && printf '%s\n' "$teardown_stage" | grep -q '^TEARDOWN_POST_CLOSE_CALLBACKS_0$' && ! grep -q 'UI_CALLBACK_AFTER_CLOSE' "$log"; }; } && [ "$before" = busy ] && [ "$after" = acquired ] && [ -n "$parent_pid" ] && [ "$parent_pid" = "$parent_after" ] && [ -z "$current_pid" ] && printf '%s\n' "$teardown_stage" | grep -q '^TEARDOWN_PROCESS_EXIT_REQUESTED$'; then
                 outcome=frame-callback-observed
               else outcome=isolated-exit-incomplete; fi
             else
