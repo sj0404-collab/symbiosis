@@ -32,7 +32,7 @@ jobs:
           IMAGE=devkitpro/devkita64@sha256:82575ea78651b530b2e232bb3799cfd1fe331514e053d5f724bb4b28191fb79d
           docker pull "$IMAGE"
           docker run --rm --network none --cap-drop ALL --security-opt no-new-privileges \
-            --read-only --tmpfs /tmp:rw,nosuid,size=512m \
+            --user "$(id -u):$(id -g)" --read-only --tmpfs /tmp:rw,nosuid,size=512m \
             --mount "type=bind,src=$PWD/tests/hid_android_matrix,dst=/input,readonly" \
             --mount "type=bind,src=$PROBE_WORK,dst=/output" --entrypoint /bin/bash "$IMAGE" -euc '
               /opt/devkitpro/devkitA64/bin/aarch64-none-elf-gcc \
