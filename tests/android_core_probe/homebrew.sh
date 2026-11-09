@@ -21,7 +21,10 @@ for core in sym space; do
   adb shell run-as "$APP" rm -f files/engine-crash.txt
   log="$PROBE_WORK/$core-$sample-homebrew-logcat.txt"
   adb logcat -c # disposable Android only
-  adb logcat -T 1 -v time > "$log" 2>&1 & logpid=$!
+  # The NRO's busy game-over loop can produce >100 MB of verbose guest IPC
+  # logs in seconds. Keep lifecycle, error and explicit probe markers instead.
+  adb logcat -T 1 -v time 'SymEngineStage:V' 'SymbiosisKenji:V' \
+    'RyujinxLog:I' 'AndroidRuntime:E' 'libc:F' 'ActivityManager:I' '*:S' > "$log" 2>&1 & logpid=$!
   input_probe=false
   [ "$sample" = snake ] && input_probe=true
   adb shell am start -n "$APP/.EngineStageActivity" --es core "$core" --ez homebrew true --ez input_probe "$input_probe" || true
@@ -52,10 +55,10 @@ for core in sym space; do
     sleep 1
   done
   adb exec-out run-as "$APP" cat files/engine-crash.txt > "$PROBE_WORK/$core-$sample-homebrew-probe-crash.txt" 2>/dev/null || true
-  # Screenshot is diagnostic evidence, not bundled in APK; retained only if a
-  # frame callback was observed. A callback alone is not proof of image content.
-  if [ "$outcome" = frame-callback-observed ]; then
-    adb exec-out screencap -p > "$PROBE_WORK/$core-$sample-homebrew-screen.png" || true
+  # Retain a screenshot even on an inconclusive input result if frames were
+  # observed. It is evidence to inspect, not an automatic pass.
+  if grep -q "HOMEBREW_FRAME_CALLBACK core=$core " "$log"; then
+    timeout 10s adb exec-out screencap -p > "$PROBE_WORK/$core-$sample-homebrew-screen.png" || true
   fi
   adb shell am force-stop "$APP" || true
   kill "$logpid" 2>/dev/null || true; wait "$logpid" 2>/dev/null || true

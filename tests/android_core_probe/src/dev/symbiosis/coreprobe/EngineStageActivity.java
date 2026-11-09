@@ -64,11 +64,17 @@ public final class EngineStageActivity extends Activity {
                                     // through the Eden overlay. Ordinal 16 is Plus in the
                                     // related Ryujinx input enum; behavior must be observed.
                                     Thread.sleep(3000);
+                                    step("BEFORE_plus_press");
                                     bridge.nativeInputButton(16, 0, true);
+                                    step("AFTER_plus_press BEFORE_update_pressed");
                                     bridge.nativeUpdateInput();
+                                    step("AFTER_update_pressed");
                                     Thread.sleep(500);
+                                    step("BEFORE_plus_release");
                                     bridge.nativeInputButton(16, 0, false);
+                                    step("AFTER_plus_release BEFORE_update_released");
                                     bridge.nativeUpdateInput();
+                                    step("AFTER_update_released");
                                     Log.i(TAG, "HOMEBREW_INPUT_SENT core=" + flavor + " plus=16 pad=0");
                                 }
                                 return;
