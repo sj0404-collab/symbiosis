@@ -1,0 +1,46 @@
+/* Disposable libnx software-keyboard diagnostic, never shipped in the APK.
+ * Does not fabricate applet responses or require keys and firmware. */
+#include <switch.h>
+#include <stdio.h>
+#include <stdarg.h>
+
+static void logline(const char *fmt, ...) {
+    char buf[256];
+    va_list ap;
+    va_start(ap, fmt);
+    int n = vsnprintf(buf, sizeof(buf), fmt, ap);
+    va_end(ap);
+    if (n < 0) return;
+    svcOutputDebugString(buf, (size_t)n < sizeof(buf) ? (size_t)n : sizeof(buf)-1);
+}
+int main(void) {
+    consoleInit(NULL);
+    printf("Software keyboard diagnostic\n");
+    consoleUpdate(NULL);
+    svcSleepThread(2000000000LL);
+    SwkbdConfig config;
+    Result rc = swkbdCreate(&config, 0);
+    logline("SWKBD_CREATE rc=0x%08x module=%u description=%u", rc,
+            (unsigned)R_MODULE(rc), (unsigned)R_DESCRIPTION(rc));
+    if (R_SUCCEEDED(rc)) {
+        swkbdConfigMakePresetDefault(&config);
+        swkbdConfigSetHeaderText(&config, "Diagnostic keyboard");
+        swkbdConfigSetGuideText(&config, "Enter diagnostic text");
+        swkbdConfigSetInitialText(&config, "Seed");
+        swkbdConfigSetStringLenMin(&config, 1);
+        swkbdConfigSetStringLenMax(&config, 24);
+        char text[128] = {0};
+        logline("SWKBD_SHOW_BEGIN");
+        rc = swkbdShow(&config, text, sizeof(text));
+        logline("SWKBD_SHOW_RETURN rc=0x%08x module=%u description=%u text=%s", rc,
+                (unsigned)R_MODULE(rc), (unsigned)R_DESCRIPTION(rc), text);
+        swkbdClose(&config);
+    }
+    logline("SWKBD_GUEST_DONE");
+    while (appletMainLoop()) {
+        consoleUpdate(NULL);
+        svcSleepThread(16666667);
+    }
+    consoleExit(NULL);
+    return 0;
+}

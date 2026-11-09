@@ -125,6 +125,11 @@ public final class EngineStageActivity extends Activity {
             KenjinxNative.INSTANCE.setNativeWindow(window);
             step("BEFORE_graphicsInitializeRenderer");
             if (!check("graphicsInitializeRenderer", bridge.nativeAttachSurface(holder.getSurface(), 1280, 720))) return;
+            if (getIntent().getBooleanExtra("ui_setup", false)) {
+                step("BEFORE_realUiSetup");
+                if (!bridge.nativeUiSetup()) { Log.e(TAG, "ENGINE_FAIL UI setup"); return; }
+                step("realUiSetup_RETURNED_OK");
+            }
             step("BEFORE_deviceInitialize");
             if (!check("deviceInitialize", bridge.nativeDeviceInit(2, false, 0, 1, 1, 0,
                     false, true, false, false, false, false, 0, "UTC", false))) return;
