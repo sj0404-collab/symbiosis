@@ -5872,3 +5872,14 @@ production `GameSessionLock`, запускал оба реальных ядра 
 production no-op swkbd — тоже, общий job failed. Это испытание схемы с отдельным
 тестовым Activity, **не испытание production KenjiPlayerActivity** и не проверка
 сохранения коммерческой игры. [Логи](https://github.com/sj0404-collab/symbiosis/actions/runs/42691552578/artifacts/13707423950).
+
+[Run 42694115164](https://github.com/sj0404-collab/symbiosis/actions/runs/42694115164),
+`0c7ed52`: host suite и сборка test harness успешны; отдельный Android job
+failed из-за сохранённых диагностик старого SDL, пустого production swkbd и
+падения после dlclose. Контроль изолированного процесса повторён для обоих ядер:
+`lock_before=busy`, `lock_after=acquired`, PID основного процесса не менялся;
+`SWKBD_ISOLATED_EXIT=0`. Тестовая Activity реализует схему, но не запускает
+`KenjiPlayerActivity`: production изменение `f879a14` (проверка :kenji,
+сохранение ресурса и блокировки до завершения процесса вместо dlclose, чистый
+отчёт только после успешной остановки) проверено пока host-контрактами, а не
+реальным жизненным циклом production Activity. [Логи](https://github.com/sj0404-collab/symbiosis/actions/runs/42694115164/artifacts/13709406660).
