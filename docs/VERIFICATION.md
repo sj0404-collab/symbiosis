@@ -5442,3 +5442,12 @@ ARM64 digest `sha256:b21c57533662275928832602f7c09b83cb198aa9b271135ae49d978857d
 с тестовыми фикстурами передаётся только между CI jobs на 1 день и никогда не
 является релизом. Нужны реальные `sys.boot_completed`, ABI, затем отдельные
 loader/JNI и Activity/graphics; до результата успешной загрузки нет.
+
+[Run 42656054018](https://github.com/sj0404-collab/symbiosis/actions/runs/42656054018),
+`bbcbd85`: на ARM runner фактические CPU Features содержат `atomics` и
+`asimdrdm`; три настоящих binderfs char devices созданы через kernel ioctl;
+OCI ARM image скачан с закреплённым digest. Redroid контейнер остановился до
+загрузки; отсутствие сохранённого Docker log вызвано `--rm`, удалившим его
+сразу при выходе. Никакие core/Android tests не проводились. Следующая попытка
+сохраняет stopped container до сбора state/log и kernel log, затем удаляет его.
+Это не результат проверки ядра и не основание выпускать APK.

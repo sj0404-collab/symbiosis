@@ -12,7 +12,9 @@ container_started=0
 cleanup() {
   if [ "$container_started" = 1 ]; then
     timeout 20s adb -s "$ANDROID_SERIAL" logcat -d -v threadtime > "$W/redroid-logcat.txt" 2>&1 || true
+    docker inspect -f 'state={{.State.Status}} exit={{.State.ExitCode}} oom={{.State.OOMKilled}} error={{.State.Error}}' symbiosis-redroid > "$W/redroid-container-state.txt" 2>&1 || true
     docker logs --tail 2500 symbiosis-redroid > "$W/redroid-container.txt" 2>&1 || true
+    sudo dmesg --ctime | tail -400 > "$W/redroid-kernel.txt" 2>&1 || true
     docker rm -f symbiosis-redroid >/dev/null 2>&1 || true
   fi
   adb disconnect "$ANDROID_SERIAL" >/dev/null 2>&1 || true
@@ -43,7 +45,8 @@ sudo chmod 666 "$B/binder" "$B/hwbinder" "$B/vndbinder"
 # write-scoped repo token, checkout credentials, user games, or private keys.
 # ADB is bound to loopback only and is never published to the network.
 docker pull --platform linux/arm64 "$IMAGE"
-docker run -d --rm --name symbiosis-redroid --privileged \
+# Keep the stopped container until logs are captured; cleanup removes it.
+docker run -d --name symbiosis-redroid --privileged \
   --device "$B/binder:/dev/binder" --device "$B/hwbinder:/dev/hwbinder" --device "$B/vndbinder:/dev/vndbinder" \
   --mount "type=bind,src=$B,dst=/dev/binderfs" -p 127.0.0.1:5558:5555 \
   "$IMAGE" androidboot.use_memfd=1 androidboot.redroid_gpu_mode=guest >/dev/null
