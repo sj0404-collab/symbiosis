@@ -1,0 +1,105 @@
+name: ARM host Android 15 standalone diagnostic (not a release)
+on:
+  workflow_call:
+permissions:
+  contents: read
+jobs:
+  diagnostic-assets:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      KOTLINC_HOME: /tmp/kotlinc
+      STANDALONE_WORK: /tmp/standalone-assets
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v4
+      - name: Build real JNI and standalone loader only (no APK)
+        run: |
+          set -euo pipefail
+          sdkmanager --install 'ndk;28.2.13676358' 'platforms;android-35' 'build-tools;35.0.0'
+          curl -fsSL --retry 3 -o /tmp/kotlin.zip https://github.com/JetBrains/kotlin/releases/download/v2.0.21/kotlin-compiler-2.0.21.zip
+          unzip -q /tmp/kotlin.zip -d /tmp
+          bash tests/standalone_core_probe/build_assets.sh
+          mkdir -p /tmp/native-assets/apk/lib/arm64-v8a
+          cp "$STANDALONE_WORK"/{standalone-core-probe,libstandalonejni.so,standalone.jar} /tmp/native-assets/
+          cp "$STANDALONE_WORK/libkenjinxjni.so" /tmp/native-assets/apk/lib/arm64-v8a/
+          cp patch/libs/arm64-v8a/{libcrypto.so,libssl.so} /tmp/native-assets/apk/lib/arm64-v8a/
+      - uses: actions/upload-artifact@v4
+        with:
+          name: native-arm-emulator-standalone-assets
+          path: /tmp/native-assets/
+          retention-days: 1
+          if-no-files-found: error
+
+  native-arm-software-emulator:
+    needs: diagnostic-assets
+    runs-on: ubuntu-24.04-arm
+    # The third-party pinned build was linked on Ubuntu 26.04, not the host 24.04.
+    container: ubuntu:26.04
+    timeout-minutes: 50
+    env:
+      ANDROID_HOME: /tmp/android-sdk
+      ANDROID_SDK_ROOT: /tmp/android-sdk
+      ANDROID_AVD_HOME: /tmp/android35-avd
+      ANDROID_SERIAL: emulator-5560
+      PROBE_WORK: /tmp/sym-android35
+      EMULATOR_ROOT: /tmp/android-sdk/emulator
+      EMULATOR_NATIVE_ARM: '1'
+      PROBE_STANDALONE_ONLY: '1'
+    steps:
+      - name: Install minimal native ARM runtime
+        run: |
+          export DEBIAN_FRONTEND=noninteractive
+          apt-get update -qq
+          apt-get install -y --no-install-recommends ca-certificates curl git unzip xz-utils python3 adb e2fsprogs libx11-6 libxext6 libpulse0 libgl1 libegl1 libvulkan1 libxkbcommon0
+          test "$(uname -m)" = aarch64
+          if [ -e /dev/kvm ]; then echo 'KVM_PRESENT_BUT_NOT_USED'; else echo 'NO_KVM_USING_TCG'; fi
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        with:
+          name: native-arm-emulator-standalone-assets
+          path: /tmp/sym-android35
+      - name: Install original image and pinned third-party ARM-host emulator
+        run: |
+          set -euo pipefail
+          mkdir -p "$ANDROID_HOME/system-images/android-35/google_apis"
+          curl -fsSL --retry 3 -o /tmp/android35-image.zip https://dl.google.com/android/repository/sys-img/google_apis/arm64-v8a-35_r09.zip
+          echo 'd2e7c6076e5df54d3677605a324daf9edf813b2808c216bdb1687f6b2b6aed99  /tmp/android35-image.zip' | sha256sum -c -
+          unzip -q /tmp/android35-image.zip -d "$ANDROID_HOME/system-images/android-35/google_apis"
+          rm /tmp/android35-image.zip
+          # Community build of AOSP emulator, not an official Google binary and
+          # never shipped to the user. Pin the exact version and bytes.
+          curl -fsSL --retry 3 -o /tmp/native-emulator.tar.xz https://github.com/Mr0btain/Android-Emulator-Arm64/releases/download/v35.6.3-3/android-emulator-35.6.3-linux-aarch64.tar.xz
+          echo '7dc6b2fbb9ad30167a4a4a581c26c12fde49a4fe10a57e33fc0adb6975822c32  /tmp/native-emulator.tar.xz' | sha256sum -c -
+          tar -xJf /tmp/native-emulator.tar.xz -C "$ANDROID_HOME"
+          rm /tmp/native-emulator.tar.xz
+          curl -fsSL --retry 3 -o "$PROBE_WORK/core_sym.so" https://github.com/sj0404-collab/symbiosis/releases/download/engine-kenji/libkenji.so
+          echo "969431b3962408dd02ce38bd2cd4b2a954d11e5212ddef3f65c80a0b419918b8  $PROBE_WORK/core_sym.so" | sha256sum -c -
+          curl -fsSL --retry 3 -o /tmp/symbek.apk https://github.com/sj0404-collab/SymbEK/releases/download/v1.0.121/Kenji-Space-1.0.121.apk
+          echo 'f9eb3ecfaf5700df1b5d575984ab1588848c0eb6a70b2acb19b9e6243705f95e  /tmp/symbek.apk' | sha256sum -c -
+          unzip -p /tmp/symbek.apk lib/arm64-v8a/libkenjinx.so > "$PROBE_WORK/core_space.so"
+          echo "d781048671e4cef1cde2ec15db8fe29b949df9949d83569ceaf776ad12901590  $PROBE_WORK/core_space.so" | sha256sum -c -
+          rm /tmp/symbek.apk
+      - name: Boot Android and run standalone loader and JNI (no Activity)
+        run: bash tests/modern_android_qemu/emulator_backend.sh
+      - name: Save diagnostic logs (no APK or core binaries)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-arm-emulator-diagnostic-logs
+          path: |
+            /tmp/sym-android35/emulator.log
+            /tmp/sym-android35/boot-status.txt
+            /tmp/sym-android35/cpuinfo.txt
+            /tmp/sym-android35/standalone-*.txt
+            /tmp/sym-android35/*-logcat.txt
+          if-no-files-found: warn
+          retention-days: 3

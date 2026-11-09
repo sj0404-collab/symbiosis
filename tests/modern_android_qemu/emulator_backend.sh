@@ -35,15 +35,22 @@ EOF
 # formatted raw disk is the disposable guest's data volume, not a release asset.
 truncate -s 3G "$ANDROID_AVD_HOME/probe.avd/userdata-qemu.img"
 /sbin/mkfs.ext4 -q -F "$ANDROID_AVD_HOME/probe.avd/userdata-qemu.img"
-E=/tmp/android-emulator-pinned/emulator
-# The launcher refuses modern ARM on x86; the emulator's own backend supports
-# the configuration experimentally. We call it directly and retain its goldfish
-# pipe and real SwiftShader host graphics. This is unsupported, not a phone.
+E=${EMULATOR_ROOT:-/tmp/android-emulator-pinned/emulator}
+if [ "${EMULATOR_NATIVE_ARM:-0}" = 1 ]; then
+  # Separate third-party AOSP build, pinned by SHA; ARM host TCG, not KVM.
+  emulator_command=("$E/emulator")
+  qemu_args=()
+else
+  # Official x86 launcher refuses ARM API35; direct backend is unsupported.
+  emulator_command=("$E/qemu/linux-x86_64/qemu-system-aarch64-headless")
+  qemu_args=(-qemu -machine virt -cpu max)
+fi
+# Retain actual Android goldfish/qemud and host SwiftShader, not a real phone.
 env LD_LIBRARY_PATH="$E/lib64:$E/lib64/gles_swiftshader${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" \
-  "$E/qemu/linux-x86_64/qemu-system-aarch64-headless" -avd probe -port 5560 \
+  "${emulator_command[@]}" -avd probe -port 5560 \
   -no-window -no-audio -no-boot-anim -no-snapshot -no-metrics -show-kernel -accel off \
   -gpu swiftshader_indirect -memory 4096 -cores 2 -verbose \
-  -qemu -machine virt -cpu max > "$PROBE_WORK/emulator.log" 2>&1 &
+  "${qemu_args[@]}" > "$PROBE_WORK/emulator.log" 2>&1 &
 emu_pid=$!
 cleanup() {
   kill "$emu_pid" 2>/dev/null || true
@@ -99,8 +106,12 @@ adb -s "$ANDROID_SERIAL" shell cat /proc/cpuinfo >> "$PROBE_WORK/cpuinfo.txt"
 set +e
 timeout 900s python3 tests/standalone_core_probe/run.py "$PROBE_WORK" --preload-tls
 standalone_rc=$?
-timeout 600s bash tests/android_core_probe/run.sh
-activity_rc=$?
+if [ "${PROBE_STANDALONE_ONLY:-0}" = 1 ]; then
+  activity_rc=NOT_ATTEMPTED
+else
+  timeout 600s bash tests/android_core_probe/run.sh
+  activity_rc=$?
+fi
 set -e
 printf 'STANDALONE_EXIT=%s ACTIVITY_EXIT=%s\n' "$standalone_rc" "$activity_rc" | tee -a "$PROBE_WORK/boot-status.txt"
-if [ "$standalone_rc" != 0 ] || [ "$activity_rc" != 0 ]; then exit 1; fi
+if [ "$standalone_rc" != 0 ] || { [ "$activity_rc" != 0 ] && [ "$activity_rc" != NOT_ATTEMPTED ]; }; then exit 1; fi

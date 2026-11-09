@@ -26,6 +26,10 @@ on:
         description: "Try Android Emulator backend with ARM Android 15 (unsupported software mode)"
         type: boolean
         default: false
+      run_native_arm_emulator:
+        description: "Try community-built ARM-host Android emulator in software mode (no release)"
+        type: boolean
+        default: false
   push:
     branches: [main]
     paths:
@@ -270,3 +274,8 @@ jobs:
   android35-emulator-backend:
     if: github.event_name == 'workflow_dispatch' && inputs.run_android35_backend == true
     uses: ./.github/workflows/android35-emulator-backend.yml
+
+  # Independent third-party AOSP emulator build on an ARM host; no KVM or APK.
+  native-arm-android-emulator:
+    if: github.event_name == 'workflow_dispatch' && inputs.run_native_arm_emulator == true
+    uses: ./.github/workflows/arm-native-android-emulator.yml
