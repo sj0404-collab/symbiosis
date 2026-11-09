@@ -5809,3 +5809,13 @@ Android `KenjiUiPresenter`, проверила начальный текст, п
 Никакого физического IME/touch или безопасного teardown эта проба не проверяет.
 Durable input file подтвердил оба update на обоих ядрах для Snake и HID matrix;
 старый SDL и baseline swkbd по-прежнему не прошли. [Логи](https://github.com/sj0404-collab/symbiosis/actions/runs/42682008783/artifacts/13703592330).
+
+[Run 42683293664](https://github.com/sj0404-collab/symbiosis/actions/runs/42683293664),
+`f705aa1`: гостевые байты `Привет🎮` на обоих ядрах равны UTF-8
+`d09fd180d0b8d0b2d0b5d182f09f8eae` (16 байт), то есть вопросительные знаки
+были визуализацией `OutputDebugString`, а не порчей этого ответа. Кандидат
+presenter/coordinator, реальный JNI и оба ядра прошли автоматизированный
+положительный сценарий `SWKBD_UI_EXIT=0`; нажатие выполнялось программно,
+не физическим touch или IME. С production пустым callback ответа нет;
+выпуск по-прежнему заблокирован. Старый SDL падает (`SDL_EXIT=1`), Snake,
+HID matrix и современный SDL проходят. [Логи](https://github.com/sj0404-collab/symbiosis/actions/runs/42683293664/artifacts/13704077237).

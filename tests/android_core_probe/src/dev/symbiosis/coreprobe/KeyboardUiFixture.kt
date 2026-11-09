@@ -8,6 +8,7 @@ import android.util.Log
 import android.view.View
 import android.view.ViewGroup
 import android.widget.EditText
+import java.util.concurrent.atomic.AtomicInteger
 import org.kenjinx.android.KenjinxNative
 import org.yuzu.yuzu_emu.activities.KenjiUiPresenter
 import org.yuzu.yuzu_emu.utils.KenjiBridge
@@ -30,11 +31,13 @@ object KeyboardUiFixture {
     @JvmStatic fun configure(activity: Activity, bridge: KenjiBridge, generation: Long) {
         lateinit var presenter: KenjiUiPresenter
         lateinit var active: KenjiUiCoordinator
+        val dialogs = AtomicInteger()
         presenter = KenjiUiPresenter(activity) { id, accepted, text -> active.answer(id, accepted, text) }
         active = KenjiUiCoordinator(
             postMain = { task -> main.post { task() } },
             present = { id, request ->
                 presenter.show(id, request)
+                val number = dialogs.incrementAndGet()
                 Log.i("SymEngineStage", "UI_REAL_DIALOG title=${request.title} initial=${request.initialText}")
                 main.postDelayed({
                     try {
@@ -44,9 +47,18 @@ object KeyboardUiFixture {
                         check(dialog.isShowing)
                         val input = checkNotNull(findEdit(dialog.window!!.decorView))
                         check(input.text.toString() == "Seed")
-                        input.setText("Привет🎮")
-                        check(dialog.getButton(AlertDialog.BUTTON_POSITIVE).performClick())
-                        Log.i("SymEngineStage", "UI_REAL_CLICK_OK")
+                        if (number == 1) {
+                            input.setText("")
+                            check(dialog.getButton(AlertDialog.BUTTON_POSITIVE).performClick())
+                            check(input.error != null && dialog.isShowing)
+                            Log.i("SymEngineStage", "UI_REAL_VALIDATION_OK")
+                            input.setText("Привет🎮")
+                            check(dialog.getButton(AlertDialog.BUTTON_POSITIVE).performClick())
+                            Log.i("SymEngineStage", "UI_REAL_CLICK_OK")
+                        } else if (number == 2) {
+                            check(dialog.getButton(AlertDialog.BUTTON_NEGATIVE).performClick())
+                            Log.i("SymEngineStage", "UI_REAL_CANCEL_OK")
+                        } else error("unexpected dialog number $number")
                     } catch (t: Throwable) {
                         Log.e("SymEngineStage", "UI_REAL_FAIL dialog", t)
                     }

@@ -46,6 +46,14 @@ int main(void) {
         }
         hex[2*length] = 0;
         logline("SWKBD_HEX len=%u value=%s", (unsigned)length, hex);
+        if (R_SUCCEEDED(rc)) {
+            char second[128] = {0};
+            logline("SWKBD_SECOND_BEGIN");
+            Result second_rc = swkbdShow(&config, second, sizeof(second));
+            Result expected_cancel = MAKERESULT(Module_Libnx, LibnxError_LibAppletBadExit);
+            logline("SWKBD_SECOND_RETURN rc=0x%08x expected_cancel=0x%08x cancel_match=%u text=%s",
+                second_rc, expected_cancel, (unsigned)(second_rc == expected_cancel), second);
+        }
         swkbdClose(&config);
     }
     logline("SWKBD_GUEST_DONE");
