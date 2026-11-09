@@ -72,10 +72,11 @@ class InputContract(unittest.TestCase):
         self.assertNotIn('KenjiBridge.closePlay()', aborted)
         destroy = ACTIVITY.split('override fun onDestroy()', 1)[1].split('private fun leave()', 1)[0]
         self.assertLess(destroy.index('stopper.join()'), destroy.index('thread?.join()'))
-        self.assertLess(destroy.index('thread?.join()'), destroy.index('KenjiBridge.unload()'))
         self.assertLess(destroy.index('thread?.join()'), destroy.index('android.os.Process.killProcess('))
-        self.assertLess(destroy.index('android.os.Process.killProcess('), destroy.index('KenjiBridge.unload()'))
-        self.assertLess(destroy.index('KenjiBridge.unload()'), destroy.index('lease.close()'))
+        self.assertIn('if (isIsolatedKenjiProcess())', destroy)
+        self.assertNotIn('KenjiBridge.unload()', destroy)
+        self.assertNotIn('lease.close()', destroy)
+        self.assertLess(ACTIVITY.index('if (!isIsolatedKenjiProcess())'), ACTIVITY.index('GameSessionLock.tryAcquire('))
         self.assertNotIn('join(3000)', destroy)
 
     def test_error_is_scrollable_and_does_not_expire(self):

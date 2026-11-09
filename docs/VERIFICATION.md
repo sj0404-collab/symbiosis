@@ -5861,3 +5861,14 @@ renderer loop и deviceCloseEmulation. Таким образом, в этой с
 установлен. Это не подтверждает безопасность для других игр, GPU и устройств.
 `SWKBD_STOP_EXIT=1`, `SWKBD_HOLD_EXIT=1`, `SWKBD_KEEP_EXIT=0`,
 `SWKBD_KEEP_RELEASE_EXIT=0`, общий job failed. [Логи](https://github.com/sj0404-collab/symbiosis/actions/runs/42689285553/artifacts/13705934201).
+
+[Run 42691552578](https://github.com/sj0404-collab/symbiosis/actions/runs/42691552578),
+`abbbcb1`: тестовый Android Activity работал в `:kenji`, владел настоящей
+production `GameSessionLock`, запускал оба реальных ядра по очереди и отменял
+открытую клавиатуру. После возвращения signal/renderer/close отдельный основной
+процесс проверил `busy`; процесс `:kenji` намеренно завершён без `dlclose`,
+основной процесс сохранил тот же PID, и та же OS-блокировка стала `acquired`.
+`SWKBD_ISOLATED_EXIT=0`; прежние проверки с `dlclose` падают, старый SDL и
+production no-op swkbd — тоже, общий job failed. Это испытание схемы с отдельным
+тестовым Activity, **не испытание production KenjiPlayerActivity** и не проверка
+сохранения коммерческой игры. [Логи](https://github.com/sj0404-collab/symbiosis/actions/runs/42691552578/artifacts/13707423950).

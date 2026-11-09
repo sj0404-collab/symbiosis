@@ -93,7 +93,7 @@ class KenjiPlayerActivity : Activity(), SurfaceHolder.Callback {
     @Volatile private var requireIsolatedProcessExit = false
     @Volatile private var runLoopReturnedSuccessfully = false
     /** Запуск оборвался с названной причиной — она должна остаться в отчёте. */
-    private var failed = false
+    @Volatile private var failed = false
     /** Кадров на прошлом тике: разница показывает текущую скорость. */
     private var lastFrames = 0L
     /** Размер поверхности — для повторного пинка рендерера из наблюдения. */
@@ -216,8 +216,23 @@ class KenjiPlayerActivity : Activity(), SurfaceHolder.Callback {
         if (resources.configuration.orientation == Configuration.ORIENTATION_PORTRAIT)
             OverlayLayout.Portrait else OverlayLayout.Landscape
 
+    private fun isIsolatedKenjiProcess(): Boolean {
+        val name = runCatching {
+            if (android.os.Build.VERSION.SDK_INT >= 28) android.app.Application.getProcessName()
+            else File("/proc/self/cmdline").readBytes().toString(Charsets.UTF_8).substringBefore('\u0000')
+        }.getOrNull()
+        return name == "$packageName:kenji"
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // Never start a native session if the manifest did not isolate this
+        // activity: its teardown deliberately exits the :kenji process.
+        if (!isIsolatedKenjiProcess()) {
+            Toast.makeText(this, "Не удалось безопасно открыть второе ядро.", Toast.LENGTH_LONG).show()
+            finish()
+            return
+        }
         when (val result = GameSessionLock.tryAcquire(File(filesDir, GameSessionLock.FILE_NAME))) {
             is GameSessionLock.Result.Acquired -> sessionLease = result.lease
             else -> {
@@ -1034,7 +1049,7 @@ class KenjiPlayerActivity : Activity(), SurfaceHolder.Callback {
      * цикл не отдал ни одного кадра. Экран при этом уже снят — снаружи это
      * выглядит как «вышел и всё зависло».
      *
-     * Окно закрывается сразу, а остановка и выгрузка идут в отдельном потоке.
+     * Окно закрывается сразу, а остановка идёт в отдельном потоке.
      * Блокировку сеанса нельзя отпускать по таймеру: если ядро ещё работает,
      * следующую игру запускать небезопасно.
      */
@@ -1049,11 +1064,6 @@ class KenjiPlayerActivity : Activity(), SurfaceHolder.Callback {
         detailsDialog = null
         detailsText = null
         runCatching { KenjiPlayService.stop(applicationContext) }
-        // Метка «вышли штатно» — до unload: если процесс умрёт ниже, отчёт
-        // о падении должен остаться, а не превратиться в чистый выход.
-        // А после названного отказа метку не меняем: причина должна дойти до
-        // списка игр, иначе она живёт шесть секунд на чёрном экране.
-        if (!failed) KenjiReport.markClean(applicationContext)
         val thread = loopThread
         val descriptor = pfd
         pfd = null
@@ -1065,26 +1075,22 @@ class KenjiPlayerActivity : Activity(), SurfaceHolder.Callback {
             try {
                 stopper.join()
                 thread?.join()
-                if (requireIsolatedProcessExit) {
-                    // Partial core initialization has no proven safe close API.
-                    // The main Hybrid process remains alive; the OS releases the
-                    // isolated process's lock and native resources on exit.
-                    android.os.Process.killProcess(android.os.Process.myPid())
-                    return@Thread
-                }
-                if (KenjiBridge.unload()) {
-                    org.kenjinx.android.KenjinxNative.nativeSurface = -1L
-                    org.kenjinx.android.KenjinxNative.nativeWindow = -1L
-                    val owned = ownedNativeWindow
-                    if (!KenjiBridge.releaseNativeWindow(owned)) {
-                        // Do not carry a leaked native window into another session.
-                        android.os.Process.killProcess(android.os.Process.myPid())
-                        return@Thread
+                // Do not dlclose a core after guest execution: Android 15 ARM
+                // tests saw both real cores crash seconds after dlclose even
+                // when deviceCloseEmulation and the render loop had returned.
+                // This player has its own :kenji process. Keep the OS lease and
+                // all native handles until the OS tears that process down; it
+                // releases the lock atomically on process death. Never release
+                // the lease early and permit a competing session in this process.
+                runCatching { descriptor?.close() }
+                if (isIsolatedKenjiProcess()) {
+                    if (!failed && !requireIsolatedProcessExit) {
+                        runCatching { KenjiReport.markClean(applicationContext) }
                     }
-                    ownedNativeWindow = -1L
-                    runCatching { descriptor?.close() }
-                    lease.close()
+                    android.os.Process.killProcess(android.os.Process.myPid())
                 }
+                // If isolation cannot be established, keep the lease and native
+                // resources. In particular, never kill the main app process.
             } catch (_: InterruptedException) {
                 Thread.currentThread().interrupt()
             }

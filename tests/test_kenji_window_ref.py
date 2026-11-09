@@ -19,17 +19,14 @@ class NativeWindowOwnership(unittest.TestCase):
         self.assertLess(init.index('ownedNativeWindow = nw'), init.index('KenjiBridge.preparePlay('))
         self.assertIn('return@Thread', init.split('if (nw == -1L || nw == 0L)', 1)[1].split('ownedNativeWindow = nw', 1)[0])
 
-    def test_release_happens_after_join_and_unload_before_unlock(self):
+    def test_window_and_lease_are_owned_until_isolated_process_exit(self):
         destroy = ACTIVITY.split('override fun onDestroy()', 1)[1].split('private fun leave()', 1)[0]
-        for before, after in [('stopper.join()', 'KenjiBridge.unload()'),
-                              ('thread?.join()', 'KenjiBridge.unload()'),
-                              ('KenjiBridge.unload()', 'nativeSurface = -1L'),
-                              ('nativeSurface = -1L', 'KenjiBridge.releaseNativeWindow(owned)'),
-                              ('KenjiBridge.releaseNativeWindow(owned)', 'lease.close()')]:
-            self.assertLess(destroy.index(before), destroy.index(after))
-        self.assertIn('nativeWindow = -1L', destroy)
-        self.assertIn('if (!KenjiBridge.releaseNativeWindow(owned))', destroy)
-        self.assertIn('android.os.Process.killProcess', destroy)
+        self.assertLess(destroy.index('stopper.join()'), destroy.index('thread?.join()'))
+        self.assertLess(destroy.index('thread?.join()'), destroy.index('android.os.Process.killProcess'))
+        self.assertIn('if (isIsolatedKenjiProcess())', destroy)
+        self.assertNotIn('KenjiBridge.unload()', destroy)
+        self.assertNotIn('KenjiBridge.releaseNativeWindow(', destroy)
+        self.assertNotIn('lease.close()', destroy)
         self.assertIn('private external fun nativeReleaseWindow(handle: Long)', BRIDGE_KT)
         self.assertIn('if (handle == -1L || handle == 0L) return true', BRIDGE_KT)
 
