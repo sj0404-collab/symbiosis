@@ -13,7 +13,7 @@ import org.yuzu.yuzu_emu.utils.KenjiBridge;
 
 /** Disposable, isolated CI diagnostic. Real cores and bridge; no games, keys,
  * firmware or fake success. A returned renderer-init is not proof of frames. */
-public final class EngineStageActivity extends Activity {
+public class EngineStageActivity extends Activity {
     private static final String TAG = "SymEngineStage";
     private boolean started;
     private String flavor;
