@@ -55,25 +55,24 @@ object KeyboardUiFixture {
                         field.isAccessible = true
                         val dialog = field.get(presenter) as AlertDialog
                         check(dialog.isShowing)
-                        val input = checkNotNull(findEdit(dialog.window!!.decorView))
+                        val input = findEdit(dialog.window!!.decorView)
                         if (overlap) {
-                            val seed = input.text.toString()
-                            check(seed == "SeedA" || seed == "SeedB")
-                            val answer = if (seed == "SeedA") "AnswerA" else "AnswerB"
-                            input.setText(answer)
+                            val seed = if (request.type == 1) "MESSAGE" else checkNotNull(input).text.toString()
+                            check(seed == "SeedA" || seed == "SeedB" || seed == "MESSAGE")
+                            if (input != null) input.setText(if (seed == "SeedA") "AnswerA" else "AnswerB")
                             Log.i("SymEngineStage", "UI_OVERLAP_CLICK seed=$seed callbacks=${overlapCallbacks.get()}")
                             check(dialog.getButton(AlertDialog.BUTTON_POSITIVE).performClick())
                         } else if (number == 1 && stopOnFirst) {
-                            check(input.text.toString() == "Seed")
+                            check(checkNotNull(input).text.toString() == "Seed")
                             active.stop()
                             Log.i("SymEngineStage", "UI_REAL_STOP_REQUESTED")
                         } else if (number == 1) {
-                            check(input.text.toString() == "Seed")
-                            input.setText("")
+                            check(checkNotNull(input).text.toString() == "Seed")
+                            input!!.setText("")
                             check(dialog.getButton(AlertDialog.BUTTON_POSITIVE).performClick())
-                            check(input.error != null && dialog.isShowing)
+                            check(input!!.error != null && dialog.isShowing)
                             Log.i("SymEngineStage", "UI_REAL_VALIDATION_OK")
-                            input.setText("Привет🎮")
+                            input!!.setText("Привет🎮")
                             check(dialog.getButton(AlertDialog.BUTTON_POSITIVE).performClick())
                             Log.i("SymEngineStage", "UI_REAL_CLICK_OK")
                         } else if (number == 2) {

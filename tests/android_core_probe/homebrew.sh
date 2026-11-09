@@ -7,16 +7,17 @@ sample=${HOMEBREW_SAMPLE:-sdl}
 case "$sample" in
  sdl) url='https://github.com/vgmoose/sdl-hello-world/releases/download/1.1/sdl-hello.nro'; sha=2c591bf8030f38567d8a1076b97203a98003f4faf2fbd9fbf7b1ced115f120b9 ;;
  snake) url='https://github.com/CompSciOrBust/Cpp-Snake-NX/releases/download/1.1.0/Cpp-Snake-NX.nro'; sha=982ff14c538bb94eb6d18411efe71e885006cf3e944da270d18cd2fa88442f16 ;;
- matrix|sdl-surface|swkbd|swkbd-response|swkbd-ui|swkbd-stop|swkbd-stop-keep|swkbd-stop-hold|swkbd-stop-keep-release|swkbd-exit|swkbd-overlap) url=; sha= ;;
+ matrix|sdl-surface|swkbd|swkbd-response|swkbd-ui|swkbd-stop|swkbd-stop-keep|swkbd-stop-hold|swkbd-stop-keep-release|swkbd-exit|swkbd-overlap|swkbd-message) url=; sha= ;;
  *) echo 'Unknown pinned NRO sample' >&2; exit 1 ;;
 esac
-if [ "$sample" = matrix ] || [ "$sample" = sdl-surface ] || [ "$sample" = swkbd ] || [ "$sample" = swkbd-response ] || [ "$sample" = swkbd-ui ] || [ "$sample" = swkbd-stop ] || [ "$sample" = swkbd-stop-keep ] || [ "$sample" = swkbd-stop-hold ] || [ "$sample" = swkbd-stop-keep-release ] || [ "$sample" = swkbd-exit ] || [ "$sample" = swkbd-overlap ]; then
+if [ "$sample" = matrix ] || [ "$sample" = sdl-surface ] || [ "$sample" = swkbd ] || [ "$sample" = swkbd-response ] || [ "$sample" = swkbd-ui ] || [ "$sample" = swkbd-stop ] || [ "$sample" = swkbd-stop-keep ] || [ "$sample" = swkbd-stop-hold ] || [ "$sample" = swkbd-stop-keep-release ] || [ "$sample" = swkbd-exit ] || [ "$sample" = swkbd-overlap ] || [ "$sample" = swkbd-message ]; then
   # Built from this repository in the separate isolated CI build job.
   case "$sample" in
     matrix) nro="$PROBE_WORK/hid-matrix.nro" ;;
     sdl-surface) nro="$PROBE_WORK/sdl-surface.nro" ;;
     swkbd|swkbd-response|swkbd-ui|swkbd-stop|swkbd-stop-keep|swkbd-stop-hold|swkbd-stop-keep-release|swkbd-exit) nro="$PROBE_WORK/swkbd.nro" ;;
     swkbd-overlap) nro="$PROBE_WORK/swkbd-overlap.nro" ;;
+    swkbd-message) nro="$PROBE_WORK/swkbd-message.nro" ;;
   esac
   test -s "$nro"; sha256sum "$nro"
 else
@@ -49,13 +50,13 @@ for core in sym space; do
   ui_overlap=false
   activity=.EngineStageActivity
   process_name="$APP"
-  if [ "$sample" = swkbd ] || [ "$sample" = swkbd-response ] || [ "$sample" = swkbd-ui ] || [ "$sample" = swkbd-stop ] || [ "$sample" = swkbd-stop-keep ] || [ "$sample" = swkbd-stop-hold ] || [ "$sample" = swkbd-stop-keep-release ] || [ "$sample" = swkbd-exit ] || [ "$sample" = swkbd-overlap ]; then ui_setup=true; fi
-  if [ "$sample" = swkbd-response ] || [ "$sample" = swkbd-ui ] || [ "$sample" = swkbd-stop ] || [ "$sample" = swkbd-stop-keep ] || [ "$sample" = swkbd-stop-hold ] || [ "$sample" = swkbd-stop-keep-release ] || [ "$sample" = swkbd-exit ] || [ "$sample" = swkbd-overlap ]; then ui_response=true; fi
-  if [ "$sample" = swkbd-ui ] || [ "$sample" = swkbd-stop ] || [ "$sample" = swkbd-stop-keep ] || [ "$sample" = swkbd-stop-hold ] || [ "$sample" = swkbd-stop-keep-release ] || [ "$sample" = swkbd-exit ] || [ "$sample" = swkbd-overlap ]; then ui_real=true; fi
+  if [ "$sample" = swkbd ] || [ "$sample" = swkbd-response ] || [ "$sample" = swkbd-ui ] || [ "$sample" = swkbd-stop ] || [ "$sample" = swkbd-stop-keep ] || [ "$sample" = swkbd-stop-hold ] || [ "$sample" = swkbd-stop-keep-release ] || [ "$sample" = swkbd-exit ] || [ "$sample" = swkbd-overlap ] || [ "$sample" = swkbd-message ]; then ui_setup=true; fi
+  if [ "$sample" = swkbd-response ] || [ "$sample" = swkbd-ui ] || [ "$sample" = swkbd-stop ] || [ "$sample" = swkbd-stop-keep ] || [ "$sample" = swkbd-stop-hold ] || [ "$sample" = swkbd-stop-keep-release ] || [ "$sample" = swkbd-exit ] || [ "$sample" = swkbd-overlap ] || [ "$sample" = swkbd-message ]; then ui_response=true; fi
+  if [ "$sample" = swkbd-ui ] || [ "$sample" = swkbd-stop ] || [ "$sample" = swkbd-stop-keep ] || [ "$sample" = swkbd-stop-hold ] || [ "$sample" = swkbd-stop-keep-release ] || [ "$sample" = swkbd-exit ] || [ "$sample" = swkbd-overlap ] || [ "$sample" = swkbd-message ]; then ui_real=true; fi
   if [ "$sample" = swkbd-stop ] || [ "$sample" = swkbd-stop-keep ] || [ "$sample" = swkbd-stop-hold ] || [ "$sample" = swkbd-stop-keep-release ] || [ "$sample" = swkbd-exit ]; then ui_stop=true; fi
   if [ "$sample" = swkbd-stop-keep ] || [ "$sample" = swkbd-stop-keep-release ] || [ "$sample" = swkbd-exit ]; then keep_core=true; fi
   if [ "$sample" = swkbd-stop-keep ] || [ "$sample" = swkbd-stop-hold ] || [ "$sample" = swkbd-exit ]; then keep_window=true; fi
-  [ "$sample" = swkbd-overlap ] && ui_overlap=true
+  if [ "$sample" = swkbd-overlap ] || [ "$sample" = swkbd-message ]; then ui_overlap=true; fi
   if [ "$sample" = swkbd-exit ]; then process_exit=true; activity=.IsolatedEngineStageActivity; process_name="$APP:kenji"; fi
   adb shell am start -n "$APP/$activity" --es core "$core" --ez homebrew true --ez input_probe "$input_probe" --ez ui_setup "$ui_setup" --ez ui_response "$ui_response" --ez ui_real "$ui_real" --ez ui_stop "$ui_stop" --ez stop_probe "$ui_stop" --ez keep_core "$keep_core" --ez keep_window "$keep_window" --ez process_exit "$process_exit" --ez ui_overlap "$ui_overlap" || true
   outcome=timeout
@@ -74,6 +75,24 @@ for core in sym space; do
         if [ "$(grep -oE 'HID_MATRIX index=[0-9]+' "$log" | sort -u | wc -l)" -ne 35 ]; then
           outcome=matrix-incomplete; break
         fi
+      fi
+      if [ "$sample" = swkbd-message ]; then
+        for ((j=0; j<40; j++)); do
+          grep -q 'MIX_BOTH_DONE' "$log" && break
+          grep -qE 'MIX_SETUP_FAILED|UI_REAL_FAIL|ENGINE_FAIL|Fatal signal|FATAL EXCEPTION' "$log" && break
+          sleep 1
+        done
+        if grep -q 'MIX_BOTH_DONE' "$log" &&
+           grep -q 'MIX_KEYBOARD_RETURN rc=0x00000000 text=AnswerB' "$log" &&
+           grep -q 'MIX_MESSAGE_RETURN rc=0x00000000' "$log" &&
+           [ "$(grep -c 'UI_OVERLAP_CALLBACK' "$log" || true)" = 2 ] &&
+           [ "$(grep -c 'UI_OVERLAP_CLICK' "$log" || true)" = 2 ] &&
+           ! grep -qE 'UI_REAL_FAIL|ENGINE_FAIL|Fatal signal|FATAL EXCEPTION' "$log"; then
+          if grep -m1 'UI_OVERLAP_CLICK ' "$log" | grep -q 'callbacks=2'; then outcome=frame-callback-observed
+          else outcome=mixed-serialized; fi
+        elif grep -q 'MIX_BOTH_DONE' "$log"; then outcome=mixed-wrong-response
+        else outcome=mixed-incomplete; fi
+        break
       fi
       if [ "$sample" = swkbd-overlap ]; then
         for ((j=0; j<40; j++)); do
