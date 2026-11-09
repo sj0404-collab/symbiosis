@@ -7,11 +7,18 @@ sample=${HOMEBREW_SAMPLE:-sdl}
 case "$sample" in
  sdl) url='https://github.com/vgmoose/sdl-hello-world/releases/download/1.1/sdl-hello.nro'; sha=2c591bf8030f38567d8a1076b97203a98003f4faf2fbd9fbf7b1ced115f120b9 ;;
  snake) url='https://github.com/CompSciOrBust/Cpp-Snake-NX/releases/download/1.1.0/Cpp-Snake-NX.nro'; sha=982ff14c538bb94eb6d18411efe71e885006cf3e944da270d18cd2fa88442f16 ;;
+ matrix) url=; sha= ;;
  *) echo 'Unknown pinned NRO sample' >&2; exit 1 ;;
 esac
-nro="$PROBE_WORK/test-homebrew.nro"
-curl -fsSL --retry 3 "$url" -o "$nro"
-printf '%s  %s\n' "$sha" "$nro" | sha256sum -c -
+if [ "$sample" = matrix ]; then
+  # Built from this repository in the separate isolated CI build job.
+  nro="$PROBE_WORK/hid-matrix.nro"
+  test -s "$nro"; sha256sum "$nro"
+else
+  nro="$PROBE_WORK/test-homebrew.nro"
+  curl -fsSL --retry 3 "$url" -o "$nro"
+  printf '%s  %s\n' "$sha" "$nro" | sha256sum -c -
+fi
 adb push "$nro" /data/local/tmp/symbiosis-ci-homebrew.nro >/dev/null
 adb shell "cat /data/local/tmp/symbiosis-ci-homebrew.nro | run-as $APP sh -c 'cat > files/homebrew.nro'"
 adb shell rm /data/local/tmp/symbiosis-ci-homebrew.nro
@@ -35,6 +42,16 @@ for core in sym space; do
     starts=$(grep -c "ENGINE_STAGE core=$core START " "$log" || true)
     if [ "$starts" -gt 1 ]; then outcome=process-restarted; break; fi
     if grep -q "HOMEBREW_FRAME_CALLBACK core=$core " "$log"; then
+      if [ "$sample" = matrix ]; then
+        for ((j=0; j<20; j++)); do
+          grep -q 'HID_MATRIX_COMPLETE count=12' "$log" && break
+          sleep 1
+        done
+        if ! grep -q 'HID_MATRIX_COMPLETE count=12' "$log"; then outcome=matrix-incomplete; break; fi
+        if [ "$(grep -oE 'HID_MATRIX index=[0-9]+' "$log" | sort -u | wc -l)" -ne 12 ]; then
+          outcome=matrix-incomplete; break
+        fi
+      fi
       if [ "$input_probe" = true ]; then
         # Before/after images only; input delivery needs independent observation.
         timeout 10s adb exec-out screencap -p > "$PROBE_WORK/$core-$sample-before-screen.png" || true

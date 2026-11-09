@@ -5617,3 +5617,21 @@ release и второй update, но финальный Java-маркер не �
 активный цикл Game-over создаёт 147 МБ verbose guest IPC за несколько секунд.
 [Логи и снимки](https://github.com/sj0404-collab/symbiosis/actions/runs/42663742867/artifacts/13695024007).
 SDL снова SIGABRT у обоих, 710 не воспроизводилась, общий run failure.
+
+[Run 42664901992](https://github.com/sj0404-collab/symbiosis/actions/runs/42664901992),
+`57d4efa`: обе версии второго ядра прошли отправку Plus и возврат всех четырёх
+вызовов press/update/release/update; поле Snake сменилось на `Game over!` в
+обоих снимках. Bounded logcat снизил логи snake до ~8 КБ на процесс. Значит,
+в кратком тесте настоящий ввод дошёл через production JNI до этого homebrew на
+обоих core. Это не проверка Overlay Eden и не подтверждение 710. SDL sample
+по-прежнему даёт SIGABRT. [Логи/снимки](https://github.com/sj0404-collab/symbiosis/actions/runs/42664901992/artifacts/13695892598).
+
+Добавляется самописный диагностический libnx NRO, собранный только в GitHub CI
+из `tests/hid_android_matrix/main.c` в неизменённом devkitPro образе с pinned
+x86_64 manifest `sha256:82575ea78651b530b2e232bb3799cfd1fe331514e053d5f724bb4b28191fb79d`.
+Он запускается на реальных ядрах без пользовательских данных и вызывает
+публичный `hidAcquireNpadStyleSetUpdateEventHandle`, а также 12 реальных IPC
+команд 106 с 24-байтной структурой `id,pad,aruid,event_ptr` и разными
+полями, логируя сырые результаты/модуль/описание и наличие handle. Это
+синтетический guest input, не подмена ответа: возвращаемые значения
+записываются от ядра. Этот образец и тестовый APK не попадают в релиз.
