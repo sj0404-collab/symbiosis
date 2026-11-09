@@ -37,18 +37,18 @@ for core in sym space; do
   adb shell am start -n "$APP/.EngineStageActivity" --es core "$core" --ez homebrew true --ez input_probe "$input_probe" || true
   outcome=timeout
   for ((i=0; i<120; i++)); do
-    if grep -qE 'ENGINE_FAIL|FATAL EXCEPTION|Fatal signal|ActivityManager.*Process dev\.symbiosis\.coreprobe \(pid [0-9]+\) has died' "$log"; then outcome=fail; break; fi
+    if grep -qE 'ENGINE_FAIL|Unhandled exception in guest thread|FATAL EXCEPTION|Fatal signal|ActivityManager.*Process dev\.symbiosis\.coreprobe \(pid [0-9]+\) has died' "$log"; then outcome=fail; break; fi
     if (( i % 3 == 0 )) && timeout 5s adb exec-out run-as "$APP" cat files/engine-crash.txt 2>/dev/null | grep '^crash signal=' >/dev/null; then outcome=native-crash; break; fi
     starts=$(grep -c "ENGINE_STAGE core=$core START " "$log" || true)
     if [ "$starts" -gt 1 ]; then outcome=process-restarted; break; fi
     if grep -q "HOMEBREW_FRAME_CALLBACK core=$core " "$log"; then
       if [ "$sample" = matrix ]; then
         for ((j=0; j<20; j++)); do
-          grep -q 'HID_MATRIX_COMPLETE count=12' "$log" && break
+          grep -q 'HID_MATRIX_COMPLETE count=35' "$log" && break
           sleep 1
         done
-        if ! grep -q 'HID_MATRIX_COMPLETE count=12' "$log"; then outcome=matrix-incomplete; break; fi
-        if [ "$(grep -oE 'HID_MATRIX index=[0-9]+' "$log" | sort -u | wc -l)" -ne 12 ]; then
+        if ! grep -q 'HID_MATRIX_COMPLETE count=35' "$log"; then outcome=matrix-incomplete; break; fi
+        if [ "$(grep -oE 'HID_MATRIX index=[0-9]+' "$log" | sort -u | wc -l)" -ne 35 ]; then
           outcome=matrix-incomplete; break
         fi
       fi
@@ -62,7 +62,7 @@ for core in sym space; do
         if ! grep -q "HOMEBREW_INPUT_SENT core=$core " "$log"; then outcome=input-not-sent; break; fi
       fi
       sleep 4
-      if grep -qE 'ENGINE_FAIL|FATAL EXCEPTION|Fatal signal|ActivityManager.*Process dev\.symbiosis\.coreprobe \(pid [0-9]+\) has died' "$log"; then
+      if grep -qE 'ENGINE_FAIL|Unhandled exception in guest thread|FATAL EXCEPTION|Fatal signal|ActivityManager.*Process dev\.symbiosis\.coreprobe \(pid [0-9]+\) has died' "$log"; then
         outcome=fail
       elif timeout 5s adb exec-out run-as "$APP" cat files/engine-crash.txt 2>/dev/null | grep '^crash signal=' >/dev/null; then
         outcome=native-crash

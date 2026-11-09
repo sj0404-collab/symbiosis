@@ -71,7 +71,24 @@ int main(void) {
         }
     }
     acquire_raw(index++, HidNpadIdType_Handheld, 0, aruid);
-    acquire_raw(index++, 0x12345678u, 0, aruid);
+    // Valid controller ids, systematically varying registered styles and ids.
+    // The earlier invalid-id experiment crashed the guest service on both
+    // cores; keep it documented rather than crashing this entire matrix again.
+    const uint32_t styles[] = {0, HidNpadStyleTag_NpadFullKey,
+        HidNpadStyleTag_NpadHandheld, HidNpadStyleSet_NpadStandard};
+    for (unsigned s = 0; s < sizeof(styles) / sizeof(styles[0]); ++s) {
+        Result sr = hidSetSupportedNpadStyleSet(styles[s]);
+        for (unsigned mode = 0; mode < 3; ++mode) {
+            HidNpadIdType set[2] = { HidNpadIdType_No1, HidNpadIdType_Handheld };
+            HidNpadIdType *start = mode == 1 ? &set[1] : &set[0];
+            size_t count = mode == 2 ? 2 : 1;
+            Result ir = hidSetSupportedNpadIdType(start, count);
+            record("HID_MATRIX_CONFIG style=0x%08x id_mode=%u style_rc=0x%08x ids_rc=0x%08x",
+                styles[s], mode, sr, ir);
+            acquire_raw(index++, HidNpadIdType_No1, 0, aruid);
+            acquire_raw(index++, HidNpadIdType_Handheld, 0, aruid);
+        }
+    }
     record("HID_MATRIX_COMPLETE count=%u", index);
     while (appletMainLoop()) {
         padUpdate(&pad);
