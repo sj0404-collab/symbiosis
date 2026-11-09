@@ -40,7 +40,11 @@ jobs:
                 -mtune=cortex-a57 -mtp=soft -fPIE -O2 -Wall -Wextra \
                 -I/opt/devkitpro/libnx/include /input/main.c \
                 -L/opt/devkitpro/libnx/lib -lnx -o /output/hid-matrix.elf
-              elf2nro /output/hid-matrix.elf /output/hid-matrix.nro
+              # Both core loaders crash when asset section is absent. Generate
+              # real NACP and a real devkitPro default icon; do not stub a loader.
+              nacptool --create "CI HID matrix" "Symbiosis CI" "1.0.0" /output/hid-matrix.nacp
+              elf2nro /output/hid-matrix.elf /output/hid-matrix.nro \
+                --nacp=/output/hid-matrix.nacp --icon=/opt/devkitpro/libnx/default_icon.jpg
               sha256sum /output/hid-matrix.nro
             '
       - name: Transfer temporary test-only harness to the ARM test job

@@ -5642,3 +5642,15 @@ x86_64 manifest `sha256:82575ea78651b530b2e232bb3799cfd1fe331514e053d5f724bb4b28
 denied`); на ARM Android тест не передавался и не запускался. Повторная CI
 сборка контейнера запускается под UID/GID владельца каталога runner; сеть
 внутри контейнера по-прежнему отключена, capabilities сняты.
+
+[Run 42666126380](https://github.com/sj0404-collab/symbiosis/actions/runs/42666126380),
+`bc99122`: самописный NRO собрался (`c635c923aa64835633af02f1a9ccb5198b40fbe251d4200865562f31a1124502`),
+но оба ядра аварийно завершились на `deviceLoadDescriptor` **до** исполнения
+программы и HID-запросов. У Symbiosis исключение указывает на
+`LibHac.Tools.Ro.Nro.OpenNroAssetSection` в `ProcessLoader.LoadNxo`;
+собранный тестом NRO не содержал asset section. Это реальная проблема реакции
+ядра на данный NRO, не доказательство, что пользовательский NSP/NSZ неверен.
+[Логи](https://github.com/sj0404-collab/symbiosis/actions/runs/42666126380/artifacts/13696971820).
+Для продолжения HID-теста сборка использует стандартные настоящие NACP и
+icon из devkitPro через `nacptool`/`elf2nro`; отказ без asset section остаётся
+открытым и не скрывается.
