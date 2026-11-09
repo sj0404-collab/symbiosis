@@ -5794,3 +5794,18 @@ Snake Sym снова показал `input-not-sent`: после `AFTER_update_p
 логов или завершение/прерывание потока — причина не установлена. Итого
 `SDL_EXIT=1 SNAKE_EXIT=1 MATRIX_EXIT=0 SDL_SURFACE_EXIT=0 SWKBD_EXIT=1
 SWKBD_RESPONSE_EXIT=0`. [Логи и стек](https://github.com/sj0404-collab/symbiosis/actions/runs/42680037094/artifacts/13701913851).
+
+[Run 42682008783](https://github.com/sj0404-collab/symbiosis/actions/runs/42682008783),
+`44f4241`: на обоих настоящих ядрах отдельная тестовая связка получила callback,
+синхронно скопировала входные строки (`title=Software Keyboard`,
+`message=Diagnostic keyboard`, `watermark=Enter diagnostic text`,
+`initial=Seed`, `type=2 min=1 max=24 mode=2`), открыла настоящий кандидат
+Android `KenjiUiPresenter`, проверила начальный текст, программно ввела
+`Привет🎮`, нажала кнопку, передала ответ через coordinator и JNI; гостевой
+`swkbdShow` вернул rc=0. Однако лог ядра заменил символы на 16 знаков `?`;
+пока это может быть как форматирование журнала, так и порча байтов. Поэтому
+проба честно отмечена `swkbd-result-observed` и `SWKBD_UI_EXIT=1`, а не успех.
+Для различения добавлен вывод hex фактически возвращённых гостю байтов.
+Никакого физического IME/touch или безопасного teardown эта проба не проверяет.
+Durable input file подтвердил оба update на обоих ядрах для Snake и HID matrix;
+старый SDL и baseline swkbd по-прежнему не прошли. [Логи](https://github.com/sj0404-collab/symbiosis/actions/runs/42682008783/artifacts/13703592330).

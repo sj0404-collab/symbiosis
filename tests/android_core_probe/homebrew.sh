@@ -79,7 +79,8 @@ for core in sym space; do
         elif [ "$sample" = swkbd-ui ] &&
            grep -q 'UI_REAL_COPIED ' "$log" && grep -q 'UI_REAL_DIALOG ' "$log" &&
            grep -q 'UI_REAL_CLICK_OK' "$log" && grep -q 'UI_REAL_RESPONSE accepted=true result=true' "$log" &&
-           grep -q 'SWKBD_SHOW_RETURN rc=0x00000000 module=0 description=0 text=Привет🎮' "$log" &&
+           grep -q 'SWKBD_SHOW_RETURN rc=0x00000000 module=0 description=0 ' "$log" &&
+           grep -q 'SWKBD_HEX len=16 value=d09fd180d0b8d0b2d0b5d182f09f8eae' "$log" &&
            grep -q 'SWKBD_GUEST_DONE' "$log" && ! grep -q 'UI_REAL_FAIL' "$log"; then
           outcome=frame-callback-observed
         elif grep -q 'SWKBD_SHOW_RETURN' "$log"; then outcome=swkbd-result-observed

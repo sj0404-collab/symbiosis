@@ -3,6 +3,7 @@
 #include <switch.h>
 #include <stdio.h>
 #include <stdarg.h>
+#include <string.h>
 
 static void logline(const char *fmt, ...) {
     char buf[256];
@@ -34,6 +35,17 @@ int main(void) {
         rc = swkbdShow(&config, text, sizeof(text));
         logline("SWKBD_SHOW_RETURN rc=0x%08x module=%u description=%u text=%s", rc,
                 (unsigned)R_MODULE(rc), (unsigned)R_DESCRIPTION(rc), text);
+        // OutputDebugString may render non-ASCII as question marks. Report
+        // actual returned bytes in hex, not an inferred Unicode string.
+        char hex[sizeof(text) * 2 + 1];
+        size_t length = strnlen(text, sizeof(text));
+        static const char digits[] = "0123456789abcdef";
+        for (size_t i = 0; i < length; ++i) {
+            unsigned char byte = (unsigned char)text[i];
+            hex[2*i] = digits[byte >> 4]; hex[2*i+1] = digits[byte & 15];
+        }
+        hex[2*length] = 0;
+        logline("SWKBD_HEX len=%u value=%s", (unsigned)length, hex);
         swkbdClose(&config);
     }
     logline("SWKBD_GUEST_DONE");
