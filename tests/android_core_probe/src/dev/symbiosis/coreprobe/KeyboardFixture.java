@@ -10,6 +10,10 @@ public final class KeyboardFixture {
     private static volatile KenjiBridge bridge;
     private static volatile long generation;
     private static volatile boolean realUi;
+    private static volatile boolean deviceClosed;
+    private static final java.util.concurrent.atomic.AtomicInteger callbacksAfterClose = new java.util.concurrent.atomic.AtomicInteger();
+    public static void markDeviceClosed() { deviceClosed = true; }
+    public static int callbacksAfterClose() { return callbacksAfterClose.get(); }
     public static void configure(KenjiBridge value, long token, boolean useRealUi) {
         bridge = value;
         generation = token;

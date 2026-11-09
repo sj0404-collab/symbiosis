@@ -146,6 +146,11 @@ public class EngineStageActivity extends Activity {
                         step("TEARDOWN_BEFORE_CLOSE");
                         if (!bridge.nativeClosePlay()) { Log.e(TAG, "ENGINE_FAIL close"); return; }
                         step("TEARDOWN_CLOSE_RETURNED");
+                        if (getIntent().getBooleanExtra("race_stop", false)) {
+                            KeyboardFixture.markDeviceClosed();
+                            Thread.sleep(3000);
+                            step("TEARDOWN_POST_CLOSE_CALLBACKS_" + KeyboardFixture.callbacksAfterClose());
+                        }
                         KeyboardUiFixture.closeAfterDeviceStopped();
                         if (getIntent().getBooleanExtra("keep_core", false)) {
                             step("TEARDOWN_CORE_KEPT_MAPPED");
