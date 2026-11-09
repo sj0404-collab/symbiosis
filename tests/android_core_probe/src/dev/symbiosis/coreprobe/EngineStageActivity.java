@@ -132,11 +132,13 @@ public final class EngineStageActivity extends Activity {
                             step("TEARDOWN_BEFORE_UNLOAD");
                             bridge.nativeUnload();
                             step("TEARDOWN_UNLOAD_RETURNED");
+                        }
+                        if (!getIntent().getBooleanExtra("keep_window", false)) {
                             long owned = KenjinxNative.INSTANCE.getNativeWindow();
                             KenjinxNative.INSTANCE.setNativeWindow(-1);
                             bridge.nativeReleaseWindow(owned);
                             step("TEARDOWN_WINDOW_RELEASED");
-                        }
+                        } else step("TEARDOWN_WINDOW_KEPT");
                         step("TEARDOWN_COMPLETE");
                         Log.i(TAG, "TEARDOWN_COMPLETE core=" + flavor);
                     } catch (Throwable t) { Log.e(TAG, "ENGINE_FAIL teardown exception", t); }
