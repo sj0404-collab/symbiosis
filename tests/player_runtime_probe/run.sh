@@ -309,15 +309,12 @@ for delay in false true; do
   echo "PLAYER_PENDING_UI_STOP_AND_LOCK_OK core=$core delay=$delay" | tee -a "$W/redroid-status.txt"
 done
 done
-# Restore the production-pinned core before the subsequent graphics tests.
+# In compare mode, keep the hash-pinned SymbEK binary for SDL and shader
+# checks below. The previous run already verified these for Symbiosis.
 if [ "${PLAYER_COMPARE_SPACE:-0}" = 1 ]; then
-  [ -z "$(adb shell pidof "$package:kenji" | tr -d '\r' || true)" ] || { echo 'CORE_RESTORE_WHILE_RUNNING'; exit 1; }
-  adb shell run-as "$package" rm files/engines/libkenji.so
-  adb shell run-as "$package" cp /data/local/tmp/player-core.so files/engines/libkenji.so
-  adb shell run-as "$package" chmod 400 files/engines/libkenji.so
-  hash=$(adb exec-out run-as "$package" cat files/engines/libkenji.so | sha256sum | cut -d' ' -f1)
-  [ "$hash" = 969431b3962408dd02ce38bd2cd4b2a954d11e5212ddef3f65c80a0b419918b8 ] || { echo 'SYM_CORE_RESTORE_MISMATCH'; exit 1; }
-  echo 'PLAYER_TEST_CORE_SYM_RESTORED' | tee -a "$W/redroid-status.txt"
+  echo 'PLAYER_GRAPHICS_TEST_CORE space' | tee -a "$W/redroid-status.txt"
+else
+  echo 'PLAYER_GRAPHICS_TEST_CORE sym' | tee -a "$W/redroid-status.txt"
 fi
 
 # Real player + self-authored modern SDL frame. Callback instrumentation is
@@ -425,3 +422,14 @@ for setting in true true false; do
   adb shell run-as "$package" find files/kenji -type f 2>/dev/null | sort > "$W/shader-files-after-$case_count.txt" || true
   echo "SHADER_TRIANGLE_AND_EXIT_OK case=$case_count shaderCache=$setting" | tee -a "$W/redroid-status.txt"
 done
+
+# After Space graphics, restore production core only when no player is alive.
+if [ "${PLAYER_COMPARE_SPACE:-0}" = 1 ]; then
+  [ -z "$(adb shell pidof "$package:kenji" | tr -d '\r' || true)" ] || { echo 'CORE_RESTORE_WHILE_RUNNING'; exit 1; }
+  adb shell run-as "$package" rm files/engines/libkenji.so
+  adb shell run-as "$package" cp /data/local/tmp/player-core.so files/engines/libkenji.so
+  adb shell run-as "$package" chmod 400 files/engines/libkenji.so
+  hash=$(adb exec-out run-as "$package" cat files/engines/libkenji.so | sha256sum | cut -d' ' -f1)
+  [ "$hash" = 969431b3962408dd02ce38bd2cd4b2a954d11e5212ddef3f65c80a0b419918b8 ] || { echo 'SYM_CORE_RESTORE_MISMATCH'; exit 1; }
+  echo 'PLAYER_TEST_CORE_SYM_RESTORED' | tee -a "$W/redroid-status.txt"
+fi
