@@ -813,6 +813,9 @@ object KenjiBridge {
      */
     fun deviceInit(): Status {
         val cfg = pendingCfg ?: return Status(false, "настройки не подготовлены")
+        if (cfg.memoryManagerMode !in 0..2) {
+            return Status(false, "Недопустимый режим управления памятью второго ядра: ${cfg.memoryManagerMode}.")
+        }
         val err = runCatching {
             nativeDeviceInit(
                 memoryManagerMode = cfg.memoryManagerMode,

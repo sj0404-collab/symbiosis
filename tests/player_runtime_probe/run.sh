@@ -100,6 +100,13 @@ adb shell monkey -p "$package" -c android.intent.category.LAUNCHER 1 >/dev/null 
 sleep 10
 adb shell am start -W -n "$package/dev.symbiosis.playerruntime.DiagnosticLauncher" | tee "$W/player-launch.txt"
 log="$W/player-logcat.txt"
+player_pid=$(adb shell pidof "$package:kenji" | tr -d '\r' || true)
+main_pid=$(adb shell pidof "$package" | tr -d '\r' || true)
+[ -n "$player_pid" ] || { echo 'PLAYER_PROCESS_NOT_RUNNING'; exit 1; }
+printf 'PLAYER_PID=%s MAIN_PID=%s\n' "$player_pid" "$main_pid" | tee -a "$W/redroid-status.txt"
+app_crashed() {
+  grep -qE "Fatal signal.*pid $player_pid( |\))|^[0-9-]+ +[0-9:.]+ +$player_pid +[0-9]+ [FE] .*FATAL EXCEPTION|REAL_PLAYER_LAUNCH_FAILED" "$log"
+}
 # A durable snapshot of system logs, without clearing any existing core log.
 adb logcat -v threadtime > "$log" 2>&1 &
 logpid=$!
@@ -108,7 +115,7 @@ wait_log() {
   local pattern=$1
   for ((n=0;n<90;n++)); do
     grep -qE "$pattern" "$log" && return 0
-    grep -qE 'REAL_PLAYER_LAUNCH_FAILED|FATAL EXCEPTION|Fatal signal' "$log" && return 1
+    app_crashed && return 1
     sleep 1
   done
   return 1
@@ -159,5 +166,5 @@ for ((n=0;n<45;n++)); do
   sleep 1
 done
 [ -z "${pid:-}" ] || { echo 'PLAYER_EXIT_PROCESS_STILL_ALIVE'; exit 1; }
-! grep -qE 'FATAL EXCEPTION|Fatal signal' "$log" || { echo 'PLAYER_FATAL_OBSERVED'; exit 1; }
+! app_crashed || { echo 'PLAYER_FATAL_OBSERVED'; exit 1; }
 echo 'PLAYER_REAL_UI_AND_EXIT_OK' | tee -a "$W/redroid-status.txt"

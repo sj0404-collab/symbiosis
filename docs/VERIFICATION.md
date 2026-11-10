@@ -6006,3 +6006,17 @@ Android Kotlin-модуля прошла. На ARM Android два тестовы
 настоящую Activity, не проверяет данные и не доказывает отсутствие поздних
 callback. Общий Android job failed из-за прежних отрицательных проб.
 [Логи](https://github.com/sj0404-collab/symbiosis/actions/runs/42787406573/artifacts/13750761577).
+
+[Run 42790343020](https://github.com/sj0404-collab/symbiosis/actions/runs/42790343020),
+`8497eba`: собран диагностический debug-вариант реального приложения с отдельным
+CI-only launcher, без изменения кода плеера. На ARM Redroid настоящая Activity
+начала загрузку ядра и OpenAL, но перед запуском тестового NRO ядро выдало
+`InvalidOperationException: mode contains an invalid value: 3` в
+`ArmProcessContextFactory.Create`. Реальная ошибка: `EngineHybrid.seed` считал
+режим memory manager количеством ГБ и выбирал `3` при RAM >= 12 ГБ; диагностические
+Activity ранее всегда передавали `2`, поэтому не заметили. Исходники родственного
+Ryujinx перечисляют три алгоритма (0–2); идентичность enum по одному исходнику
+не предполагается, но `3` не принят проверенным бинарником.
+Отдельно тест ошибочно завершил ожидание из-за не относящегося к приложению
+SIGABRT службы Bluetooth Redroid; фильтр PID исправлен. Диалог не достигнут,
+ошибка 710 не воспроизведена. [Логи](https://github.com/sj0404-collab/symbiosis/actions/runs/42790343020/artifacts/13751454115).

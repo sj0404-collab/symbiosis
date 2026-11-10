@@ -135,8 +135,9 @@ object EngineHybrid {
         enableDockedMode = eden.docked,
         enableShaderCache = eden.shaderCache,
         useNce = eden.nce,
-        // 4 ГБ по умолчанию; на устройствах от 12 ГБ — режим 6 ГБ.
-        memoryManagerMode = if (eden.ramGb >= 12) 3 else 2,
+        // This is a memory-manager algorithm, not a RAM capacity. Mode 3
+        // crashed the actual pinned core on Android during guest startup.
+        memoryManagerMode = 2,
         systemLanguage = eden.language,
         regionCode = eden.region
     )
@@ -168,7 +169,7 @@ object EngineHybrid {
         val id = key.removePrefix(PREFIX)
         val v = raw.trim()
         return when (id) {
-            "memory" -> v.toIntOrNull()?.takeIf { it in 0..3 }?.let {
+            "memory" -> v.toIntOrNull()?.takeIf { it in 0..2 }?.let {
                 cfg.copy(memoryManagerMode = it)
             }
             "nce" -> bool(v)?.let { cfg.copy(useNce = it) }
@@ -249,7 +250,9 @@ object EngineHybrid {
             Row(
                 id = field.id,
                 label = field.label,
-                value = label(cfg, field.id),
+                value = if (field.id == "memory" && stored[PREFIX + field.id] == "3")
+                    label(cfg, field.id) + " · старое значение 3 отклонено"
+                else label(cfg, field.id),
                 source = when {
                     own -> Source.OWN
                     field.shared -> Source.EDEN
@@ -303,10 +306,9 @@ object EngineHybrid {
     }
 
     fun memoryLabel(mode: Int): String = when (mode) {
-        0 -> "как на хосте"
-        1 -> "2 ГБ"
-        2 -> "4 ГБ"
-        3 -> "6 ГБ"
+        0 -> "режим 0"
+        1 -> "режим 1"
+        2 -> "режим 2"
         else -> "режим $mode"
     }
 
@@ -388,14 +390,13 @@ object EngineHybrid {
      */
     val FIELDS: List<Field> = listOf(
         Field(
-            "memory", "Память второго ядра",
-            "Сколько памяти разрешает себе Kenji. 4 ГБ — проверенное значение на 8 ГБ телефоне.",
+            "memory", "Режим управления памятью",
+            "Это способ управления памятью, а не размер в ГБ. Режим 2 — проверен в Android-пробе; 0 и 1 требуют отдельной проверки. Старое значение 3 недопустимо.",
             false,
             listOf(
-                Choice("2", "4 ГБ"),
-                Choice("3", "6 ГБ"),
-                Choice("0", "как на хосте"),
-                Choice("1", "2 ГБ")
+                Choice("2", "режим 2"),
+                Choice("0", "режим 0"),
+                Choice("1", "режим 1")
             )
         ),
         Field(

@@ -56,20 +56,20 @@ fun main() {
     eq("кэш шейдеров пришёл из Eden", seeded.enableShaderCache, true)
     eq("NCE пришёл из Eden", seeded.useNce, false)
     eq("язык пришёл из Eden", seeded.systemLanguage, 2)
-    eq("память на 8 ГБ — 4 ГБ", seeded.memoryManagerMode, 2)
+    eq("режим памяти на 8 ГБ", seeded.memoryManagerMode, 2)
     check("PPTC остаётся своим (включён)", seeded.enablePtc)
     check("macro HLE остаётся своим (включён)", seeded.enableMacroHLE)
     eq(
-        "на 12 ГБ памяти ядро получает 6 ГБ",
+        "объём RAM не подменяет режим управления памятью",
         EngineHybrid.seed(eden.copy(ramGb = 12)).memoryManagerMode,
-        3
+        2
     )
     eq("масштаб ниже 0.25 зажимается", EngineHybrid.trimFloat(EngineHybrid.seed(eden.copy(resolutionScale = 0.1f)).resScale), "0.25")
     eq("масштаб выше 4 зажимается", EngineHybrid.trimFloat(EngineHybrid.seed(eden.copy(resolutionScale = 9f)).resScale), "4")
 
     // ── 2. своё значение перекрывает только своё поле ────────────────────
-    val withOwn = EngineHybrid.merge(eden, mapOf("kenji.memory" to "3", "kenji.macroHle" to "false"))
-    eq("своя память победила", withOwn.memoryManagerMode, 3)
+    val withOwn = EngineHybrid.merge(eden, mapOf("kenji.memory" to "1", "kenji.macroHle" to "false"))
+    eq("своя память победила", withOwn.memoryManagerMode, 1)
     check("свой macro HLE победил", !withOwn.enableMacroHLE)
     eq("масштаб всё ещё из Eden", EngineHybrid.trimFloat(withOwn.resScale), "0.75")
     check("PPTC не тронут", withOwn.enablePtc)
@@ -131,10 +131,14 @@ fun main() {
     )
 
     // ── 6. строки «что куда поедет» ─────────────────────────────────────
-    val rows = EngineHybrid.rows(eden, mapOf("kenji.memory" to "3"))
+    val rows = EngineHybrid.rows(eden, mapOf("kenji.memory" to "1"))
     val memory = rows.first { it.id == "memory" }
     eq("своя память помечена как своё", memory.source, Source.OWN)
-    eq("память 6 ГБ", memory.value, "6 ГБ")
+    eq("режим управления памятью", memory.value, "режим 1")
+    val oldMemory = EngineHybrid.rows(eden, mapOf("kenji.memory" to "3")).first { it.id == "memory" }
+    check("старый недопустимый режим виден", oldMemory.value.contains("3 отклонено"), oldMemory.value)
+    eq("старый режим не отправляется в ядро", EngineHybrid.merge(eden, mapOf("kenji.memory" to "3")).memoryManagerMode, 2)
+    check("режим 3 нельзя установить", EngineHybrid.apply(seeded, "memory", "3") == null)
     val scale = rows.first { it.id == "scale" }
     eq("масштаб помечен как из Eden", scale.source, Source.EDEN)
     check("в списке есть и общие, и свои строки", rows.any { it.source == Source.EDEN } && rows.any { it.source == Source.OWN })
@@ -154,7 +158,7 @@ fun main() {
     // ── 8. сводка для человека ──────────────────────────────────────────
     val summary = EngineHybrid.summary(withOwn)
     check("сводка называет масштаб", summary.contains("масштаб"), summary)
-    check("сводка называет память", summary.contains("6 ГБ"), summary)
+    check("сводка называет память", summary.contains("режим 1"), summary)
     check("сводка называет NCE", summary.contains("NCE"), summary)
 
     // ── 8b. передача настроек в процесс :kenji ──────────────────────────
@@ -164,7 +168,7 @@ fun main() {
     check("строка настроек компактна", encoded.length < 400, "${encoded.length} символов")
     val decoded = EngineHybrid.decode(encoded)
     eq("разбор вернул столько же полей", decoded.size, eff.size)
-    eq("память пережила передачу", decoded["memory"], "3")
+    eq("память пережила передачу", decoded["memory"], "1")
     eq(
         "и конфиг из переданного набора совпадает",
         EngineHybrid.merge(eden, decoded.mapKeys { "kenji." + it.key }).memoryManagerMode,

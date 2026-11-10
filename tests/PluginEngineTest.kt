@@ -279,16 +279,17 @@ fun main() {
 
     // ── 5. патч конфига ────────────────────────────────────────────────
     val base = EngineHybrid.KenjiConfig(memoryManagerMode = 2, resScale = 1f, maxAnisotropy = 8f)
-    val patched = PluginEngine.patch(base, mapOf("memory" to "3", "aniso" to "0"))
-    eq("память пропатчена", patched.memoryManagerMode, 3)
+    val patched = PluginEngine.patch(base, mapOf("memory" to "1", "aniso" to "0"))
+    eq("режим памяти пропатчен", patched.memoryManagerMode, 1)
+    eq("недопустимый режим 3 не применяется", PluginEngine.patch(base, mapOf("memory" to "3")).memoryManagerMode, 2)
     eq("анизотропия пропатчена", patched.maxAnisotropy, 0f)
     eq("остальное не тронуто", patched.resScale, 1f)
     eq("мусор в патче игнорируется", PluginEngine.patch(base, mapOf("memory" to "нет")).memoryManagerMode, 2)
     eq("неизвестный ключ игнорируется", PluginEngine.patch(base, mapOf("nope" to "1")).resScale, 1f)
     eq(
         "порядок патча не меняет результат",
-        PluginEngine.patch(base, mapOf("memory" to "3", "aniso" to "0")),
-        PluginEngine.patch(base, mapOf("aniso" to "0", "memory" to "3"))
+        PluginEngine.patch(base, mapOf("memory" to "1", "aniso" to "0")),
+        PluginEngine.patch(base, mapOf("aniso" to "0", "memory" to "1"))
     )
 
     // ── 6. пометки на плитках ──────────────────────────────────────────
