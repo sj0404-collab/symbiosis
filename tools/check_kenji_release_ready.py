@@ -18,7 +18,7 @@ ROOT = Path(__file__).resolve().parents[1]
 # gains a body or a mock test passes. The audited implementation and the
 # relevant Android/core evidence must be recorded when each is removed.
 UNRESOLVED_INTEGRATION = (
-    'UI ядра: callback и плеер не связаны, завершение гостевых потоков не доказано',
+    'UI ядра: подключение к плееру не проверено на Android, остановка гостевых потоков и поздние callback не доказаны',
     'графические callback ядра: контракт и интеграция не проверены',
     'поставляемый OpenSSL 1.1.1l не получает публичные исправления безопасности; замена ещё не проверена',
 )
