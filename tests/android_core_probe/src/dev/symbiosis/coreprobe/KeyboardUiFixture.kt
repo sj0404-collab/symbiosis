@@ -96,6 +96,9 @@ object KeyboardUiFixture {
             install = { _ -> KeyboardFixture.configure(bridge, 0, true) },
             setup = { bridge.nativeUiSetup() },
             respond = { generation, accepted, bytes ->
+                // Deterministically hold the cancellation worker while the
+                // teardown worker tries to advance in the race scenario.
+                if (stopOnFirst && onStop != null) Thread.sleep(400)
                 val ok = bridge.nativeUiRespond(generation, accepted, bytes)
                 Log.i("SymEngineStage", "UI_REAL_RESPONSE accepted=$accepted result=$ok")
                 ok
@@ -104,6 +107,10 @@ object KeyboardUiFixture {
         )
         coordinator = active
         return active.start()
+    }
+    @JvmStatic fun awaitPendingReplies() {
+        checkNotNull(coordinator).awaitPendingReplies()
+        Log.i("SymEngineStage", "UI_REAL_CANCEL_DRAINED")
     }
     @JvmStatic fun closeAfterDeviceStopped() {
         checkNotNull(coordinator).closeAfterGuestStopped()

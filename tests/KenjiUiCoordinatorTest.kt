@@ -142,6 +142,29 @@ fun main() {
         }
         check(firstDone.count == 0L && secondDone.count == 0L)
     }
+    run {
+        // A signal/close worker must wait for the queued cancellation; otherwise
+        // nativeClosePlay can disable the gate before the worker sends it.
+        val enteredReply = CountDownLatch(1)
+        val releaseReply = CountDownLatch(1)
+        val drained = CountDownLatch(1)
+        val coordinator = KenjiUiCoordinator(
+            postMain = {}, present = { _, _ -> }, dismiss = {},
+            reply = { _, _ -> enteredReply.countDown(); releaseReply.await(); true },
+            onError = { error(it) },
+        )
+        coordinator.request(request()); coordinator.stop()
+        check(enteredReply.await(3, TimeUnit.SECONDS))
+        val thread = Thread { coordinator.awaitPendingReplies(); drained.countDown() }
+        try {
+            thread.start()
+            check(!drained.await(200, TimeUnit.MILLISECONDS))
+        } finally {
+            releaseReply.countDown(); thread.join(3000)
+        }
+        check(drained.count == 0L)
+        coordinator.closeAfterGuestStopped()
+    }
     repeat(100) {
         val h = Harness()
         h.coordinator.request(request()); h.pump()

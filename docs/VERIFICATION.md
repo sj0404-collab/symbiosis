@@ -5971,3 +5971,11 @@ Host/build jobs success, Android job failure из-за ранее известн
 Промежуточный [42711161322](https://github.com/sj0404-collab/symbiosis/actions/runs/42711161322)
 не собрал диагностический APK из-за незавершённой мной тестовой инструментализации;
 это исправлено в `fdcca2c` и проверено в указанном повторе.
+
+[Run 42782285389](https://github.com/sj0404-collab/symbiosis/actions/runs/42782285389),
+`b3c3dfc`: host-модель и сборка прошли, shared UI session на обоих ядрах прошла
+Unicode/очередь/mixed сценарии. Однако raced stop воспроизвёл реальную проблему на
+Space: `nativeClosePlay` отключил response gate до того, как рабочий поток отправил
+отмену; JNI вернул `false`, close не завершился за время пробы. `SWKBD_RACE_EXIT=1`.
+Другой прогон той же гонки на Symbiosis прошёл; это не устраняет проблему.
+[Логи](https://github.com/sj0404-collab/symbiosis/actions/runs/42782285389/artifacts/13747925734).

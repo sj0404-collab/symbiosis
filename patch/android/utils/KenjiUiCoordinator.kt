@@ -126,6 +126,19 @@ class KenjiUiCoordinator(
         postMain(dismiss)
     }
 
+    /**
+     * Wait for replies queued before this barrier. Call only on a stop worker,
+     * never the Android main thread. This does NOT prove that the guest cannot
+     * issue another callback later; its lifetime still belongs to the process.
+     */
+    fun awaitPendingReplies() {
+        val barrier = synchronized(this) {
+            check(stopping && !closed)
+            replies.submit { }
+        }
+        barrier.get()
+    }
+
     /** Only after the owner has joined all callback-producing native threads. */
     fun closeAfterGuestStopped() {
         synchronized(this) {

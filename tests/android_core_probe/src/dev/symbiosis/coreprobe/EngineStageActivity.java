@@ -131,6 +131,8 @@ public class EngineStageActivity extends Activity {
                                 Log.e(TAG, "ENGINE_FAIL no UI stop event"); return;
                             }
                             step("TEARDOWN_RACING_UI_REPLY");
+                            KeyboardUiFixture.awaitPendingReplies();
+                            step("TEARDOWN_UI_DRAINED_BEFORE_SIGNAL");
                         } else {
                             File request = new File(getFilesDir(), "stop-request.txt");
                             for (int i = 0; i < 900 && !request.exists(); i++) Thread.sleep(100);

@@ -43,6 +43,7 @@ class KenjiUiSession(
 
     fun answer(id: Long, accepted: Boolean, text: String) = dispatcher.answer(id, accepted, text)
     fun stop() { stopped.set(true); dispatcher.stop() }
+    fun awaitPendingReplies() = dispatcher.awaitPendingReplies()
 
     /** Diagnostic only when callback-producing guest threads are known stopped. */
     fun closeAfterGuestStopped() = dispatcher.closeAfterGuestStopped()

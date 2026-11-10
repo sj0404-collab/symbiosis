@@ -41,5 +41,6 @@ class KenjiUiDispatcher(
         coordinator.answer(id, accepted, text)
 
     fun stop() = coordinator.stop()
+    fun awaitPendingReplies() = coordinator.awaitPendingReplies()
     fun closeAfterGuestStopped() = coordinator.closeAfterGuestStopped()
 }
