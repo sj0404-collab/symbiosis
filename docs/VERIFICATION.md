@@ -6045,3 +6045,14 @@ launcher ещё не был вызван. Это ошибка тестового
 отмены `0x5d59` и `SWKBD_GUEST_DONE`, но runtime job ошибочно сообщил таймаут:
 два `grep` в pipeline с `pipefail` дали SIGPIPE после найденной строки в длинном
 logcat. Режимы 0/1 и перезапуск этот run не проверил. [Логи](https://github.com/sj0404-collab/symbiosis/actions/runs/42794826012/artifacts/13754635590).
+
+[Run 42796378636](https://github.com/sj0404-collab/symbiosis/actions/runs/42796378636),
+`dcca72a`: host suite, debug build и Android runtime success. Три
+последовательных запуска настоящего плеера с `memory=2`, `memory=0`,
+`memory=1`: один и тот же главный PID 1987, новые изолированные PID 2014,
+2293, 2514; каждый гость получил `Seed`, затем отмену `0x5d59`, дошёл до
+`SWKBD_GUEST_DONE`, кнопка выхода завершила изолированный процесс. Повторный
+запуск подтверждает освобождение блокировки в этом сценарии. Это короткий
+тестовый NRO и Symbiosis core, а не коммерческая игра, Eden или телефон.
+Он не проверяет stop во время открытого окна, поздние callback, графические
+callback или причину 710. [Артефакт](https://github.com/sj0404-collab/symbiosis/actions/runs/42796378636/artifacts/13754722122).
