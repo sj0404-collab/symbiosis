@@ -2,12 +2,24 @@
 // Perform real TLS inside the player process against its already-loaded libs.
 #include <android/log.h>
 #include <string>
+#include <cerrno>
+#include <fcntl.h>
+#include <unistd.h>
 
 int tls_handshake_probe(int, char**, long*);
 extern "C" __attribute__((visibility("default")))
 int ci_tls_in_process(const char* libdir, const char* certdir) {
     const std::string cert = std::string(certdir) + "/ci-test-cert.pem";
     const std::string key = std::string(certdir) + "/ci-test-key.pem";
+    int certFd = open(cert.c_str(), O_RDONLY);
+    int certErr = certFd < 0 ? errno : 0;
+    if (certFd >= 0) close(certFd);
+    int keyFd = open(key.c_str(), O_RDONLY);
+    int keyErr = keyFd < 0 ? errno : 0;
+    if (keyFd >= 0) close(keyFd);
+    __android_log_print(ANDROID_LOG_INFO, "SymbiosisKenji",
+                        "CI_ONLY_TLS_TEST_FILES cert_errno=%d key_errno=%d dir=%s",
+                        certErr, keyErr, certdir);
     char host_good[] = "localhost", host_bad[] = "wrong.invalid", name[] = "tls-probe";
     char* argv[] = {name, const_cast<char*>(libdir), const_cast<char*>(cert.c_str()),
                     const_cast<char*>(key.c_str()), host_good};

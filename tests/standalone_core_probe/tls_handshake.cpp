@@ -4,6 +4,7 @@
 #include <dlfcn.h>
 #include <cstdio>
 #include <cstring>
+#include <cerrno>
 #include <string>
 
 #define LOAD(handle, name, type) \
@@ -55,13 +56,21 @@ int tls_handshake_probe(int argc, char** argv, long* verify_out) {
                 crypto_origin.dli_fname, ssl_origin.dli_fname, OpenSSL_version_num());
     void* client_ctx = SSL_CTX_new(TLS_client_method());
     void* server_ctx = SSL_CTX_new(TLS_server_method());
-    if (!client_ctx || !server_ctx) return 4;
+    if (!client_ctx || !server_ctx) {
+        std::fprintf(stderr, "TLS_CONTEXT_SETUP_FAIL client=%p server=%p\n", client_ctx, server_ctx);
+        auto print_errors = reinterpret_cast<void (*)(FILE*)>(dlsym(crypto, "ERR_print_errors_fp"));
+        if (print_errors) print_errors(stderr);
+        return 4;
+    }
     SSL_CTX_set_verify(client_ctx, 1, nullptr); // SSL_VERIFY_PEER
     if (SSL_CTX_load_verify_locations(client_ctx, argv[2], nullptr) != 1 ||
         SSL_CTX_use_certificate_file(server_ctx, argv[2], 1) != 1 ||
         SSL_CTX_use_PrivateKey_file(server_ctx, argv[3], 1) != 1 ||
         SSL_CTX_check_private_key(server_ctx) != 1) {
-        std::fprintf(stderr, "TLS_CERTIFICATE_SETUP_FAIL\n"); return 4;
+        std::fprintf(stderr, "TLS_CERTIFICATE_SETUP_FAIL errno=%d cert=%s key=%s\n", errno, argv[2], argv[3]);
+        auto print_errors = reinterpret_cast<void (*)(FILE*)>(dlsym(crypto, "ERR_print_errors_fp"));
+        if (print_errors) print_errors(stderr);
+        return 4;
     }
     void* client = SSL_new(client_ctx);
     void* server = SSL_new(server_ctx);

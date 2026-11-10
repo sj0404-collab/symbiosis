@@ -15,6 +15,9 @@ container_started=0
 cleanup() {
   if [ "$container_started" = 1 ]; then
     timeout 20s adb -s "$ANDROID_SERIAL" logcat -d -v threadtime > "$W/redroid-logcat.txt" 2>&1 || true
+    if [ -n "${package:-}" ]; then
+      timeout 10s adb -s "$ANDROID_SERIAL" shell cat "/sdcard/Android/data/$package/files/kenji/kenji-stdout.txt" > "$W/player-native-stdout.txt" 2>&1 || true
+    fi
     docker inspect -f 'state={{.State.Status}} exit={{.State.ExitCode}} oom={{.State.OOMKilled}} error={{.State.Error}}' symbiosis-redroid > "$W/redroid-container-state.txt" 2>&1 || true
     docker logs --tail 2500 symbiosis-redroid > "$W/redroid-container.txt" 2>&1 || true
     sudo dmesg --ctime | tail -400 > "$W/redroid-kernel.txt" 2>&1 || true
