@@ -18,6 +18,7 @@ import android.os.ParcelFileDescriptor
 import android.view.Gravity
 import android.view.SurfaceHolder
 import android.view.SurfaceView
+import android.view.WindowInsets
 import android.view.ViewGroup
 import android.widget.Button
 import android.widget.FrameLayout
@@ -276,10 +277,26 @@ class KenjiPlayerActivity : Activity(), SurfaceHolder.Callback {
         val path = intent.getStringExtra(EXTRA_PATH).orEmpty()
         val title = intent.getStringExtra(EXTRA_TITLE).orEmpty().ifBlank { "игра" }
 
+        // Android 15 enforces edge-to-edge for newer targets: the navigation
+        // bar can overlap the exit button and Eden overlay, especially at the
+        // right edge in landscape. Own inset handling on API 30+ so the entire
+        // game area, including touch controls, stays in the safe region.
+        if (android.os.Build.VERSION.SDK_INT >= 30) {
+            window.setDecorFitsSystemWindows(false)
+        }
         // Status/exit have their own strip and do not cover the game controls.
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setBackgroundColor(Color.BLACK)
+        }
+        if (android.os.Build.VERSION.SDK_INT >= 30) {
+            root.setOnApplyWindowInsetsListener { view, insets ->
+                val safe = insets.getInsets(
+                    WindowInsets.Type.systemBars() or WindowInsets.Type.displayCutout()
+                )
+                view.setPadding(safe.left, safe.top, safe.right, safe.bottom)
+                insets
+            }
         }
         val bar = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
@@ -321,6 +338,7 @@ class KenjiPlayerActivity : Activity(), SurfaceHolder.Callback {
         }
         root.addView(gameArea, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
         setContentView(root)
+        if (android.os.Build.VERSION.SDK_INT >= 30) root.requestApplyInsets()
 
         if (!overlayReady) {
             fail("Не удалось передать настройки управления Eden во второе ядро.")

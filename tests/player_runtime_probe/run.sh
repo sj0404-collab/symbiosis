@@ -229,6 +229,10 @@ wait_log 'SDL_SURFACE_PRESENT_OK frame=599' || { echo 'GRAPHICS_NO_CONTINUED_PRE
 adb exec-out screencap -p > "$W/player-frame-rotated-late.png"
 python3 tests/player_runtime_probe/check_frame.py "$W/player-frame-rotated-late.png" --landscape | tee -a "$W/redroid-status.txt" || { echo 'GRAPHICS_ROTATED_LATE_FRAME_FAILED'; exit 1; }
 echo 'GRAPHICS_ROTATED_FRAME_VISIBLE' | tee -a "$W/redroid-status.txt"
+# Exit and the overlay must fit beside the actual system navigation strip.
+adb shell uiautomator dump /sdcard/player-ui.xml >/dev/null
+adb exec-out cat /sdcard/player-ui.xml > "$W/player-ui.xml"
+python3 tests/player_runtime_probe/check_exit_insets.py "$W/player-ui.xml" | tee -a "$W/redroid-status.txt"
 ! app_crashed || { echo 'GRAPHICS_PLAYER_FATAL'; exit 1; }
 # Callback absence is reported, not invented or made a pass requirement.
 grep -E "^[0-9-]+ +[0-9:.]+ +$player_pid +[0-9]+ .*CI_ONLY_GRAPHICS" "$log" | tee -a "$W/redroid-status.txt" || true
