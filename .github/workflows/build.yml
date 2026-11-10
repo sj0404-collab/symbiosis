@@ -258,6 +258,8 @@ jobs:
           python3 fork/tests/test_kenji_ui_shared_event_model.py
           python3 fork/tests/test_kenji_transform_candidate.py
           python3 fork/tests/test_kenji_ui_native.py
+          python3 fork/tests/test_kenji_ui_callback_wiring.py
+          python3 fork/tests/test_kenji_player_ui_contract.py
           python3 fork/tests/test_kenji_release_guard.py
           python3 fork/tests/test_core_settings_screen.py
           python3 fork/tests/test_hid_remap_model.py

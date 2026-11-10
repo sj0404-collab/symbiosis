@@ -139,6 +139,8 @@ jobs:
           python3 fork/tests/test_kenji_ui_shared_event_model.py
           python3 fork/tests/test_kenji_transform_candidate.py
           python3 fork/tests/test_kenji_ui_native.py
+          python3 fork/tests/test_kenji_ui_callback_wiring.py
+          python3 fork/tests/test_kenji_player_ui_contract.py
           python3 fork/tests/test_kenji_release_guard.py
           python3 fork/tests/test_hid_remap_model.py
           curl -fsSL --retry 3 'https://raw.githubusercontent.com/thiagooo0/EHRyujinx2/1247747ed81ffb6df2d33153e0ba723ec4ffc32b/src/Ryujinx.HLE/HOS/Services/Hid/IHidServer.cs' -o /tmp/related-hid-server.cs

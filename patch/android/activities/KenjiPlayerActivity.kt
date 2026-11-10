@@ -12,6 +12,8 @@ import android.graphics.drawable.GradientDrawable
 import android.app.AlertDialog
 import android.net.Uri
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.os.ParcelFileDescriptor
 import android.view.Gravity
 import android.view.SurfaceHolder
@@ -29,6 +31,8 @@ import org.yuzu.yuzu_emu.utils.EngineHybrid
 import org.yuzu.yuzu_emu.utils.EngineStore
 import org.yuzu.yuzu_emu.utils.EngineLoader
 import org.yuzu.yuzu_emu.utils.KenjiBridge
+import org.yuzu.yuzu_emu.utils.KenjiUiSession
+import org.kenjinx.android.KenjinxNative
 import org.yuzu.yuzu_emu.utils.KenjiOverlaySnapshot
 import org.yuzu.yuzu_emu.utils.KenjiSurfaceStartGate
 import org.yuzu.yuzu_emu.utils.KenjiStartupCoordinator
@@ -86,6 +90,9 @@ class KenjiPlayerActivity : Activity(), SurfaceHolder.Callback {
     @Volatile private var inputRunning = false
     private var inputThread: Thread? = null
     private var stopThread: Thread? = null
+    // Owned by this isolated session until the process exits. We do not assume
+    // native guest callbacks have stopped merely because the renderer joined.
+    private var uiSession: KenjiUiSession? = null
 
     private val surfaceStart = KenjiSurfaceStartGate()
     private val startup = KenjiStartupCoordinator()
@@ -252,6 +259,20 @@ class KenjiPlayerActivity : Activity(), SurfaceHolder.Callback {
                 return
             }
         }
+        val uiMain = Handler(Looper.getMainLooper())
+        lateinit var ui: KenjiUiSession
+        val presenter = KenjiUiPresenter(this) { id, accepted, text -> ui.answer(id, accepted, text) }
+        ui = KenjiUiSession(
+            postMain = { action -> uiMain.post { action() } },
+            present = { id, request -> presenter.show(id, request) },
+            dismiss = { presenter.dismiss() },
+            onError = { message -> if (!startup.isCancelled()) fail(message) },
+            activate = { KenjiBridge.activateUi() },
+            install = { listener -> KenjinxNative.uiCallback = listener },
+            setup = { KenjiBridge.setupUi() },
+            respond = { generation, accepted, bytes -> KenjiBridge.respondUi(generation, accepted, bytes) },
+        )
+        uiSession = ui
         val path = intent.getStringExtra(EXTRA_PATH).orEmpty()
         val title = intent.getStringExtra(EXTRA_TITLE).orEmpty().ifBlank { "игра" }
 
@@ -400,6 +421,17 @@ class KenjiPlayerActivity : Activity(), SurfaceHolder.Callback {
             if (startup.isCancelled()) return@Thread
             if (!surf.ok) {
                 runOnUiThread { fail(surf.message) }
+                return@Thread
+            }
+
+            // The core may block waiting for UI during device/game startup.
+            // Install the real listener and activate replies before setup, or
+            // stop instead of running the guest with an unanswered callback.
+            if (startup.isCancelled()) return@Thread
+            val uiReady = uiSession?.start() == true
+            if (startup.isCancelled()) return@Thread
+            if (!uiReady) {
+                runOnUiThread { fail("Не удалось подготовить диалоги второго ядра.") }
                 return@Thread
             }
 
@@ -993,6 +1025,9 @@ class KenjiPlayerActivity : Activity(), SurfaceHolder.Callback {
     private fun requestStop(): Thread {
         surfaceStart.stop()
         startup.cancel()
+        // Queue cancellation immediately, including when initialization or
+        // game loading is itself waiting for a keyboard response.
+        uiSession?.stop()
         stopThread?.let { return it }
         inputRunning = false
         KenjiBridge.disableInputEvents()
@@ -1001,6 +1036,9 @@ class KenjiPlayerActivity : Activity(), SurfaceHolder.Callback {
         updater?.interrupt()
         return Thread({
             try {
+                // Drain the current cancellation before awaiting startup: a
+                // native load may be waiting for that exact response.
+                uiSession?.awaitPendingReplies()
                 // Never close or unload while an initialization step is active.
                 val decision = worker?.let { startup.awaitDecision() }
                 updater?.join()
@@ -1020,6 +1058,9 @@ class KenjiPlayerActivity : Activity(), SurfaceHolder.Callback {
                         // the actual loop thread, even if stop raced its entry.
                         val signalled = KenjiBridge.signalPlayStop()
                         worker?.join()
+                        // Drain callbacks queued during the signal/join window.
+                        // This still cannot prove no later guest callbacks exist.
+                        uiSession?.awaitPendingReplies()
                         if (!signalled || !runLoopReturnedSuccessfully || !KenjiBridge.closePlay()) {
                             requireIsolatedProcessExit = true
                         }

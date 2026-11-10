@@ -1,0 +1,30 @@
+name: Compile real Kenji player (diagnostic, no APK)
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  compile:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: fork
+          persist-credentials: false
+      - name: Check out exact Eden source
+        run: |
+          git clone --depth 1 --branch v0.2.1 https://git.eden-emu.dev/eden-emu/eden.git eden
+          test "$(git -C eden rev-parse HEAD)" = 58c1e20ee58efa3900ba616207d460886214480b
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v4
+      - name: Install SDK required by the real app
+        run: sdkmanager --install 'ndk;28.2.13676358' 'cmake;3.31.6' 'build-tools;35.0.0' 'platforms;android-36'
+      - name: Apply unchanged production patch
+        run: bash fork/tools/apply_patch.sh --patch "$GITHUB_WORKSPACE/fork/patch" --eden "$GITHUB_WORKSPACE/eden"
+      - name: Compile actual app Kotlin, no assemble or publication
+        working-directory: eden/src/android
+        run: ./gradlew :app:compileLegacyDebugKotlin --stacktrace --no-daemon --max-workers=4

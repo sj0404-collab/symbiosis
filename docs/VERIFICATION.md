@@ -5979,3 +5979,12 @@ Space: `nativeClosePlay` отключил response gate до того, как р
 отмену; JNI вернул `false`, close не завершился за время пробы. `SWKBD_RACE_EXIT=1`.
 Другой прогон той же гонки на Symbiosis прошёл; это не устраняет проблему.
 [Логи](https://github.com/sj0404-collab/symbiosis/actions/runs/42782285389/artifacts/13747925734).
+
+[Run 42784083029](https://github.com/sj0404-collab/symbiosis/actions/runs/42784083029),
+`90d3dea`: тест намеренно задержал отправку отмены на 400 мс. На обоих ядрах
+фоновая остановка дождалась очереди ответов до сигнала/close; ответ принят,
+close вернулся, за следующие 3 с новых callback не наблюдалось, изолированный
+процесс завершён и lease освобождён (`SWKBD_RACE_EXIT=0`). Host/build success,
+Android job по-прежнему failed из-за старых отрицательных проб. Барьер покрывает
+только ранее поставленные ответы и не доказывает, что новые гостевые callback
+не появятся позднее. [Логи](https://github.com/sj0404-collab/symbiosis/actions/runs/42784083029/artifacts/13748392659).
