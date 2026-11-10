@@ -46,7 +46,7 @@ int main(int argc, char **argv) {
         if (SDL_UpdateWindowSurface(w) < 0) {
             logline("SDL_SURFACE_FAIL present=%s", SDL_GetError()); break;
         }
-        if (frame == 0 || frame == 59) logline("SDL_SURFACE_PRESENT_OK frame=%d", frame);
+        if (frame == 0 || frame == 59 || frame == 599) logline("SDL_SURFACE_PRESENT_OK frame=%d", frame);
         SDL_Delay(16);
     }
     logline("SDL_SURFACE_CLOSE_BEGIN");

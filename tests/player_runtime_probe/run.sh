@@ -190,6 +190,10 @@ done
 # Real player + self-authored modern SDL frame. Callback instrumentation is
 # inserted only in the disposable debug tree; callbacks remain unimplemented.
 echo 'PLAYER_GRAPHICS_ATTEMPT'
+# Start from a defined real device rotation. This changes Android settings on
+# the disposable container only, not an app/user configuration.
+adb shell settings put system accelerometer_rotation 0
+adb shell settings put system user_rotation 0
 adb shell am start -W -n "$package/dev.symbiosis.playerruntime.DiagnosticLauncher" \
   --es test_config 'memory=2' --es test_kind graphics | tee "$W/player-launch-graphics.txt"
 player_pid=$(adb shell pidof "$package:kenji" | tr -d '\r' || true)
@@ -206,6 +210,25 @@ for attempt in 1 2 3 4 5; do
 done
 [ "$frame_ok" = 1 ] || { echo 'GRAPHICS_BLUE_FRAME_NOT_VISIBLE'; exit 1; }
 wait_log 'SDL_SURFACE_PRESENT_OK frame=59' || { echo 'GRAPHICS_GUEST_NO_SECOND_PRESENT'; exit 1; }
+# Rotate during a running real guest, not before the player starts. Require a
+# landscape screenshot with the guest's coloured surface, and later guest
+# presents; do not count portrait screenshots as rotation success.
+echo 'PLAYER_ROTATION_REQUEST 90' | tee -a "$W/redroid-status.txt"
+adb shell settings put system user_rotation 1
+rotated=0
+for attempt in $(seq 1 12); do
+  adb exec-out screencap -p > "$W/player-frame-rotated-$attempt.png"
+  if python3 tests/player_runtime_probe/check_frame.py "$W/player-frame-rotated-$attempt.png" --landscape | tee -a "$W/redroid-status.txt"; then
+    rotated=1; break
+  fi
+  app_crashed && { echo 'GRAPHICS_ROTATION_FATAL'; exit 1; }
+  sleep 1
+done
+[ "$rotated" = 1 ] || { echo 'GRAPHICS_ROTATION_OR_FRAME_FAILED'; exit 1; }
+wait_log 'SDL_SURFACE_PRESENT_OK frame=599' || { echo 'GRAPHICS_NO_CONTINUED_PRESENT'; exit 1; }
+adb exec-out screencap -p > "$W/player-frame-rotated-late.png"
+python3 tests/player_runtime_probe/check_frame.py "$W/player-frame-rotated-late.png" --landscape | tee -a "$W/redroid-status.txt" || { echo 'GRAPHICS_ROTATED_LATE_FRAME_FAILED'; exit 1; }
+echo 'GRAPHICS_ROTATED_FRAME_VISIBLE' | tee -a "$W/redroid-status.txt"
 ! app_crashed || { echo 'GRAPHICS_PLAYER_FATAL'; exit 1; }
 # Callback absence is reported, not invented or made a pass requirement.
 grep -E "^[0-9-]+ +[0-9:.]+ +$player_pid +[0-9]+ .*CI_ONLY_GRAPHICS" "$log" | tee -a "$W/redroid-status.txt" || true

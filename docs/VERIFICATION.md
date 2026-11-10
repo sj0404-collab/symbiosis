@@ -6056,3 +6056,15 @@ logcat. Режимы 0/1 и перезапуск этот run не провер�
 тестовый NRO и Symbiosis core, а не коммерческая игра, Eden или телефон.
 Он не проверяет stop во время открытого окна, поздние callback, графические
 callback или причину 710. [Артефакт](https://github.com/sj0404-collab/symbiosis/actions/runs/42796378636/artifacts/13754722122).
+
+[Run 42853747738](https://github.com/sj0404-collab/symbiosis/actions/runs/42853747738),
+`4793133`: host suite, disposable debug build и реальный плеер на ARM Redroid 15
+success. После трёх проверок клавиатуры реальный Symbiosis core запустил свой
+современный SDL NRO: Android screencap 720×1280 содержал 649 911 пикселей
+ожидаемого голубого кадра (порог 92 160); выход закрыл `:kenji`. Это подтверждает
+видимый кадр в этой среде, не точность ориентации и не физическое устройство.
+Логирование добавлено только в disposable debug copy, без изменения no-op:
+`setCurrentTransform(window=..., value=0)` и `setRenderingThread` оба вызваны
+потоком 2789. Поэтому пустые callbacks не считать неиспользуемыми. Другие
+значения transform, динамический поворот и назначение rendering-thread ещё
+нуждаются в проверке. [Логи и снимок](https://github.com/sj0404-collab/symbiosis/actions/runs/42853747738/artifacts/13782222931).

@@ -15,4 +15,8 @@ matches = sum(1 for r, g, b in im.getdata()
               if 8 <= r <= 65 and 80 <= g <= 140 and 150 <= b <= 220 and b > g + 35)
 needed = max(5000, im.width * im.height // 10)
 print(f'FRAME_BLUE_PIXELS={matches} required={needed} size={im.width}x{im.height}')
+landscape_required = '--landscape' in sys.argv[2:]
+if landscape_required and im.width <= im.height:
+    print('FRAME_NOT_LANDSCAPE')
+    sys.exit(1)
 sys.exit(0 if matches >= needed else 1)
