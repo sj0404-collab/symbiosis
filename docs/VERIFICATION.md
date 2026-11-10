@@ -6174,3 +6174,26 @@ production callback записали `pthread_self` и время monotonic в �
 exit проверки вернули успех. [Логи](https://github.com/sj0404-collab/symbiosis/actions/runs/42879445912/artifacts/13794741487).
 Релизная защита сохраняется: выполнение callback и этот результат не доказывают
 интеграцию графики или устранение 2202-0710.
+
+[Проверка transform 42883636188](https://github.com/sj0404-collab/symbiosis/actions/runs/42883636188),
+`96c23bd`: host suite и сборка ARM diagnostic probe прошли.
+`PRODUCTION_TRANSFORM_REFERENCE_OK fake_cases=517 real_surface=8`: тестовая
+сборка того же production bridge с link-time wrapper сравнила 517 аргументов
+с JNI SymbEK при его исходном `isInitialOrientationFlipped=true`; вторая часть
+пропустила восемь вызовов на реальный ANativeWindow и проверила возврат API 0.
+Неподменённый production bridge также вызван на этой поверхности. Wrapper и
+фиктивное окно существуют только в диагностическом APK. Это не проверка
+видимого результата всех поворотов, ни потери Surface, ни контракта второго
+ядра; релизный graphics blocker остаётся. При этом оба ядра запустили новый
+SDL NRO; старый SDL NRO вновь упал в обоих. Общий Android job failed, поскольку
+swkbd без зарегистрированного listener остался без ответа, при unload процесса
+после stop оба ядра умерли, а overlap был сериализован. При сохранении ядра и
+при isolated exit/race отдельные пробы успешны, но не доказывают завершение
+всех guest threads. [Логи](https://github.com/sj0404-collab/symbiosis/actions/runs/42883636188/artifacts/13796335860).
+
+[Плеер 42883038704](https://github.com/sj0404-collab/symbiosis/actions/runs/42883038704),
+`598cba3`: production callback собран с реальным debug player, host suite и
+player ARM runtime прошли, включая input/exit, кадры и shader true/true/false.
+Ядро вызвало transform только со значением 0; GPU — SwiftShader. Полный запуск
+failed из-за ошибки компиляции в отдельном тестовом probe (затенённый указатель),
+позже исправленной в `96c23bd` и проверенной в 42883636188. APK релиза нет.

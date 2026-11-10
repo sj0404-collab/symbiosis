@@ -61,7 +61,7 @@ jobs:
         run: |
           set -euo pipefail
           bash fork/tools/apply_patch.sh --patch "$GITHUB_WORKSPACE/fork/patch" --eden "$GITHUB_WORKSPACE/eden"
-          # Observe current no-op graphics callbacks in the disposable tree only.
+          # Observe real graphics callback calls in the disposable debug tree only.
           python3 fork/tests/player_runtime_probe/instrument_graphics.py eden/src/android/app/src/main/jni/symbiosis_kenji_bridge.cpp
           python3 fork/tests/player_runtime_probe/instrument_overlay.py eden/src/android/app/src/main/java/org/yuzu/yuzu_emu/overlay/InputOverlay.kt
           python3 fork/tests/player_runtime_probe/instrument_shader_config.py eden/src/android/app/src/main/java/org/yuzu/yuzu_emu/utils/KenjiBridge.kt
