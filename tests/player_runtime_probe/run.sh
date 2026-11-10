@@ -293,7 +293,7 @@ for setting in true true false; do
   echo "SHADER_ATTEMPT case=$case_count shaderCache=$setting" | tee -a "$W/redroid-status.txt"
   adb shell run-as "$package" sh -c 'find files/kenji -type f 2>/dev/null | sort' > "$W/shader-files-before-$case_count.txt" || true
   adb shell am start -W -n "$package/dev.symbiosis.playerruntime.DiagnosticLauncher" \
-    --es test_config "memory=2;shaderCache=$setting" --es test_kind shader | tee "$W/shader-launch-$case_count.txt"
+    --es test_config "shaderCache=$setting" --es test_kind shader | tee "$W/shader-launch-$case_count.txt"
   player_pid=$(adb shell pidof "$package:kenji" | tr -d '\r' || true)
   [ -n "$player_pid" ] || { echo "SHADER_PLAYER_NOT_RUNNING case=$case_count"; exit 1; }
   [ "$(adb shell pidof "$package" | tr -d '\r' || true)" = "$main_pid" ] || { echo 'SHADER_PARENT_CHANGED'; exit 1; }

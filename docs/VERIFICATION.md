@@ -6112,3 +6112,12 @@ libnx HID. После поворота видимый кадр сохранил�
 пропорции, остальные кнопки и телефон. Оба графических callback всё ещё пусты,
 снимок не является доказательством их реализации и release guard остаётся.
 [Артефакт](https://github.com/sj0404-collab/symbiosis/actions/runs/42861536889/artifacts/13785706987).
+
+[Run 42866053370](https://github.com/sj0404-collab/symbiosis/actions/runs/42866053370),
+`636392b`: host/debug build success; SDL кадр, поворот, Plus и выход снова
+подтверждены. Настоящий shader NRO собран с uam и deko3d, но проверка ядра не
+состоялась: аргумент `memory=2;shaderCache=true` в `adb shell` был разобран
+Android shell по `;` как две команды (`--es: inaccessible or not found`),
+поэтому CI прервался сразу после launch. Это дефект тестового скрипта; нельзя
+делать вывод о шейдерах. Исправление: отдельный параметр `shaderCache`, режим
+памяти берётся из штатного default=2. [Логи](https://github.com/sj0404-collab/symbiosis/actions/runs/42866053370/artifacts/13786973571).
