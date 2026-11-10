@@ -13,7 +13,12 @@ class DiagnosticLauncher : Activity() {
         super.onCreate(state)
         try {
             val kind = intent.getStringExtra("test_kind").orEmpty()
-            val game = File(filesDir, if (kind == "graphics") "graphics-probe.nro" else "swkbd-probe.nro")
+            val filename = when (kind) {
+                "graphics" -> "graphics-probe.nro"
+                "shader" -> "shader-probe.nro"
+                else -> "swkbd-probe.nro"
+            }
+            val game = File(filesDir, filename)
             check(game.isFile) { "missing test NRO" }
             val config = intent.getStringExtra("test_config").orEmpty()
             val intent = KenjiPlayerActivity.intent(this, game.absolutePath, "Keyboard test", config)

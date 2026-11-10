@@ -99,6 +99,7 @@ jobs:
             /tmp/player-runtime/core_sym.so
             /tmp/player-runtime/swkbd.nro
             /tmp/player-runtime/graphics.nro
+            /tmp/player-runtime/shader.nro
           if-no-files-found: error
           retention-days: 1
 
@@ -133,5 +134,7 @@ jobs:
             /tmp/player-runtime/player-*.txt
             /tmp/player-runtime/player-ui.xml
             /tmp/player-runtime/player-frame-*.png
+            /tmp/player-runtime/shader-frame-*.png
+            /tmp/player-runtime/shader-*.txt
           if-no-files-found: warn
           retention-days: 3
