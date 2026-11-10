@@ -57,6 +57,16 @@ int main(int argc, char **argv) {
         if (SDL_FillRect(surface, NULL, color) < 0) {
             logline("SDL_SURFACE_FAIL fill=%s", SDL_GetError()); break;
         }
+#ifdef SDL_DIAGNOSTIC_MARKERS
+        // Asymmetric markers reveal flips/rotations that a single blue fill
+        // would hide. They are used only by the disposable player diagnostic.
+        SDL_Rect red = { surface->w / 8, surface->h / 8, surface->w / 8, surface->h / 8 };
+        SDL_Rect yellow = { surface->w * 3 / 4, surface->h * 3 / 4, surface->w / 8, surface->h / 8 };
+        if (SDL_FillRect(surface, &red, SDL_MapRGBA(surface->format, 220, 35, 35, 255)) < 0 ||
+            SDL_FillRect(surface, &yellow, SDL_MapRGBA(surface->format, 235, 210, 30, 255)) < 0) {
+            logline("SDL_SURFACE_FAIL markers=%s", SDL_GetError()); break;
+        }
+#endif
         if (SDL_UpdateWindowSurface(w) < 0) {
             logline("SDL_SURFACE_FAIL present=%s", SDL_GetError()); break;
         }
