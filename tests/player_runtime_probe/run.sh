@@ -16,7 +16,7 @@ cleanup() {
   if [ "$container_started" = 1 ]; then
     timeout 20s adb -s "$ANDROID_SERIAL" logcat -d -v threadtime > "$W/redroid-logcat.txt" 2>&1 || true
     if [ -n "${package:-}" ]; then
-      timeout 10s adb -s "$ANDROID_SERIAL" shell cat "/sdcard/Android/data/$package/files/kenji/kenji-stdout.txt" > "$W/player-native-stdout.txt" 2>&1 || true
+      timeout 10s adb -s "$ANDROID_SERIAL" exec-out run-as "$package" cat "/sdcard/Android/data/$package/files/kenji/kenji-stdout.txt" > "$W/player-native-stdout.txt" 2>&1 || true
     fi
     docker inspect -f 'state={{.State.Status}} exit={{.State.ExitCode}} oom={{.State.OOMKilled}} error={{.State.Error}}' symbiosis-redroid > "$W/redroid-container-state.txt" 2>&1 || true
     docker logs --tail 2500 symbiosis-redroid > "$W/redroid-container.txt" 2>&1 || true
@@ -106,9 +106,12 @@ adb shell run-as "$package" cp /data/local/tmp/player-shader.nro files/shader-pr
 if [ "${PLAYER_EXPECT_TLS_CANDIDATE:-0}" = 1 ]; then
   openssl req -x509 -newkey rsa:2048 -nodes -keyout "$W/ci-test-key.pem" -out "$W/ci-test-cert.pem" \
     -days 1 -subj '/CN=localhost' -addext 'subjectAltName=DNS:localhost' >/dev/null 2>&1
-  adb shell mkdir -p "/sdcard/Android/data/$package/files/kenji"
-  adb push "$W/ci-test-key.pem" "/sdcard/Android/data/$package/files/kenji/ci-test-key.pem" >/dev/null
-  adb push "$W/ci-test-cert.pem" "/sdcard/Android/data/$package/files/kenji/ci-test-cert.pem" >/dev/null
+  adb push "$W/ci-test-key.pem" /data/local/tmp/player-ci-test-key.pem >/dev/null
+  adb push "$W/ci-test-cert.pem" /data/local/tmp/player-ci-test-cert.pem >/dev/null
+  adb shell chmod 644 /data/local/tmp/player-ci-test-key.pem /data/local/tmp/player-ci-test-cert.pem
+  adb shell run-as "$package" cp /data/local/tmp/player-ci-test-key.pem files/ci-test-key.pem
+  adb shell run-as "$package" cp /data/local/tmp/player-ci-test-cert.pem files/ci-test-cert.pem
+  adb shell rm /data/local/tmp/player-ci-test-key.pem /data/local/tmp/player-ci-test-cert.pem
   rm -f "$W/ci-test-key.pem" "$W/ci-test-cert.pem"
 fi
 # Let the actual main app perform its normal initialization before asking its

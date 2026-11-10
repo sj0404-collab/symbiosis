@@ -29,10 +29,14 @@ extra = '''    // CI-only real TLS exercise in this player process. The probe li
         if (::dladdr(reinterpret_cast<void*>(&PreloadOpenSsl), &origin) && origin.dli_fname && g_crashPath[0]) {
             std::string libraryPath(origin.dli_fname), certPath(g_crashPath);
             const auto libSlash = libraryPath.find_last_of('/');
-            const auto certSlash = certPath.find_last_of('/');
-            if (libSlash != std::string::npos && certSlash != std::string::npos) {
+            const std::string marker = "/Android/data/";
+            const auto begin = certPath.find(marker);
+            const auto end = begin == std::string::npos ? std::string::npos : certPath.find('/', begin + marker.size());
+            if (libSlash != std::string::npos && end != std::string::npos) {
                 const std::string dir = libraryPath.substr(0, libSlash);
-                certPath = certPath.substr(0, certSlash);
+                // Only the CI Android user 0 is tested. Files are copied by
+                // run-as, so the app owns them and scoped storage is avoided.
+                certPath = "/data/user/0/" + certPath.substr(begin + marker.size(), end - begin - marker.size()) + "/files";
                 void* probe = ::dlopen((dir + "/libtls_in_process_probe.so").c_str(), RTLD_NOW | RTLD_LOCAL);
                 using Fn = int (*)(const char*, const char*);
                 auto fn = probe ? reinterpret_cast<Fn>(::dlsym(probe, "ci_tls_in_process")) : nullptr;
