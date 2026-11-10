@@ -5,6 +5,7 @@ package org.yuzu.yuzu_emu.utils
 import java.util.ArrayDeque
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
 
 /** Copied values only: the core's native pointers never leave the callback. */
 data class KenjiUiRequest(
@@ -36,6 +37,7 @@ class KenjiUiCoordinator(
     private val replies = Executors.newSingleThreadExecutor { task ->
         Thread(task, "kenji-ui-reply")
     }
+    private val replyFailed = AtomicBoolean(false)
     private val pending = ArrayDeque<Pending>()
     private var active: Pending? = null
     private var nextId = 0L
@@ -95,6 +97,7 @@ class KenjiUiCoordinator(
         sending = true
         replies.execute {
             val ok = runCatching { reply(accepted, bytes) }.getOrDefault(false)
+            if (!ok) replyFailed.set(true)
             synchronized(this) {
                 sending = false
                 if (!ok && !stopping) postMain { onError("Не удалось передать ответ второму ядру.") }
@@ -109,7 +112,10 @@ class KenjiUiCoordinator(
     private fun enqueueReply(accepted: Boolean, bytes: ByteArray) {
         replies.execute {
             val ok = runCatching { reply(accepted, bytes) }.getOrDefault(false)
-            if (!ok) postMain { onError("Не удалось отменить диалог второго ядра.") }
+            if (!ok) {
+                replyFailed.set(true)
+                postMain { onError("Не удалось отменить диалог второго ядра.") }
+            }
         }
     }
 
@@ -131,12 +137,13 @@ class KenjiUiCoordinator(
      * never the Android main thread. This does NOT prove that the guest cannot
      * issue another callback later; its lifetime still belongs to the process.
      */
-    fun awaitPendingReplies() {
+    fun awaitPendingReplies(): Boolean {
         val barrier = synchronized(this) {
             check(stopping && !closed)
             replies.submit { }
         }
         barrier.get()
+        return !replyFailed.get()
     }
 
     /** Only after the owner has joined all callback-producing native threads. */

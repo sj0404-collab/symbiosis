@@ -165,6 +165,17 @@ fun main() {
         check(drained.count == 0L)
         coordinator.closeAfterGuestStopped()
     }
+    run {
+        // A returned-but-rejected cancellation must not be treated as a
+        // successful drain by the owner attempting native shutdown.
+        val coordinator = KenjiUiCoordinator(
+            postMain = {}, present = { _, _ -> }, dismiss = {},
+            reply = { _, _ -> false }, onError = {},
+        )
+        coordinator.request(request()); coordinator.stop()
+        check(!coordinator.awaitPendingReplies())
+        coordinator.closeAfterGuestStopped()
+    }
     repeat(100) {
         val h = Harness()
         h.coordinator.request(request()); h.pump()

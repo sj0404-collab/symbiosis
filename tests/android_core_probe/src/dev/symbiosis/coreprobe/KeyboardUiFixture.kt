@@ -109,7 +109,7 @@ object KeyboardUiFixture {
         return active.start()
     }
     @JvmStatic fun awaitPendingReplies() {
-        checkNotNull(coordinator).awaitPendingReplies()
+        check(checkNotNull(coordinator).awaitPendingReplies())
         Log.i("SymEngineStage", "UI_REAL_CANCEL_DRAINED")
     }
     @JvmStatic fun closeAfterDeviceStopped() {

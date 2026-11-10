@@ -1038,7 +1038,10 @@ class KenjiPlayerActivity : Activity(), SurfaceHolder.Callback {
             try {
                 // Drain the current cancellation before awaiting startup: a
                 // native load may be waiting for that exact response.
-                uiSession?.awaitPendingReplies()
+                if (uiSession?.awaitPendingReplies() == false) {
+                    requireIsolatedProcessExit = true
+                    return@Thread // keep the lease; cancellation was not delivered
+                }
                 // Never close or unload while an initialization step is active.
                 val decision = worker?.let { startup.awaitDecision() }
                 updater?.join()
@@ -1060,7 +1063,10 @@ class KenjiPlayerActivity : Activity(), SurfaceHolder.Callback {
                         worker?.join()
                         // Drain callbacks queued during the signal/join window.
                         // This still cannot prove no later guest callbacks exist.
-                        uiSession?.awaitPendingReplies()
+                        if (uiSession?.awaitPendingReplies() == false) {
+                            requireIsolatedProcessExit = true
+                            return@Thread
+                        }
                         if (!signalled || !runLoopReturnedSuccessfully || !KenjiBridge.closePlay()) {
                             requireIsolatedProcessExit = true
                         }

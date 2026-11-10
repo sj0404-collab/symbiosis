@@ -5988,3 +5988,12 @@ close вернулся, за следующие 3 с новых callback не н
 Android job по-прежнему failed из-за старых отрицательных проб. Барьер покрывает
 только ранее поставленные ответы и не доказывает, что новые гостевые callback
 не появятся позднее. [Логи](https://github.com/sj0404-collab/symbiosis/actions/runs/42784083029/artifacts/13748392659).
+
+[Run 42785959225](https://github.com/sj0404-collab/symbiosis/actions/runs/42785959225),
+`9ebbfb4`: настоящий Android-модуль с патчем Eden собран до Gradle-задачи
+`:app:compileLegacyDebugKotlin` (`BUILD SUCCESSFUL`), host suite success. APK
+не собирался; настоящая Activity на Android ещё не запускалась. Проверенные
+сессия/диалоги подключены в исходник плеера до `deviceInit`, при остановке
+отмена ставится в очередь, а worker ждёт текущие ответы до сигнал/close.
+Это не доказывает безопасность позднего callback после барьера. Release guard
+сохраняется; устройство и игра с ошибкой 710 не проверены.
