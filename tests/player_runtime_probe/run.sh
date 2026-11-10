@@ -98,6 +98,16 @@ adb shell run-as "$package" chmod 400 files/engines/libkenji.so
 adb shell run-as "$package" cp /data/local/tmp/player-swkb.nro files/swkbd-probe.nro
 adb shell run-as "$package" cp /data/local/tmp/player-graphics.nro files/graphics-probe.nro
 adb shell run-as "$package" cp /data/local/tmp/player-shader.nro files/shader-probe.nro
+# Generate a disposable local test certificate/key on this isolated runner.
+# Neither is included in the APK or uploaded in test artifacts.
+if [ "${PLAYER_EXPECT_TLS_CANDIDATE:-0}" = 1 ]; then
+  openssl req -x509 -newkey rsa:2048 -nodes -keyout "$W/ci-test-key.pem" -out "$W/ci-test-cert.pem" \
+    -days 1 -subj '/CN=localhost' -addext 'subjectAltName=DNS:localhost' >/dev/null 2>&1
+  adb shell mkdir -p "/sdcard/Android/data/$package/files/kenji"
+  adb push "$W/ci-test-key.pem" "/sdcard/Android/data/$package/files/kenji/ci-test-key.pem" >/dev/null
+  adb push "$W/ci-test-cert.pem" "/sdcard/Android/data/$package/files/kenji/ci-test-cert.pem" >/dev/null
+  rm -f "$W/ci-test-key.pem" "$W/ci-test-cert.pem"
+fi
 # Let the actual main app perform its normal initialization before asking its
 # real intent factory to capture Eden input settings. No intent data is faked.
 adb shell monkey -p "$package" -c android.intent.category.LAUNCHER 1 >/dev/null || true
@@ -197,6 +207,10 @@ for mode in 2 0 1; do
     }
     grep -E "^[0-9-]+ +[0-9:.]+ +$player_pid +[0-9]+ .*CI_ONLY_TLS_OPENSSL_VERSION=" "$log" | tee -a "$W/redroid-status.txt"
     echo "PLAYER_CANDIDATE_OPENSSL_LOADED mode=$mode (not proof of .NET TLS usage)" | tee -a "$W/redroid-status.txt"
+    wait_log 'CI_ONLY_TLS_IN_PROCESS good=0 verify=0 wrong_host=5 wrong_verify=62' || {
+      echo "PLAYER_IN_PROCESS_TLS_FAILED mode=$mode"; exit 1;
+    }
+    echo "PLAYER_IN_PROCESS_TLS_VERIFIED mode=$mode (not proof of .NET TLS usage)" | tee -a "$W/redroid-status.txt"
   fi
   wait_log 'SWKBD_SHOW_BEGIN' || { echo "PLAYER_NO_KEYBOARD_BEGIN mode=$mode"; exit 1; }
   clicked=0

@@ -10,7 +10,10 @@
     auto name = reinterpret_cast<type>(dlsym(handle, #name)); \
     if (!name) { std::fprintf(stderr, "TLS_SYMBOL_MISSING %s\n", #name); return 3; }
 
-int main(int argc, char** argv) {
+// Reused by a CI-only in-process probe; verify_out lets it distinguish a
+// genuine hostname rejection from a missing certificate or other error.
+int tls_handshake_probe(int argc, char** argv, long* verify_out) {
+    if (verify_out) *verify_out = -1;
     if (argc != 5) {
         std::fprintf(stderr, "usage: tls-handshake-probe libdir cert.pem key.pem hostname\n");
         return 2;
@@ -87,6 +90,7 @@ int main(int argc, char** argv) {
         }
         if (failed) break;
     }
+    if (verify_out) *verify_out = SSL_get_verify_result(client);
     char received[32] = {};
     constexpr char message[] = "symbiosis tls test";
     const int message_len = static_cast<int>(sizeof(message) - 1);
@@ -102,3 +106,7 @@ int main(int argc, char** argv) {
     SSL_CTX_free(server_ctx);
     return ok ? 0 : 5;
 }
+
+#ifndef TLS_HANDSHAKE_NO_MAIN
+int main(int argc, char** argv) { return tls_handshake_probe(argc, argv, nullptr); }
+#endif

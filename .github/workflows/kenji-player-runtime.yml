@@ -84,6 +84,15 @@ jobs:
           mkdir -p eden/src/android/app/src/debug/java/dev/symbiosis/playerruntime
           cp fork/tests/player_runtime_probe/AndroidManifest.xml eden/src/android/app/src/debug/AndroidManifest.xml
           cp fork/tests/player_runtime_probe/DiagnosticLauncher.kt eden/src/android/app/src/debug/java/dev/symbiosis/playerruntime/
+      - name: Build in-process TLS test library in disposable tree
+        if: inputs.tls_candidate
+        run: |
+          set -euo pipefail
+          CXX="$ANDROID_HOME/ndk/28.2.13676358/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android29-clang++"
+          "$CXX" -std=c++17 -O2 -fPIC -shared -static-libstdc++ -DTLS_HANDSHAKE_NO_MAIN \
+            -Wl,-z,max-page-size=16384 -Wl,-soname,libtls_in_process_probe.so \
+            fork/tests/standalone_core_probe/tls_handshake.cpp fork/tests/player_runtime_probe/tls_in_process.cpp \
+            -ldl -llog -o eden/src/android/app/src/main/jniLibs/arm64-v8a/libtls_in_process_probe.so
       - name: Build disposable debug application, not a release
         working-directory: eden/src/android
         run: |
@@ -147,7 +156,7 @@ jobs:
       - name: Install authentic adb
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y --no-install-recommends adb python3-pil
+          sudo apt-get install -y --no-install-recommends adb python3-pil openssl
       - name: Run actual player and its dialog in Android ARM
         run: bash tests/player_runtime_probe/run.sh
       - name: Preserve logs only, never diagnostic APK or core

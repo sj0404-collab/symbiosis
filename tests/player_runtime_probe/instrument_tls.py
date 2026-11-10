@@ -20,4 +20,28 @@ extra = '''        // CI-only observation: this does not prove .NET used the lib
 '''
 if s.count(needle) != 1:
     raise SystemExit('unexpected preload layout; refusing instrumentation')
+s = s.replace(needle, needle + extra, 1)
+needle = '    PreloadOpenSsl();\n'
+extra = '''    // CI-only real TLS exercise in this player process. The probe library,
+    // its throwaway key and cert exist only in the disposable debug build.
+    {
+        Dl_info origin{};
+        if (::dladdr(reinterpret_cast<void*>(&PreloadOpenSsl), &origin) && origin.dli_fname && g_crashPath[0]) {
+            std::string libraryPath(origin.dli_fname), certPath(g_crashPath);
+            const auto libSlash = libraryPath.find_last_of('/');
+            const auto certSlash = certPath.find_last_of('/');
+            if (libSlash != std::string::npos && certSlash != std::string::npos) {
+                const std::string dir = libraryPath.substr(0, libSlash);
+                certPath = certPath.substr(0, certSlash);
+                void* probe = ::dlopen((dir + "/libtls_in_process_probe.so").c_str(), RTLD_NOW | RTLD_LOCAL);
+                using Fn = int (*)(const char*, const char*);
+                auto fn = probe ? reinterpret_cast<Fn>(::dlsym(probe, "ci_tls_in_process")) : nullptr;
+                if (!fn || fn(dir.c_str(), certPath.c_str()) != 0)
+                    LOGE("CI_ONLY_TLS_IN_PROCESS_FAILED");
+            } else LOGE("CI_ONLY_TLS_IN_PROCESS_PATH_FAILED");
+        } else LOGE("CI_ONLY_TLS_IN_PROCESS_PATH_FAILED");
+    }
+'''
+if s.count(needle) != 1:
+    raise SystemExit('unexpected runtime setup; refusing instrumentation')
 path.write_text(s.replace(needle, needle + extra, 1))
