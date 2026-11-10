@@ -2,5 +2,6 @@
     <application>
         <!-- Test-only entry point; the real player stays unexported. -->
         <activity android:name="dev.symbiosis.playerruntime.DiagnosticLauncher" android:exported="true" />
+        <receiver android:name="dev.symbiosis.playerruntime.LockProbeReceiver" android:exported="true" />
     </application>
 </manifest>

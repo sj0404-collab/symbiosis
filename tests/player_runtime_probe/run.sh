@@ -248,6 +248,53 @@ for mode in 2 0 1; do
   echo "PLAYER_REAL_UI_AND_EXIT_OK mode=$mode" | tee -a "$W/redroid-status.txt"
 done
 
+# The genuine Activity receives a CI-only broadcast to call its real leave()
+# while a real keyboard dialog is visible. The delay applies only to the
+# disposable test copy and creates a controlled pending-cancellation race.
+lock_probe() {
+  local want=$1 before after
+  before=$(grep -cE "^[0-9-]+ +[0-9:.]+ +$main_pid +[0-9]+ .*CI_LOCK result=$want pid=$main_pid" "$log" || true)
+  adb shell am broadcast -n "$package/dev.symbiosis.playerruntime.LockProbeReceiver" >/dev/null
+  for ((n=0;n<10;n++)); do
+    after=$(grep -cE "^[0-9-]+ +[0-9:.]+ +$main_pid +[0-9]+ .*CI_LOCK result=$want pid=$main_pid" "$log" || true)
+    if [ "$after" -gt "$before" ]; then
+      echo "PLAYER_CROSS_PROCESS_LOCK_$want" | tee -a "$W/redroid-status.txt"; return 0
+    fi
+    sleep 1
+  done
+  echo "PLAYER_CROSS_PROCESS_LOCK_MISMATCH expected=$want"; return 1
+}
+for delay in false true; do
+  echo "PLAYER_PENDING_UI_STOP_ATTEMPT delay=$delay"
+  adb shell am start -W -n "$package/dev.symbiosis.playerruntime.DiagnosticLauncher" \
+    --es test_config 'memory=2' --ez ci_test_stop_probe true --ez ci_delay_cancel "$delay" \
+    | tee "$W/player-stop-launch-$delay.txt"
+  player_pid=$(adb shell pidof "$package:kenji" | tr -d '\r' || true)
+  [ -n "$player_pid" ] || { echo 'STOP_PLAYER_NOT_RUNNING'; exit 1; }
+  wait_log 'CI_STOP_RECEIVER_READY' || { echo 'STOP_RECEIVER_MISSING'; exit 1; }
+  wait_log 'SWKBD_SHOW_BEGIN' || { echo 'STOP_NO_GUEST_KEYBOARD'; exit 1; }
+  wait_log 'CI_UI_PRESENTED type=2' || { echo 'STOP_UI_NOT_PRESENTED'; exit 1; }
+  lock_probe busy
+  adb shell am broadcast -a dev.symbiosis.CI_STOP_PENDING_UI -p "$package" >/dev/null
+  wait_log 'CI_STOP_TRIGGERED' || { echo 'STOP_TRIGGER_NOT_RECEIVED'; exit 1; }
+  if [ "$delay" = true ]; then
+    wait_log 'CI_CANCEL_DELAY_BEGIN' || { echo 'STOP_DELAY_NOT_OBSERVED'; exit 1; }
+    lock_probe busy
+  fi
+  for ((n=0;n<60;n++)); do
+    pid=$(adb shell pidof "$package:kenji" | tr -d '\r' || true)
+    [ -z "$pid" ] && break
+    app_crashed && break
+    sleep 1
+  done
+  [ -z "${pid:-}" ] || { echo "STOP_PLAYER_STILL_ALIVE delay=$delay"; exit 1; }
+  ! app_crashed || { echo "STOP_PLAYER_FATAL delay=$delay"; exit 1; }
+  [ "$(adb shell pidof "$package" | tr -d '\r' || true)" = "$main_pid" ] || { echo 'STOP_PARENT_CHANGED'; exit 1; }
+  python3 tests/player_runtime_probe/check_stop_order.py "$log" "$player_pid" "$delay" | tee -a "$W/redroid-status.txt"
+  lock_probe acquired
+  echo "PLAYER_PENDING_UI_STOP_AND_LOCK_OK delay=$delay" | tee -a "$W/redroid-status.txt"
+done
+
 # Real player + self-authored modern SDL frame. Callback instrumentation is
 # inserted only in the disposable debug tree; logging itself proves no semantics.
 echo 'PLAYER_GRAPHICS_ATTEMPT'

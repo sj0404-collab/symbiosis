@@ -21,8 +21,10 @@ class DiagnosticLauncher : Activity() {
             val game = File(filesDir, filename)
             check(game.isFile) { "missing test NRO" }
             val config = intent.getStringExtra("test_config").orEmpty()
-            val intent = KenjiPlayerActivity.intent(this, game.absolutePath, "Keyboard test", config)
-            startActivity(intent)
+            val playerIntent = KenjiPlayerActivity.intent(this, game.absolutePath, "Keyboard test", config)
+            playerIntent.putExtra("ci_test_stop_probe", intent.getBooleanExtra("ci_test_stop_probe", false))
+            playerIntent.putExtra("ci_delay_cancel", intent.getBooleanExtra("ci_delay_cancel", false))
+            startActivity(playerIntent)
             Log.i("PlayerRuntimeCI", "REAL_PLAYER_LAUNCH_REQUESTED kind=$kind config=$config")
             finish()
         } catch (t: Throwable) {

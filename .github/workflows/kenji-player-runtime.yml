@@ -78,12 +78,13 @@ jobs:
           if [ "${{ inputs.tls_candidate }}" = true ]; then
             python3 fork/tests/player_runtime_probe/instrument_tls.py eden/src/android/app/src/main/jni/symbiosis_kenji_bridge.cpp
           fi
+          python3 fork/tests/player_runtime_probe/instrument_stop_race.py eden/src/android/app/src/main/java/org/yuzu/yuzu_emu/activities/KenjiPlayerActivity.kt
           python3 fork/tests/player_runtime_probe/instrument_overlay.py eden/src/android/app/src/main/java/org/yuzu/yuzu_emu/overlay/InputOverlay.kt
           python3 fork/tests/player_runtime_probe/instrument_shader_config.py eden/src/android/app/src/main/java/org/yuzu/yuzu_emu/utils/KenjiBridge.kt
           test ! -e eden/src/android/app/src/debug/AndroidManifest.xml
           mkdir -p eden/src/android/app/src/debug/java/dev/symbiosis/playerruntime
           cp fork/tests/player_runtime_probe/AndroidManifest.xml eden/src/android/app/src/debug/AndroidManifest.xml
-          cp fork/tests/player_runtime_probe/DiagnosticLauncher.kt eden/src/android/app/src/debug/java/dev/symbiosis/playerruntime/
+          cp fork/tests/player_runtime_probe/DiagnosticLauncher.kt fork/tests/player_runtime_probe/LockProbeReceiver.kt eden/src/android/app/src/debug/java/dev/symbiosis/playerruntime/
       - name: Build in-process TLS test library in disposable tree
         if: inputs.tls_candidate
         run: |
