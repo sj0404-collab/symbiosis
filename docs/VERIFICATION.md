@@ -6264,3 +6264,18 @@ EngineLoader принимает два точных SHA, production-провер
 Это не подтверждает штатный возврат всех гостевых потоков, работу всех диалогов,
 двух плееров в релизе, коммерческую игру или 2202-0710.
 [Логи](https://github.com/sj0404-collab/symbiosis/actions/runs/42899545684/artifacts/13803066860).
+
+[Графика SymbEK в реальном плеере 42901258621](https://github.com/sj0404-collab/symbiosis/actions/runs/42901258621),
+`b5ada60`: весь workflow success. После проверок stop/lock обоих бинарников
+в Activity оставлен SHA-pinned SymbEK `d78104...` из пользовательского APK.
+На ARM Android 15/SwiftShader SDL NRO показал видимые кадры до и после поворота,
+Plus 0→1→0 доставлен гостю в двух ориентациях, экранный выход завершил процесс.
+Проверены реальные guest deko vertex/fragment shaders: RGB triangle обнаружен
+при shaderCache true/true/false (20 356/16 364/17 209 пикселей), все три
+запуска закончились кнопкой выхода. Callback transform ядро вызвало только с 0.
+После графических проверок только при отсутствии `:kenji` Symbiosis core
+восстановлен и его SHA проверен. Временная debug-only замена hash whitelist
+и управляющие тестовые команды в production не попадают.
+[Логи и кадры](https://github.com/sj0404-collab/symbiosis/actions/runs/42901258621/artifacts/13803996436).
+Не Mali/GPU телефона, не коммерческая игра, не проверка cache hit или всех
+transforms, не подтверждение исправления 2202-0710; релизные blockers остаются.
