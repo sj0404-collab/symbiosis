@@ -222,7 +222,7 @@ for mode in 2 0 1; do
 done
 
 # Real player + self-authored modern SDL frame. Callback instrumentation is
-# inserted only in the disposable debug tree; transform is not implemented.
+# inserted only in the disposable debug tree; logging itself proves no semantics.
 echo 'PLAYER_GRAPHICS_ATTEMPT'
 # Start from a defined real device rotation. This changes Android settings on
 # the disposable container only, not an app/user configuration.

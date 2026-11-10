@@ -44,10 +44,18 @@ unzip -p "$WORK/symbek.apk" lib/arm64-v8a/libopenal.so > "$WORK/apk/lib/arm64-v8
 echo 'd63ccb1227308b331fd11bc5041671c3ac2842484779e309acd1bb9f3bf061a4  '"$WORK/apk/lib/arm64-v8a/libopenal.so" | sha256sum -c -
 for lib in symbiosis_kenji kenjinxjni; do
   "$CXX" -std=c++17 -O2 -shared -fPIC -static-libstdc++ -Wl,-z,max-page-size=16384 \
-    -Wl,-soname,"lib$lib.so" -I"$WORK" \
+    -Wl,-soname,"lib$lib.so" -I"$WORK" -I"$ROOT/patch/symbiosis" \
     "$ROOT/patch/symbiosis/kenji_bridge.cpp" "$ROOT/patch/symbiosis/got_patch.cpp" \
-    -llog -ldl -landroid -o "$WORK/apk/lib/arm64-v8a/lib$lib.so"
+    -llog -ldl -landroid -lnativewindow -o "$WORK/apk/lib/arm64-v8a/lib$lib.so"
 done
+# Identical production bridge with a CI-only link-time wrapper to observe
+# Android transform API calls; the normal production bridge above is unchanged.
+"$CXX" -std=c++17 -O2 -shared -fPIC -static-libstdc++ -Wl,-z,max-page-size=16384 \
+  -Wl,-soname,libtransform_wrapped_test.so -Wl,--wrap=ANativeWindow_setBuffersTransform \
+  -I"$WORK" -I"$ROOT/patch/symbiosis" \
+  "$ROOT/patch/symbiosis/kenji_bridge.cpp" "$ROOT/patch/symbiosis/got_patch.cpp" \
+  "$ROOT/tests/android_core_probe/transform_api_wrap.cpp" \
+  -llog -ldl -landroid -lnativewindow -o "$WORK/apk/lib/arm64-v8a/libtransform_wrapped_test.so"
 # Synthetic test fixture is packaged only into this disposable probe APK.
 "$CXX" -std=c++17 -O2 -shared -fPIC -static-libstdc++ -Wl,-z,max-page-size=16384 \
   -Wl,-soname,libcore_mock.so "$ROOT/tests/android_core_probe/mock_core.cpp" \

@@ -67,6 +67,7 @@
 
 #include "common/symbiosis/got_patch.h"
 #include "kenji_ui_response_gate.h"
+#include "kenji_transform_map.h"
 #include <string>
 #include <vector>
 #include <mutex>
@@ -566,11 +567,20 @@ JNIEXPORT void debug_break(int code) {
     if (n > 0) AppendCrashLine(line);
 }
 
-// Unimplemented window transformation. Merely resolving this symbol is not
-// sufficient; release remains blocked until its Android behaviour is verified.
+// Use the public Android API rather than the private ANativeWindow perform
+// slot used by pinned SymbEK. Its JNI default is initiallyFlipped=true; its
+// APK has no conventional direct call to the orientation setter. This does
+// not establish the other core's contract, window lifecycle, or correctness
+// for every orientation on a real GPU: release is still explicitly blocked.
 JNIEXPORT void setCurrentTransform(long native_window, int transform) {
-    (void)native_window;
-    (void)transform;
+    if (native_window == 0 || native_window == -1) return;
+    auto* window = reinterpret_cast<ANativeWindow*>(native_window);
+    const int mapped = Symbiosis::SymbekTransformCandidate(transform, true);
+    const int result = ANativeWindow_setBuffersTransform(window, mapped);
+    if (result != 0) {
+        LOGE("setCurrentTransform: Android rejected transform=%d mapped=%d rc=%d",
+             transform, mapped, result);
+    }
 }
 
 } // extern "C"

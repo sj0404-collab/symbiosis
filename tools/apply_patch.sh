@@ -183,6 +183,7 @@ fi
 # first device call. Same source, built twice, a few kilobytes each.
 cp "$P"/symbiosis/kenji_bridge.cpp "$A/jni/symbiosis_kenji_bridge.cpp"
 cp "$P"/symbiosis/kenji_ui_response_gate.h "$A/jni/kenji_ui_response_gate.h"
+cp "$P"/symbiosis/kenji_transform_map.h "$A/jni/kenji_transform_map.h"
 CM="$A/jni/CMakeLists.txt"
 if ! grep -q "symbiosis_kenji" "$CM"; then
   cat >> "$CM" <<'CMAKE'
@@ -194,13 +195,13 @@ if ! grep -q "symbiosis_kenji" "$CM"; then
 add_library(symbiosis_kenji SHARED symbiosis_kenji_bridge.cpp
     ../../../../../common/symbiosis/got_patch.cpp)
 target_include_directories(symbiosis_kenji PRIVATE ../../../../..)
-target_link_libraries(symbiosis_kenji PRIVATE log dl android)
+target_link_libraries(symbiosis_kenji PRIVATE log dl android nativewindow)
 
 # The name the core itself looks for.
 add_library(kenjinxjni SHARED symbiosis_kenji_bridge.cpp
     ../../../../../common/symbiosis/got_patch.cpp)
 target_include_directories(kenjinxjni PRIVATE ../../../../..)
-target_link_libraries(kenjinxjni PRIVATE log dl android)
+target_link_libraries(kenjinxjni PRIVATE log dl android nativewindow)
 CMAKE
   echo "  added the Kenji bridge to jni/CMakeLists.txt"
 fi

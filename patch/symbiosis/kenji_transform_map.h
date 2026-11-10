@@ -5,9 +5,9 @@
 #include <cstdint>
 
 namespace Symbiosis {
-// Candidate mapping for the pinned SymbEK 1.0.121 JNI callback only. This is
-// not connected to production yet. The incoming values and orientation flag
-// of the other core still need proof. Returns public ANativeWindow bit values.
+// Mapping measured for the pinned SymbEK 1.0.121 JNI callback only. Production
+// uses its default flipped=true; the other core's incoming values, orientation
+// and lifecycle still need proof. Returns public ANativeWindow bit values.
 constexpr std::int32_t SymbekTransformCandidate(std::int32_t input,
                                                  bool initiallyFlipped) {
     if (input < 0) return 0;

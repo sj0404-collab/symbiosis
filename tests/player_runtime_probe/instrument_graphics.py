@@ -15,12 +15,10 @@ changes = {
     'JNIEXPORT void setRenderingThread() {\n':
         'JNIEXPORT void setRenderingThread() {\n'
         '    LOGI("CI_ONLY_GRAPHICS setRenderingThread tid=%ld", (long)syscall(SYS_gettid));\n',
-    'JNIEXPORT void setCurrentTransform(long native_window, int transform) {\n'
-    '    (void)native_window;\n    (void)transform;\n}':
+    'JNIEXPORT void setCurrentTransform(long native_window, int transform) {\n':
         'JNIEXPORT void setCurrentTransform(long native_window, int transform) {\n'
         '    LOGI("CI_ONLY_GRAPHICS setCurrentTransform window=%p value=%d tid=%ld", '
-        '(void*)native_window, transform, (long)syscall(SYS_gettid));\n'
-        '    (void)native_window;\n    (void)transform;\n}',
+        '(void*)native_window, transform, (long)syscall(SYS_gettid));\n',
 }
 for old, new in changes.items():
     if s.count(old) != 1:

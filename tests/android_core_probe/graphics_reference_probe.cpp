@@ -136,7 +136,23 @@ Java_dev_symbiosis_coreprobe_GraphicsProbeActivity_nativeRun(JNIEnv* env, jclass
     pthread_join(worker, nullptr);
     if (!threadProbe.ok) { dlclose(candidate); dlclose(library); return failure(env, "render thread state differs on worker thread"); }
     __android_log_print(ANDROID_LOG_INFO, "SymGraphicsProbe", "RENDER_THREAD_REFERENCE_OK threads=2");
-    dlclose(candidate);
+    auto productionTransform = reinterpret_cast<Reference>(dlsym(candidate, "setCurrentTransform"));
+    std::string wrappedPath = candidatePath.substr(0, candidatePath.find_last_of('/') + 1) + "libtransform_wrapped_test.so";
+    void* wrapped = dlopen(wrappedPath.c_str(), RTLD_NOW | RTLD_LOCAL);
+    if (!wrapped || !productionTransform) {
+        if (wrapped) dlclose(wrapped);
+        dlclose(candidate); dlclose(library); return failure(env, "transform bridge unavailable");
+    }
+    auto wrappedTransform = reinterpret_cast<Reference>(dlsym(wrapped, "setCurrentTransform"));
+    auto reset = reinterpret_cast<void (*)(int)>(dlsym(wrapped, "probeTransformReset"));
+    auto calls = reinterpret_cast<int (*)()>(dlsym(wrapped, "probeTransformCalls"));
+    auto value = reinterpret_cast<int (*)()>(dlsym(wrapped, "probeTransformValue"));
+    auto result = reinterpret_cast<int (*)()>(dlsym(wrapped, "probeTransformResult"));
+    auto window = reinterpret_cast<ANativeWindow* (*)()>(dlsym(wrapped, "probeTransformWindow"));
+    if (!wrappedTransform || !reset || !calls || !value || !result || !window) {
+        dlclose(wrapped); dlclose(candidate); dlclose(library);
+        return failure(env, "transform wrapper symbols unavailable");
+    }
 
     // Test-only fake: the pinned binary reads its perform pointer at offset
     // 0x98. It is never handed to Android and is not a real ANativeWindow.
@@ -160,6 +176,17 @@ Java_dev_symbiosis_coreprobe_GraphicsProbeActivity_nativeRun(JNIEnv* env, jclass
                 dlclose(library);
                 return failure(env, "reference transform mapping mismatch");
             }
+            if (orientation == 1) {
+                // Link-time wrapper intercepts the public API: compare the
+                // actual bridge's call, not just a duplicate mapping table.
+                reset(1);
+                wrappedTransform(reinterpret_cast<long>(fake), i);
+                if (calls() != 1 || window() != reinterpret_cast<ANativeWindow*>(fake) ||
+                    value() != transform_seen || result() != 0) {
+                    dlclose(wrapped); dlclose(candidate); dlclose(library);
+                    return failure(env, "production callback differs from reference mapping");
+                }
+            }
             ++cases;
         }
     }
@@ -168,10 +195,27 @@ Java_dev_symbiosis_coreprobe_GraphicsProbeActivity_nativeRun(JNIEnv* env, jclass
     reference(0, 4);
     reference(-1, 4);
     if (op_seen != -1) { dlclose(library); return failure(env, "invalid pointer handling differed"); }
+    reset(1); wrappedTransform(0, 4); wrappedTransform(-1, 4);
+    if (calls() != 0) { dlclose(wrapped); dlclose(candidate); dlclose(library); return failure(env, "invalid bridge pointer handling differed"); }
     dlclose(library);
 
     ANativeWindow* nativeWindow = ANativeWindow_fromSurface(env, surface);
     if (!nativeWindow) return failure(env, "test surface unavailable");
+    // Invoke actual bridge (both normal and observationally wrapped builds)
+    // on the genuine Android Surface. Wrapper forwards to the public API and
+    // records its return, so success is not a fake API response.
+    const int inputs[] = {0, 4, 8, 16, 32, 64, 128, 256};
+    for (int input : inputs) {
+        reset(0);
+        wrappedTransform(reinterpret_cast<long>(nativeWindow), input);
+        if (calls() != 1 || window() != nativeWindow || value() != expected(input, true) || result() != 0) {
+            ANativeWindow_release(nativeWindow); dlclose(wrapped); dlclose(candidate);
+            return failure(env, "production transform rejected on Android surface");
+        }
+        productionTransform(reinterpret_cast<long>(nativeWindow), input);
+    }
+    __android_log_print(ANDROID_LOG_INFO, "SymGraphicsProbe", "PRODUCTION_TRANSFORM_REFERENCE_OK fake_cases=517 real_surface=8");
+    dlclose(wrapped); dlclose(candidate);
     for (int transform = 0; transform < 8; ++transform) {
         int rc = ANativeWindow_setBuffersTransform(nativeWindow, transform);
         if (rc != 0) {
