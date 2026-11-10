@@ -12,12 +12,13 @@ class DiagnosticLauncher : Activity() {
     override fun onCreate(state: Bundle?) {
         super.onCreate(state)
         try {
-            val game = File(filesDir, "swkbd-probe.nro")
+            val kind = intent.getStringExtra("test_kind").orEmpty()
+            val game = File(filesDir, if (kind == "graphics") "graphics-probe.nro" else "swkbd-probe.nro")
             check(game.isFile) { "missing test NRO" }
             val config = intent.getStringExtra("test_config").orEmpty()
             val intent = KenjiPlayerActivity.intent(this, game.absolutePath, "Keyboard test", config)
             startActivity(intent)
-            Log.i("PlayerRuntimeCI", "REAL_PLAYER_LAUNCH_REQUESTED config=$config")
+            Log.i("PlayerRuntimeCI", "REAL_PLAYER_LAUNCH_REQUESTED kind=$kind config=$config")
             finish()
         } catch (t: Throwable) {
             Log.e("PlayerRuntimeCI", "REAL_PLAYER_LAUNCH_FAILED", t)

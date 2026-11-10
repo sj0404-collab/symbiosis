@@ -90,10 +90,12 @@ case "$package" in *[!a-zA-Z0-9._]*|'') echo 'BAD_PACKAGE'; exit 1;; esac
 adb install -r "$W/player-debug.apk"
 adb push "$W/core_sym.so" /data/local/tmp/player-core.so >/dev/null
 adb push "$W/swkbd.nro" /data/local/tmp/player-swkb.nro >/dev/null
+adb push "$W/graphics.nro" /data/local/tmp/player-graphics.nro >/dev/null
 adb shell run-as "$package" mkdir -p files/engines
 adb shell run-as "$package" cp /data/local/tmp/player-core.so files/engines/libkenji.so
 adb shell run-as "$package" chmod 400 files/engines/libkenji.so
 adb shell run-as "$package" cp /data/local/tmp/player-swkb.nro files/swkbd-probe.nro
+adb shell run-as "$package" cp /data/local/tmp/player-graphics.nro files/graphics-probe.nro
 # Let the actual main app perform its normal initialization before asking its
 # real intent factory to capture Eden input settings. No intent data is faked.
 adb shell monkey -p "$package" -c android.intent.category.LAUNCHER 1 >/dev/null || true
@@ -184,3 +186,36 @@ for mode in 2 0 1; do
   [ "$parent_after" = "$main_pid" ] || { echo "PLAYER_MAIN_PROCESS_CHANGED mode=$mode"; exit 1; }
   echo "PLAYER_REAL_UI_AND_EXIT_OK mode=$mode" | tee -a "$W/redroid-status.txt"
 done
+
+# Real player + self-authored modern SDL frame. Callback instrumentation is
+# inserted only in the disposable debug tree; callbacks remain unimplemented.
+echo 'PLAYER_GRAPHICS_ATTEMPT'
+adb shell am start -W -n "$package/dev.symbiosis.playerruntime.DiagnosticLauncher" \
+  --es test_config 'memory=2' --es test_kind graphics | tee "$W/player-launch-graphics.txt"
+player_pid=$(adb shell pidof "$package:kenji" | tr -d '\r' || true)
+[ -n "$player_pid" ] || { echo 'GRAPHICS_PLAYER_NOT_RUNNING'; exit 1; }
+[ "$(adb shell pidof "$package" | tr -d '\r' || true)" = "$main_pid" ] || { echo 'GRAPHICS_PARENT_CHANGED'; exit 1; }
+wait_log 'SDL_SURFACE_PRESENT_OK frame=0' || { echo 'GRAPHICS_GUEST_NO_FIRST_PRESENT'; exit 1; }
+frame_ok=0
+for attempt in 1 2 3 4 5; do
+  adb exec-out screencap -p > "$W/player-frame-$attempt.png"
+  if python3 tests/player_runtime_probe/check_frame.py "$W/player-frame-$attempt.png" | tee -a "$W/redroid-status.txt"; then
+    frame_ok=1; break
+  fi
+  sleep 1
+done
+[ "$frame_ok" = 1 ] || { echo 'GRAPHICS_BLUE_FRAME_NOT_VISIBLE'; exit 1; }
+wait_log 'SDL_SURFACE_PRESENT_OK frame=59' || { echo 'GRAPHICS_GUEST_NO_SECOND_PRESENT'; exit 1; }
+! app_crashed || { echo 'GRAPHICS_PLAYER_FATAL'; exit 1; }
+# Callback absence is reported, not invented or made a pass requirement.
+grep -E "^[0-9-]+ +[0-9:.]+ +$player_pid +[0-9]+ .*CI_ONLY_GRAPHICS" "$log" | tee -a "$W/redroid-status.txt" || true
+click_text 'Выйти' || { echo 'GRAPHICS_EXIT_BUTTON_NOT_VISIBLE'; exit 1; }
+for ((n=0;n<45;n++)); do
+  pid=$(adb shell pidof "$package:kenji" | tr -d '\r' || true)
+  [ -z "$pid" ] && break
+  sleep 1
+done
+[ -z "${pid:-}" ] || { echo 'GRAPHICS_PLAYER_EXIT_STILL_ALIVE'; exit 1; }
+! app_crashed || { echo 'GRAPHICS_PLAYER_EXIT_FATAL'; exit 1; }
+[ "$(adb shell pidof "$package" | tr -d '\r' || true)" = "$main_pid" ] || { echo 'GRAPHICS_PARENT_DIED'; exit 1; }
+echo 'GRAPHICS_VISIBLE_FRAME_AND_EXIT_OK' | tee -a "$W/redroid-status.txt"

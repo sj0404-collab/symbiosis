@@ -61,6 +61,8 @@ jobs:
         run: |
           set -euo pipefail
           bash fork/tools/apply_patch.sh --patch "$GITHUB_WORKSPACE/fork/patch" --eden "$GITHUB_WORKSPACE/eden"
+          # Observe current no-op graphics callbacks in the disposable tree only.
+          python3 fork/tests/player_runtime_probe/instrument_graphics.py eden/src/android/app/src/main/jni/symbiosis_kenji_bridge.cpp
           test ! -e eden/src/android/app/src/debug/AndroidManifest.xml
           mkdir -p eden/src/android/app/src/debug/java/dev/symbiosis/playerruntime
           cp fork/tests/player_runtime_probe/AndroidManifest.xml eden/src/android/app/src/debug/AndroidManifest.xml
@@ -95,6 +97,7 @@ jobs:
             /tmp/player-runtime/package.txt
             /tmp/player-runtime/core_sym.so
             /tmp/player-runtime/swkbd.nro
+            /tmp/player-runtime/graphics.nro
           if-no-files-found: error
           retention-days: 1
 
@@ -116,7 +119,7 @@ jobs:
       - name: Install authentic adb
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y --no-install-recommends adb
+          sudo apt-get install -y --no-install-recommends adb python3-pil
       - name: Run actual player and its dialog in Android ARM
         run: bash tests/player_runtime_probe/run.sh
       - name: Preserve logs only, never diagnostic APK or core
@@ -128,5 +131,6 @@ jobs:
             /tmp/player-runtime/redroid-*.txt
             /tmp/player-runtime/player-*.txt
             /tmp/player-runtime/player-ui.xml
+            /tmp/player-runtime/player-frame-*.png
           if-no-files-found: warn
           retention-days: 3

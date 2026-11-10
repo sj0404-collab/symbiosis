@@ -17,6 +17,10 @@ static void logline(const char *fmt, ...) {
     svcOutputDebugString(buf, size);
 }
 
+#ifndef SDL_DIAGNOSTIC_FRAMES
+#define SDL_DIAGNOSTIC_FRAMES 180
+#endif
+
 int main(int argc, char **argv) {
     (void)argc; (void)argv;
     SDL_version version;
@@ -34,7 +38,7 @@ int main(int argc, char **argv) {
     SDL_Surface *surface = SDL_GetWindowSurface(w);
     if (!surface) { logline("SDL_SURFACE_FAIL get=%s", SDL_GetError()); SDL_DestroyWindow(w); SDL_Quit(); return 1; }
     logline("SDL_SURFACE_GET_OK width=%d height=%d pitch=%d", surface->w, surface->h, surface->pitch);
-    for (int frame = 0; frame < 180 && appletMainLoop(); ++frame) {
+    for (int frame = 0; frame < SDL_DIAGNOSTIC_FRAMES && appletMainLoop(); ++frame) {
         Uint32 color = SDL_MapRGBA(surface->format, (frame / 60) % 2 ? 20 : 36, 110, 190, 255);
         if (SDL_FillRect(surface, NULL, color) < 0) {
             logline("SDL_SURFACE_FAIL fill=%s", SDL_GetError()); break;
