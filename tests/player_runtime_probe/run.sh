@@ -113,7 +113,8 @@ app_crashed() {
 wait_log() {
   local pattern=$1
   for ((n=0;n<90;n++)); do
-    grep -E "^[0-9-]+ +[0-9:.]+ +$player_pid +[0-9]+ " "$log" | grep -qE "$pattern" && return 0
+    # One grep avoids SIGPIPE from grep -q under pipefail on verbose logcat.
+    grep -qE "^[0-9-]+ +[0-9:.]+ +$player_pid +[0-9]+ .*$pattern" "$log" && return 0
     app_crashed && return 1
     sleep 1
   done

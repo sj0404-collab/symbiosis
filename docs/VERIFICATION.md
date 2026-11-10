@@ -6039,3 +6039,9 @@ launcher, не релиз; реальные телефон, игра, Eden, по
 на свежей установке, а `monkey` не нашёл launcher-активность; собственный CI-only
 launcher ещё не был вызван. Это ошибка тестового скрипта, не результат ядра.
 [Логи](https://github.com/sj0404-collab/symbiosis/actions/runs/42793483676/artifacts/13751963508).
+
+[Run 42794826012](https://github.com/sj0404-collab/symbiosis/actions/runs/42794826012),
+`679fb4a`: host tests и debug build success. Режим 2 реально дошёл до `Seed`,
+отмены `0x5d59` и `SWKBD_GUEST_DONE`, но runtime job ошибочно сообщил таймаут:
+два `grep` в pipeline с `pipefail` дали SIGPIPE после найденной строки в длинном
+logcat. Режимы 0/1 и перезапуск этот run не проверил. [Логи](https://github.com/sj0404-collab/symbiosis/actions/runs/42794826012/artifacts/13754635590).
