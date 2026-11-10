@@ -1,6 +1,6 @@
 name: Compile real Kenji player (diagnostic, no APK)
 on:
-  workflow_dispatch:
+  workflow_call:
 permissions:
   contents: read
 jobs:

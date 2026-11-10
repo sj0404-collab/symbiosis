@@ -30,6 +30,10 @@ on:
         description: "Try community-built ARM-host Android emulator in software mode (no release)"
         type: boolean
         default: false
+      run_player_compile:
+        description: "Compile real patched app Kotlin without assembling or releasing an APK"
+        type: boolean
+        default: false
       run_redroid_probe:
         description: "Test real Android ARM container and disposable harness (no release)"
         type: boolean
@@ -291,3 +295,8 @@ jobs:
   arm-redroid-probe:
     if: github.event_name == 'workflow_dispatch' && inputs.run_redroid_probe == true
     uses: ./.github/workflows/arm-redroid-probe.yml
+
+  # Compile the real patched app only; no APK, no publication, guard unchanged.
+  kenji-player-compile:
+    if: github.event_name == 'workflow_dispatch' && inputs.run_player_compile == true
+    uses: ./.github/workflows/kenji-player-compile.yml
