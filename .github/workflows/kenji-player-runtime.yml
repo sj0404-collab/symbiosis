@@ -5,6 +5,9 @@ on:
       tls_candidate:
         type: boolean
         default: false
+      compare_space:
+        type: boolean
+        default: false
 permissions:
   contents: read
 jobs:
@@ -79,6 +82,9 @@ jobs:
             python3 fork/tests/player_runtime_probe/instrument_tls.py eden/src/android/app/src/main/jni/symbiosis_kenji_bridge.cpp
           fi
           python3 fork/tests/player_runtime_probe/instrument_stop_race.py eden/src/android/app/src/main/java/org/yuzu/yuzu_emu/activities/KenjiPlayerActivity.kt
+          if [ "${{ inputs.compare_space }}" = true ]; then
+            python3 fork/tests/player_runtime_probe/instrument_core_space.py eden/src/android/app/src/main/java/org/yuzu/yuzu_emu/utils/EngineLoader.kt
+          fi
           python3 fork/tests/player_runtime_probe/instrument_overlay.py eden/src/android/app/src/main/java/org/yuzu/yuzu_emu/overlay/InputOverlay.kt
           python3 fork/tests/player_runtime_probe/instrument_shader_config.py eden/src/android/app/src/main/java/org/yuzu/yuzu_emu/utils/KenjiBridge.kt
           test ! -e eden/src/android/app/src/debug/AndroidManifest.xml
@@ -115,6 +121,13 @@ jobs:
           test -s "$PLAY_WORK/package.txt"
           curl -fsSL --retry 3 -o "$PLAY_WORK/core_sym.so" https://github.com/sj0404-collab/symbiosis/releases/download/engine-kenji/libkenji.so
           echo "969431b3962408dd02ce38bd2cd4b2a954d11e5212ddef3f65c80a0b419918b8  $PLAY_WORK/core_sym.so" | sha256sum -c -
+          if [ "${{ inputs.compare_space }}" = true ]; then
+            curl -fsSL --retry 3 -o "$PLAY_WORK/reference.apk" https://github.com/sj0404-collab/SymbEK/releases/download/v1.0.121/Kenji-Space-1.0.121.apk
+            echo "f9eb3ecfaf5700df1b5d575984ab1588848c0eb6a70b2acb19b9e6243705f95e  $PLAY_WORK/reference.apk" | sha256sum -c -
+            unzip -p "$PLAY_WORK/reference.apk" lib/arm64-v8a/libkenjinx.so > "$PLAY_WORK/core_space.so"
+            echo "d781048671e4cef1cde2ec15db8fe29b949df9949d83569ceaf776ad12901590  $PLAY_WORK/core_space.so" | sha256sum -c -
+            rm "$PLAY_WORK/reference.apk"
+          fi
           bash tests/player_runtime_probe/build_nro.sh
       - name: Audit actual debug APK ELF and ZIP alignment
         if: inputs.tls_candidate
@@ -130,6 +143,7 @@ jobs:
             /tmp/player-runtime/player-debug.apk
             /tmp/player-runtime/package.txt
             /tmp/player-runtime/core_sym.so
+            /tmp/player-runtime/core_space.so
             /tmp/player-runtime/swkbd.nro
             /tmp/player-runtime/graphics.nro
             /tmp/player-runtime/shader.nro
@@ -146,6 +160,7 @@ jobs:
       PLAY_WORK: /tmp/player-runtime
       ANDROID_SERIAL: 127.0.0.1:5558
       PLAYER_EXPECT_TLS_CANDIDATE: ${{ inputs.tls_candidate && '1' || '0' }}
+      PLAYER_COMPARE_SPACE: ${{ inputs.compare_space && '1' || '0' }}
     steps:
       - uses: actions/checkout@v4
         with:

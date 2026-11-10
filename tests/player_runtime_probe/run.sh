@@ -92,6 +92,9 @@ package=$(cat "$W/package.txt")
 case "$package" in *[!a-zA-Z0-9._]*|'') echo 'BAD_PACKAGE'; exit 1;; esac
 adb install -r "$W/player-debug.apk"
 adb push "$W/core_sym.so" /data/local/tmp/player-core.so >/dev/null
+if [ "${PLAYER_COMPARE_SPACE:-0}" = 1 ]; then
+  adb push "$W/core_space.so" /data/local/tmp/player-space.so >/dev/null
+fi
 adb push "$W/swkbd.nro" /data/local/tmp/player-swkb.nro >/dev/null
 adb push "$W/graphics.nro" /data/local/tmp/player-graphics.nro >/dev/null
 adb push "$W/shader.nro" /data/local/tmp/player-shader.nro >/dev/null
@@ -264,8 +267,19 @@ lock_probe() {
   done
   echo "PLAYER_CROSS_PROCESS_LOCK_MISMATCH expected=$want"; return 1
 }
+for core in sym space; do
+  if [ "$core" = space ]; then
+    [ "${PLAYER_COMPARE_SPACE:-0}" = 1 ] || break
+    [ -z "$(adb shell pidof "$package:kenji" | tr -d '\r' || true)" ] || { echo 'CORE_SWAP_WHILE_RUNNING'; exit 1; }
+    adb shell run-as "$package" rm files/engines/libkenji.so
+    adb shell run-as "$package" cp /data/local/tmp/player-space.so files/engines/libkenji.so
+    adb shell run-as "$package" chmod 400 files/engines/libkenji.so
+    hash=$(adb exec-out run-as "$package" cat files/engines/libkenji.so | sha256sum | cut -d' ' -f1)
+    [ "$hash" = d781048671e4cef1cde2ec15db8fe29b949df9949d83569ceaf776ad12901590 ] || { echo 'SPACE_CORE_HASH_MISMATCH'; exit 1; }
+    echo "PLAYER_TEST_CORE space sha256=$hash" | tee -a "$W/redroid-status.txt"
+  else echo 'PLAYER_TEST_CORE sym sha256=969431b3962408dd02ce38bd2cd4b2a954d11e5212ddef3f65c80a0b419918b8' | tee -a "$W/redroid-status.txt"; fi
 for delay in false true; do
-  echo "PLAYER_PENDING_UI_STOP_ATTEMPT delay=$delay"
+  echo "PLAYER_PENDING_UI_STOP_ATTEMPT core=$core delay=$delay"
   adb shell am start -W -n "$package/dev.symbiosis.playerruntime.DiagnosticLauncher" \
     --es test_config 'memory=2' --ez ci_test_stop_probe true --ez ci_delay_cancel "$delay" \
     | tee "$W/player-stop-launch-$delay.txt"
@@ -292,8 +306,19 @@ for delay in false true; do
   [ "$(adb shell pidof "$package" | tr -d '\r' || true)" = "$main_pid" ] || { echo 'STOP_PARENT_CHANGED'; exit 1; }
   python3 tests/player_runtime_probe/check_stop_order.py "$log" "$player_pid" "$delay" | tee -a "$W/redroid-status.txt"
   lock_probe acquired
-  echo "PLAYER_PENDING_UI_STOP_AND_LOCK_OK delay=$delay" | tee -a "$W/redroid-status.txt"
+  echo "PLAYER_PENDING_UI_STOP_AND_LOCK_OK core=$core delay=$delay" | tee -a "$W/redroid-status.txt"
 done
+done
+# Restore the production-pinned core before the subsequent graphics tests.
+if [ "${PLAYER_COMPARE_SPACE:-0}" = 1 ]; then
+  [ -z "$(adb shell pidof "$package:kenji" | tr -d '\r' || true)" ] || { echo 'CORE_RESTORE_WHILE_RUNNING'; exit 1; }
+  adb shell run-as "$package" rm files/engines/libkenji.so
+  adb shell run-as "$package" cp /data/local/tmp/player-core.so files/engines/libkenji.so
+  adb shell run-as "$package" chmod 400 files/engines/libkenji.so
+  hash=$(adb exec-out run-as "$package" cat files/engines/libkenji.so | sha256sum | cut -d' ' -f1)
+  [ "$hash" = 969431b3962408dd02ce38bd2cd4b2a954d11e5212ddef3f65c80a0b419918b8 ] || { echo 'SYM_CORE_RESTORE_MISMATCH'; exit 1; }
+  echo 'PLAYER_TEST_CORE_SYM_RESTORED' | tee -a "$W/redroid-status.txt"
+fi
 
 # Real player + self-authored modern SDL frame. Callback instrumentation is
 # inserted only in the disposable debug tree; logging itself proves no semantics.

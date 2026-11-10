@@ -19,6 +19,17 @@ class PlayerStopObserverTest(unittest.TestCase):
                 self.assertIn(name, text)
             self.assertNotIn('CI_STOP_RECEIVER_READY', (ROOT / 'patch/android/activities/KenjiPlayerActivity.kt').read_text())
 
+    def test_space_pin_only_in_disposable_copy(self):
+        with tempfile.TemporaryDirectory() as d:
+            source = Path(d) / 'EngineLoader.kt'
+            original = ROOT / 'patch/android/utils/EngineLoader.kt'
+            source.write_bytes(original.read_bytes())
+            subprocess.run([sys.executable, str(ROOT / 'tests/player_runtime_probe/instrument_core_space.py'), str(source)], check=True)
+            digest = 'd781048671e4cef1cde2ec15db8fe29b949df9949d83569ceaf776ad12901590'
+            self.assertIn(digest, source.read_text())
+            self.assertNotIn(digest, original.read_text())
+            self.assertIn('!got.equals(want, ignoreCase = true)', source.read_text())
+
     def test_order_fails_if_close_precedes_reply(self):
         script = ROOT / 'tests/player_runtime_probe/check_stop_order.py'
         events = ['CI_UI_PRESENTED type=2', 'CI_STOP_TRIGGERED', 'CI_STOP_REQUESTED',
