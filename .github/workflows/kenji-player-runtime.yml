@@ -1,6 +1,10 @@
 name: Real-player ARM Android diagnostic (never release)
 on:
   workflow_call:
+    inputs:
+      tls_candidate:
+        type: boolean
+        default: false
 permissions:
   contents: read
 jobs:
@@ -57,12 +61,23 @@ jobs:
           test -n "$SO"
           cp "$SO" fork/patch/libs/arm64-v8a/libopenal.so
           sha256sum "$SO"
+      - name: Build supported TLS candidate for disposable player only
+        if: inputs.tls_candidate
+        run: |
+          set -euo pipefail
+          mkdir -p "$PLAY_WORK"
+          STANDALONE_WORK="$PLAY_WORK" bash fork/tests/standalone_core_probe/build_tls_candidate.sh
+          cp "$PLAY_WORK/tls-candidate/libcrypto.so" "$PLAY_WORK/tls-candidate/libssl.so" fork/patch/libs/arm64-v8a/
+          echo 'TEST_ONLY_OPENSSL_CANDIDATE_IN_DEBUG_TREE'
       - name: Apply real production sources and add CI-only launcher
         run: |
           set -euo pipefail
           bash fork/tools/apply_patch.sh --patch "$GITHUB_WORKSPACE/fork/patch" --eden "$GITHUB_WORKSPACE/eden"
           # Observe real graphics callback calls in the disposable debug tree only.
           python3 fork/tests/player_runtime_probe/instrument_graphics.py eden/src/android/app/src/main/jni/symbiosis_kenji_bridge.cpp
+          if [ "${{ inputs.tls_candidate }}" = true ]; then
+            python3 fork/tests/player_runtime_probe/instrument_tls.py eden/src/android/app/src/main/jni/symbiosis_kenji_bridge.cpp
+          fi
           python3 fork/tests/player_runtime_probe/instrument_overlay.py eden/src/android/app/src/main/java/org/yuzu/yuzu_emu/overlay/InputOverlay.kt
           python3 fork/tests/player_runtime_probe/instrument_shader_config.py eden/src/android/app/src/main/java/org/yuzu/yuzu_emu/utils/KenjiBridge.kt
           test ! -e eden/src/android/app/src/debug/AndroidManifest.xml
@@ -91,6 +106,13 @@ jobs:
           curl -fsSL --retry 3 -o "$PLAY_WORK/core_sym.so" https://github.com/sj0404-collab/symbiosis/releases/download/engine-kenji/libkenji.so
           echo "969431b3962408dd02ce38bd2cd4b2a954d11e5212ddef3f65c80a0b419918b8  $PLAY_WORK/core_sym.so" | sha256sum -c -
           bash tests/player_runtime_probe/build_nro.sh
+      - name: Audit actual debug APK ELF and ZIP alignment
+        if: inputs.tls_candidate
+        working-directory: fork
+        run: |
+          set -euo pipefail
+          python3 tests/player_runtime_probe/audit_apk_16k.py "$PLAY_WORK/player-debug.apk" | tee "$PLAY_WORK/apk-16k-audit.txt"
+          "$ANDROID_HOME/build-tools/35.0.0/zipalign" -c -P 16 -v 4 "$PLAY_WORK/player-debug.apk" > "$PLAY_WORK/zipalign-16k.txt" 2>&1 || echo 'APK_ZIPALIGN_16K_NOT_VERIFIED (see audit)'
       - uses: actions/upload-artifact@v4
         with:
           name: disposable-player-runtime-not-release
@@ -101,6 +123,8 @@ jobs:
             /tmp/player-runtime/swkbd.nro
             /tmp/player-runtime/graphics.nro
             /tmp/player-runtime/shader.nro
+            /tmp/player-runtime/apk-16k-audit.txt
+            /tmp/player-runtime/zipalign-16k.txt
           if-no-files-found: error
           retention-days: 1
 
@@ -111,6 +135,7 @@ jobs:
     env:
       PLAY_WORK: /tmp/player-runtime
       ANDROID_SERIAL: 127.0.0.1:5558
+      PLAYER_EXPECT_TLS_CANDIDATE: ${{ inputs.tls_candidate && '1' || '0' }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -137,5 +162,7 @@ jobs:
             /tmp/player-runtime/player-frame-*.png
             /tmp/player-runtime/shader-frame-*.png
             /tmp/player-runtime/shader-*.txt
+            /tmp/player-runtime/apk-16k-audit.txt
+            /tmp/player-runtime/zipalign-16k.txt
           if-no-files-found: warn
           retention-days: 3

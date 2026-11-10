@@ -34,6 +34,10 @@ on:
         description: "Build and run disposable actual player on ARM Android (not release)"
         type: boolean
         default: false
+      run_player_tls_candidate:
+        description: "Use test-only OpenSSL 3.5 in disposable player (not a release)"
+        type: boolean
+        default: false
       run_player_compile:
         description: "Compile real patched app Kotlin without assembling or releasing an APK"
         type: boolean
@@ -138,6 +142,7 @@ jobs:
           python3 fork/tests/test_standalone_core_probe.py
           python3 fork/tests/test_standalone_tls_jni.py
           python3 fork/tests/test_standalone_tls_handshake.py
+          python3 fork/tests/test_player_tls_audit.py
           python3 fork/tests/test_standalone_gpt.py
           python3 fork/tests/test_standalone_log_capture.py
           python3 fork/tests/test_standalone_property_init.py
@@ -309,3 +314,5 @@ jobs:
   kenji-player-runtime:
     if: github.event_name == 'workflow_dispatch' && inputs.run_player_runtime == true
     uses: ./.github/workflows/kenji-player-runtime.yml
+    with:
+      tls_candidate: ${{ inputs.run_player_tls_candidate == true }}

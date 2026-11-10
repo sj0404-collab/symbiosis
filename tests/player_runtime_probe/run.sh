@@ -191,6 +191,13 @@ for mode in 2 0 1; do
   [ "$this_main" = "$main_pid" ] || { echo "PLAYER_MAIN_PROCESS_CHANGED mode=$mode"; exit 1; }
   [ -n "$player_pid" ] || { echo "PLAYER_PROCESS_NOT_RUNNING mode=$mode"; exit 1; }
   printf 'PLAYER_PID=%s MAIN_PID=%s MODE=%s\n' "$player_pid" "$main_pid" "$mode" | tee -a "$W/redroid-status.txt"
+  if [ "${PLAYER_EXPECT_TLS_CANDIDATE:-0}" = 1 ]; then
+    wait_log 'CI_ONLY_TLS_OPENSSL_VERSION=0x3050009[0-9a-f] .*libcrypto.so' || {
+      echo "PLAYER_CANDIDATE_OPENSSL_NOT_OBSERVED mode=$mode"; exit 1;
+    }
+    grep -E "^[0-9-]+ +[0-9:.]+ +$player_pid +[0-9]+ .*CI_ONLY_TLS_OPENSSL_VERSION=" "$log" | tee -a "$W/redroid-status.txt"
+    echo "PLAYER_CANDIDATE_OPENSSL_LOADED mode=$mode (not proof of .NET TLS usage)" | tee -a "$W/redroid-status.txt"
+  fi
   wait_log 'SWKBD_SHOW_BEGIN' || { echo "PLAYER_NO_KEYBOARD_BEGIN mode=$mode"; exit 1; }
   clicked=0
   for ((n=0;n<20;n++)); do
