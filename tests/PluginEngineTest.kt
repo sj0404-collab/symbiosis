@@ -103,12 +103,12 @@ fun main() {
 
     // ── 2. загрузка плагина ────────────────────────────────────────────
     val simple = PluginApi.load(
-        plugin(rules = """{"type":"setting","when":{"ext":"nsz"},"set":{"memory":"3"}}"""),
+        plugin(rules = """{"type":"setting","when":{"ext":"nsz"},"set":{"memory":"1"}}"""),
         "simple.json"
     )
     eq("плагин разобран", simple.id, "test")
     eq("правило одно", simple.rules.size, 1)
-    check("условие описано словами", simple.rules[0].describe().contains("memory=3"), simple.rules[0].describe())
+    check("условие описано словами", simple.rules[0].describe().contains("memory=1"), simple.rules[0].describe())
 
     throwsWith("нет схемы — понятная ошибка", "schema") {
         PluginApi.load("""{"id":"x","rules":[]}""")
@@ -232,14 +232,14 @@ fun main() {
         "a.json"
     )
     val second = PluginApi.load(
-        plugin(id = "zzz-second", priority = 90, rules = """{"type":"setting","set":{"memory":"3"}}"""),
+        plugin(id = "zzz-second", priority = 90, rules = """{"type":"setting","set":{"memory":"1"}}"""),
         "b.json"
     )
-    eq("выигрывает больший приоритет", PluginEngine.decide(listOf(first, second), ctxMali8).settings["memory"], "3")
+    eq("выигрывает больший приоритет", PluginEngine.decide(listOf(first, second), ctxMali8).settings["memory"], "1")
     eq(
         "порядок списка не влияет",
         PluginEngine.decide(listOf(second, first), ctxMali8).settings["memory"],
-        "3"
+        "1"
     )
 
     val a1 = PluginApi.load(
@@ -276,6 +276,12 @@ fun main() {
     eq("конфликт ядер замечен", conflicts.size, 1)
     check("в конфликте назван победитель", conflicts[0].contains("Победит k2"), conflicts[0])
     eq("решение по конфликту — больший приоритет", PluginEngine.decide(listOf(k1, k2), ctxMali8).core, EngineHybrid.Core.KENJI)
+
+    // Invalid manager mode must be rejected when a plugin is loaded.
+    val rejectedMode = runCatching {
+        PluginApi.load(plugin(rules = """{"type":"setting","set":{"memory":"3"}}"""))
+    }.exceptionOrNull()
+    check("плагин с недопустимым режимом 3 отклонён", rejectedMode is PluginApi.LoadError)
 
     // ── 5. патч конфига ────────────────────────────────────────────────
     val base = EngineHybrid.KenjiConfig(memoryManagerMode = 2, resScale = 1f, maxAnisotropy = 8f)
