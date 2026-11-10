@@ -14,9 +14,10 @@ class DiagnosticLauncher : Activity() {
         try {
             val game = File(filesDir, "swkbd-probe.nro")
             check(game.isFile) { "missing test NRO" }
-            val intent = KenjiPlayerActivity.intent(this, game.absolutePath, "Keyboard test")
+            val config = intent.getStringExtra("test_config").orEmpty()
+            val intent = KenjiPlayerActivity.intent(this, game.absolutePath, "Keyboard test", config)
             startActivity(intent)
-            Log.i("PlayerRuntimeCI", "REAL_PLAYER_LAUNCH_REQUESTED")
+            Log.i("PlayerRuntimeCI", "REAL_PLAYER_LAUNCH_REQUESTED config=$config")
             finish()
         } catch (t: Throwable) {
             Log.e("PlayerRuntimeCI", "REAL_PLAYER_LAUNCH_FAILED", t)

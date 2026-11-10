@@ -6020,3 +6020,15 @@ Ryujinx перечисляют три алгоритма (0–2); идентич
 Отдельно тест ошибочно завершил ожидание из-за не относящегося к приложению
 SIGABRT службы Bluetooth Redroid; фильтр PID исправлен. Диалог не достигнут,
 ошибка 710 не воспроизведена. [Логи](https://github.com/sj0404-collab/symbiosis/actions/runs/42790343020/artifacts/13751454115).
+
+[Run 42791971087](https://github.com/sj0404-collab/symbiosis/actions/runs/42791971087),
+`3c15755`: после исправления режима памяти настоящий `KenjiPlayerActivity`,
+производственный JNI и скачанный Symbiosis core на ARM Redroid 15 запустили
+самописный NRO. Через Android touch в реальном окне подтверждён первый ввод:
+гость получил `Seed`, hex `53656564`; во втором окне гость получил отмену
+`0x5d59` и дошёл до `SWKBD_GUEST_DONE`. Кнопка «Выйти» закрыла процесс
+`:kenji` (`PLAYER_REAL_UI_AND_EXIT_OK`). Это diagnostic debug APK с CI-only
+launcher, не релиз; реальные телефон, игра, Eden, повтор запуска, долгий сеанс
+и ошибка 710 не проверены. Build и Android job success, общий workflow failed:
+тест плагинов ещё ожидал неверный режим 3; обновлён отдельно в `a25cbfa`.
+[Логи](https://github.com/sj0404-collab/symbiosis/actions/runs/42791971087/artifacts/13751966801).

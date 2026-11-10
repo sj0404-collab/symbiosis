@@ -98,23 +98,21 @@ adb shell run-as "$package" cp /data/local/tmp/player-swkb.nro files/swkbd-probe
 # real intent factory to capture Eden input settings. No intent data is faked.
 adb shell monkey -p "$package" -c android.intent.category.LAUNCHER 1 >/dev/null || true
 sleep 10
-adb shell am start -W -n "$package/dev.symbiosis.playerruntime.DiagnosticLauncher" | tee "$W/player-launch.txt"
 log="$W/player-logcat.txt"
-player_pid=$(adb shell pidof "$package:kenji" | tr -d '\r' || true)
-main_pid=$(adb shell pidof "$package" | tr -d '\r' || true)
-[ -n "$player_pid" ] || { echo 'PLAYER_PROCESS_NOT_RUNNING'; exit 1; }
-printf 'PLAYER_PID=%s MAIN_PID=%s\n' "$player_pid" "$main_pid" | tee -a "$W/redroid-status.txt"
-app_crashed() {
-  grep -qE "Fatal signal.*pid $player_pid( |\))|^[0-9-]+ +[0-9:.]+ +$player_pid +[0-9]+ [FE] .*FATAL EXCEPTION|REAL_PLAYER_LAUNCH_FAILED" "$log"
-}
 # A durable snapshot of system logs, without clearing any existing core log.
 adb logcat -v threadtime > "$log" 2>&1 &
 logpid=$!
 trap 'kill "$logpid" 2>/dev/null || true; cleanup' EXIT
+main_pid=$(adb shell pidof "$package" | tr -d '\r' || true)
+[ -n "$main_pid" ] || { echo 'PLAYER_MAIN_PROCESS_NOT_RUNNING'; exit 1; }
+player_pid=''
+app_crashed() {
+  [ -n "$player_pid" ] && grep -qE "Fatal signal.*pid $player_pid( |\))|^[0-9-]+ +[0-9:.]+ +$player_pid +[0-9]+ [FE] .*FATAL EXCEPTION" "$log"
+}
 wait_log() {
   local pattern=$1
   for ((n=0;n<90;n++)); do
-    grep -qE "$pattern" "$log" && return 0
+    grep -E "^[0-9-]+ +[0-9:.]+ +$player_pid +[0-9]+ " "$log" | grep -qE "$pattern" && return 0
     app_crashed && return 1
     sleep 1
   done
@@ -140,31 +138,43 @@ PY
   )
   adb shell input tap $coords
 }
-wait_log 'SWKBD_SHOW_BEGIN' || { echo 'PLAYER_NO_KEYBOARD_BEGIN'; exit 1; }
-# The actual dialog may arrive just after the guest marker.
-clicked=0
-for ((n=0;n<20;n++)); do
-  if click_text 'ОК' || click_text 'OK'; then clicked=1; break; fi
-  sleep 1
+# Three isolated sessions exercise the real player and prove that the same
+# main process can launch again after the previous :kenji process has exited.
+# Mode 2 is the normal default; 0/1 are explicit real config values, not
+# asserted equivalent to the related upstream enum without binary evidence.
+for mode in 2 0 1; do
+  echo "PLAYER_ATTEMPT mode=$mode"
+  adb shell am start -W -n "$package/dev.symbiosis.playerruntime.DiagnosticLauncher" \
+    --es test_config "memory=$mode" | tee "$W/player-launch-$mode.txt"
+  player_pid=$(adb shell pidof "$package:kenji" | tr -d '\r' || true)
+  [ -n "$player_pid" ] || { echo "PLAYER_PROCESS_NOT_RUNNING mode=$mode"; exit 1; }
+  printf 'PLAYER_PID=%s MAIN_PID=%s MODE=%s\n' "$player_pid" "$main_pid" "$mode" | tee -a "$W/redroid-status.txt"
+  wait_log 'SWKBD_SHOW_BEGIN' || { echo "PLAYER_NO_KEYBOARD_BEGIN mode=$mode"; exit 1; }
+  clicked=0
+  for ((n=0;n<20;n++)); do
+    if click_text 'ОК' || click_text 'OK'; then clicked=1; break; fi
+    sleep 1
+  done
+  [ "$clicked" = 1 ] || { echo "PLAYER_KEYBOARD_NOT_VISIBLE mode=$mode"; exit 1; }
+  wait_log 'SWKBD_SECOND_BEGIN' || { echo "PLAYER_FIRST_ANSWER_NOT_RECEIVED mode=$mode"; exit 1; }
+  clicked=0
+  for ((n=0;n<20;n++)); do
+    if click_text 'Отмена' || click_text 'Cancel'; then clicked=1; break; fi
+    sleep 1
+  done
+  [ "$clicked" = 1 ] || { echo "PLAYER_SECOND_KEYBOARD_NOT_VISIBLE mode=$mode"; exit 1; }
+  wait_log 'SWKBD_GUEST_DONE' || { echo "PLAYER_GUEST_DID_NOT_COMPLETE mode=$mode"; exit 1; }
+  wait_log 'SWKBD_SHOW_RETURN rc=0x00000000 .*text=Seed' || { echo "PLAYER_FIRST_ANSWER_WRONG mode=$mode"; exit 1; }
+  wait_log 'SWKBD_SECOND_RETURN .*cancel_match=1' || { echo "PLAYER_CANCEL_WRONG mode=$mode"; exit 1; }
+  click_text 'Выйти' || { echo "PLAYER_EXIT_BUTTON_NOT_VISIBLE mode=$mode"; exit 1; }
+  for ((n=0;n<45;n++)); do
+    pid=$(adb shell pidof "$package:kenji" | tr -d '\r' || true)
+    [ -z "$pid" ] && break
+    sleep 1
+  done
+  [ -z "${pid:-}" ] || { echo "PLAYER_EXIT_PROCESS_STILL_ALIVE mode=$mode"; exit 1; }
+  ! app_crashed || { echo "PLAYER_FATAL_OBSERVED mode=$mode"; exit 1; }
+  parent_after=$(adb shell pidof "$package" | tr -d '\r' || true)
+  [ "$parent_after" = "$main_pid" ] || { echo "PLAYER_MAIN_PROCESS_CHANGED mode=$mode"; exit 1; }
+  echo "PLAYER_REAL_UI_AND_EXIT_OK mode=$mode" | tee -a "$W/redroid-status.txt"
 done
-[ "$clicked" = 1 ] || { echo 'PLAYER_KEYBOARD_NOT_VISIBLE'; exit 1; }
-wait_log 'SWKBD_SECOND_BEGIN' || { echo 'PLAYER_FIRST_ANSWER_NOT_RECEIVED'; exit 1; }
-clicked=0
-for ((n=0;n<20;n++)); do
-  if click_text 'Отмена' || click_text 'Cancel'; then clicked=1; break; fi
-  sleep 1
-done
-[ "$clicked" = 1 ] || { echo 'PLAYER_SECOND_KEYBOARD_NOT_VISIBLE'; exit 1; }
-wait_log 'SWKBD_GUEST_DONE' || { echo 'PLAYER_GUEST_DID_NOT_COMPLETE'; exit 1; }
-grep -qE 'SWKBD_SHOW_RETURN rc=0x00000000 .*text=Seed' "$log" || { echo 'PLAYER_FIRST_ANSWER_WRONG'; exit 1; }
-grep -qE 'SWKBD_SECOND_RETURN .*cancel_match=1' "$log" || { echo 'PLAYER_CANCEL_WRONG'; exit 1; }
-# Exercise the real Exit button and verify :kenji process disappears.
-click_text 'Выйти' || { echo 'PLAYER_EXIT_BUTTON_NOT_VISIBLE'; exit 1; }
-for ((n=0;n<45;n++)); do
-  pid=$(adb shell pidof "$package:kenji" | tr -d '\r' || true)
-  [ -z "$pid" ] && break
-  sleep 1
-done
-[ -z "${pid:-}" ] || { echo 'PLAYER_EXIT_PROCESS_STILL_ALIVE'; exit 1; }
-! app_crashed || { echo 'PLAYER_FATAL_OBSERVED'; exit 1; }
-echo 'PLAYER_REAL_UI_AND_EXIT_OK' | tee -a "$W/redroid-status.txt"
