@@ -167,9 +167,9 @@ Java_dev_symbiosis_coreprobe_GraphicsProbeActivity_nativeRun(JNIEnv* env, jclass
         for (int i = -3; i <= 513; ++i) {
             op_seen = -1; transform_seen = -1; window_seen = nullptr;
             reference(reinterpret_cast<long>(fake), i);
-            const int candidate = Symbiosis::SymbekTransformCandidate(i, orientation != 0);
+            const int mappedCandidate = Symbiosis::SymbekTransformCandidate(i, orientation != 0);
             if (op_seen != 6 || window_seen != fake || transform_seen != expected(i, orientation != 0) ||
-                transform_seen != candidate) {
+                transform_seen != mappedCandidate) {
                 __android_log_print(ANDROID_LOG_ERROR, "SymGraphicsProbe",
                     "mismatch value=%d flip=%d op=%d got=%d expected=%d", i, orientation,
                     op_seen, transform_seen, expected(i, orientation != 0));
