@@ -64,6 +64,7 @@ jobs:
           # Observe current no-op graphics callbacks in the disposable tree only.
           python3 fork/tests/player_runtime_probe/instrument_graphics.py eden/src/android/app/src/main/jni/symbiosis_kenji_bridge.cpp
           python3 fork/tests/player_runtime_probe/instrument_overlay.py eden/src/android/app/src/main/java/org/yuzu/yuzu_emu/overlay/InputOverlay.kt
+          python3 fork/tests/player_runtime_probe/instrument_shader_config.py eden/src/android/app/src/main/java/org/yuzu/yuzu_emu/utils/KenjiBridge.kt
           test ! -e eden/src/android/app/src/debug/AndroidManifest.xml
           mkdir -p eden/src/android/app/src/debug/java/dev/symbiosis/playerruntime
           cp fork/tests/player_runtime_probe/AndroidManifest.xml eden/src/android/app/src/debug/AndroidManifest.xml

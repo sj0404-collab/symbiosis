@@ -291,12 +291,13 @@ echo 'GRAPHICS_VISIBLE_FRAME_AND_EXIT_OK' | tee -a "$W/redroid-status.txt"
 for setting in true true false; do
   case_count=$(( ${case_count:-0} + 1 ))
   echo "SHADER_ATTEMPT case=$case_count shaderCache=$setting" | tee -a "$W/redroid-status.txt"
-  adb shell run-as "$package" sh -c 'find files/kenji -type f 2>/dev/null | sort' > "$W/shader-files-before-$case_count.txt" || true
+  adb shell run-as "$package" find files/kenji -type f 2>/dev/null | sort > "$W/shader-files-before-$case_count.txt" || true
   adb shell am start -W -n "$package/dev.symbiosis.playerruntime.DiagnosticLauncher" \
     --es test_config "shaderCache=$setting" --es test_kind shader | tee "$W/shader-launch-$case_count.txt"
   player_pid=$(adb shell pidof "$package:kenji" | tr -d '\r' || true)
   [ -n "$player_pid" ] || { echo "SHADER_PLAYER_NOT_RUNNING case=$case_count"; exit 1; }
   [ "$(adb shell pidof "$package" | tr -d '\r' || true)" = "$main_pid" ] || { echo 'SHADER_PARENT_CHANGED'; exit 1; }
+  wait_log "CI_ONLY_RESOLVED_SHADER_CACHE value=$setting" || { echo "SHADER_CONFIG_DID_NOT_REACH_BRIDGE case=$case_count"; exit 1; }
   wait_log 'DEKO_CI_ROMFS_OK' || { echo "SHADER_ROMFS_NOT_READY case=$case_count"; exit 1; }
   wait_log 'DEKO_CI_DEVICE_CREATED' || { echo "SHADER_GUEST_DEVICE_NOT_READY case=$case_count"; exit 1; }
   wait_log 'DEKO_CI_SHADER_INITIALIZED' || { echo "SHADER_GUEST_MODULE_NOT_READY case=$case_count"; exit 1; }
@@ -322,6 +323,6 @@ for setting in true true false; do
   [ -z "${pid:-}" ] || { echo "SHADER_PLAYER_EXIT_STILL_ALIVE case=$case_count"; exit 1; }
   ! app_crashed || { echo "SHADER_EXIT_FATAL case=$case_count"; exit 1; }
   [ "$(adb shell pidof "$package" | tr -d '\r' || true)" = "$main_pid" ] || { echo 'SHADER_PARENT_DIED'; exit 1; }
-  adb shell run-as "$package" sh -c 'find files/kenji -type f 2>/dev/null | sort' > "$W/shader-files-after-$case_count.txt" || true
+  adb shell run-as "$package" find files/kenji -type f 2>/dev/null | sort > "$W/shader-files-after-$case_count.txt" || true
   echo "SHADER_TRIANGLE_AND_EXIT_OK case=$case_count shaderCache=$setting" | tee -a "$W/redroid-status.txt"
 done

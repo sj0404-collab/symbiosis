@@ -6121,3 +6121,19 @@ Android shell по `;` как две команды (`--es: inaccessible or not 
 поэтому CI прервался сразу после launch. Это дефект тестового скрипта; нельзя
 делать вывод о шейдерах. Исправление: отдельный параметр `shaderCache`, режим
 памяти берётся из штатного default=2. [Логи](https://github.com/sj0404-collab/symbiosis/actions/runs/42866053370/artifacts/13786973571).
+
+[Run 42867706917](https://github.com/sj0404-collab/symbiosis/actions/runs/42867706917),
+`0f4a340`: host, disposable debug build и реальный `KenjiPlayerActivity` на
+ARM Redroid 15 success. Зафиксированный `switchbrew/switch-examples`
+`669786898205b7beb25ff1731e72982e6d0397d3` deko_basic с UAM-compiled DKSH
+открыл ROMFS, создал GPU device/queue, загрузил два shader-модуля и выполнил
+60 present. Android screencap показал RGB-треугольник: при трёх запусках
+красных/зелёных/синих пикселей 20 356/16 364/17 209, корректный порядок цветов;
+каждый раз после выхода завершён изолированный процесс. В интенте задан
+`shaderCache=true`, повторно `true`, затем `false`. GPU бэкенд устройства —
+software Vulkan SwiftShader; не телефонный Mali. Значение параметра в момент
+вызова моста отдельно не логировалось, загрузка/повторное использование
+дискового shader cache не доказаны. По ошибке записи shell список «файлов
+кэша» содержит общее дерево, не выборку файлов; скрипт исправляется. NRO не
+имеет шейдеров Vault of Power и не воспроизводит `2202-0710`. Диагностический
+APK/гость не выпускаются. [Логи и снимки](https://github.com/sj0404-collab/symbiosis/actions/runs/42867706917/artifacts/13788726761).
