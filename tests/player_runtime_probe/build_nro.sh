@@ -20,7 +20,7 @@ docker run --rm --network none --cap-drop ALL --security-opt no-new-privileges \
     SDL_CONFIG=/opt/devkitpro/portlibs/switch/bin/sdl2-config
     /opt/devkitpro/devkitA64/bin/aarch64-none-elf-gcc \
       -specs=/opt/devkitpro/libnx/switch.specs -march=armv8-a+crc+crypto \
-      -mtune=cortex-a57 -mtp=soft -fPIE -O2 -Wall -Wextra -D__SWITCH__ -DSDL_DIAGNOSTIC_FRAMES=1200 \
+      -mtune=cortex-a57 -mtp=soft -fPIE -O2 -Wall -Wextra -D__SWITCH__ -DSDL_DIAGNOSTIC_FRAMES=2400 -DSDL_DIAGNOSTIC_HID \
       -I/opt/devkitpro/libnx/include $("$SDL_CONFIG" --cflags) /graphics/main.c \
       -L/opt/devkitpro/libnx/lib $("$SDL_CONFIG" --libs) -lm -o /output/graphics.elf
     nacptool --create "CI graphics probe" "Symbiosis CI" "1.0.0" /output/graphics.nacp

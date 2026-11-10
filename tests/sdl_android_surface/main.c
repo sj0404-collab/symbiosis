@@ -38,7 +38,21 @@ int main(int argc, char **argv) {
     SDL_Surface *surface = SDL_GetWindowSurface(w);
     if (!surface) { logline("SDL_SURFACE_FAIL get=%s", SDL_GetError()); SDL_DestroyWindow(w); SDL_Quit(); return 1; }
     logline("SDL_SURFACE_GET_OK width=%d height=%d pitch=%d", surface->w, surface->h, surface->pitch);
+#ifdef SDL_DIAGNOSTIC_HID
+    padConfigureInput(1, HidNpadStyleSet_NpadStandard);
+    PadState pad;
+    padInitializeDefault(&pad);
+    int previousPlus = -1;
+#endif
     for (int frame = 0; frame < SDL_DIAGNOSTIC_FRAMES && appletMainLoop(); ++frame) {
+#ifdef SDL_DIAGNOSTIC_HID
+        padUpdate(&pad);
+        int plus = (padGetButtons(&pad) & HidNpadButton_Plus) != 0;
+        if (plus != previousPlus) {
+            logline("SDL_GUEST_PLUS value=%d connected=%u", plus, (unsigned)padIsConnected(&pad));
+            previousPlus = plus;
+        }
+#endif
         Uint32 color = SDL_MapRGBA(surface->format, (frame / 60) % 2 ? 20 : 36, 110, 190, 255);
         if (SDL_FillRect(surface, NULL, color) < 0) {
             logline("SDL_SURFACE_FAIL fill=%s", SDL_GetError()); break;

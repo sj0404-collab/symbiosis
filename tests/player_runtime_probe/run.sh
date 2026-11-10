@@ -142,6 +142,38 @@ PY
   )
   adb shell input tap $coords
 }
+# Locate the actual Plus hitbox printed by the debug-only geometry observer,
+# then inject a physical-style Android hold. Verify state transitions in the
+# guest, not just the view or JNI caller. Never call the overlay or core APIs.
+press_plus() {
+  local orientation=$1 before_press before_release coords
+  for ((n=0;n<20;n++)); do
+    coords=$(grep -E "^[0-9-]+ +[0-9:.]+ +$player_pid +[0-9]+ .*CI_ONLY_PLUS_BOUNDS" "$log" | tail -1 | \
+      sed -nE 's/.*CI_ONLY_PLUS_BOUNDS ([0-9]+),([0-9]+),([0-9]+),([0-9]+).*/\1 \2 \3 \4/p' || true)
+    [ -n "$coords" ] && break
+    sleep 1
+  done
+  [ -n "$coords" ] || { echo "PLUS_BOUNDS_MISSING orientation=$orientation"; return 1; }
+  read -r left top right bottom <<< "$coords"
+  [ "$right" -gt "$left" ] && [ "$bottom" -gt "$top" ] || return 1
+  local x=$(((left+right)/2)) y=$(((top+bottom)/2))
+  before_press=$(grep -cE "^[0-9-]+ +[0-9:.]+ +$player_pid +[0-9]+ .*SDL_GUEST_PLUS value=1 connected=1" "$log" || true)
+  before_release=$(grep -cE "^[0-9-]+ +[0-9:.]+ +$player_pid +[0-9]+ .*SDL_GUEST_PLUS value=0 connected=1" "$log" || true)
+  echo "PLUS_TAP orientation=$orientation bounds=$coords center=$x,$y" | tee -a "$W/redroid-status.txt"
+  adb shell input swipe "$x" "$y" "$x" "$y" 900
+  for ((n=0;n<20;n++)); do
+    pressed=$(grep -cE "^[0-9-]+ +[0-9:.]+ +$player_pid +[0-9]+ .*SDL_GUEST_PLUS value=1 connected=1" "$log" || true)
+    released=$(grep -cE "^[0-9-]+ +[0-9:.]+ +$player_pid +[0-9]+ .*SDL_GUEST_PLUS value=0 connected=1" "$log" || true)
+    if [ "$pressed" -gt "$before_press" ] && [ "$released" -gt "$before_release" ]; then
+      echo "PLUS_GUEST_PRESS_RELEASE_OK orientation=$orientation" | tee -a "$W/redroid-status.txt"
+      return 0
+    fi
+    app_crashed && return 1
+    sleep 1
+  done
+  echo "PLUS_GUEST_TRANSITION_MISSING orientation=$orientation"
+  return 1
+}
 # Three isolated sessions exercise the real player and prove that the same
 # main process can launch again after the previous :kenji process has exited.
 # Mode 2 is the normal default; 0/1 are explicit real config values, not
@@ -210,6 +242,8 @@ for attempt in 1 2 3 4 5; do
 done
 [ "$frame_ok" = 1 ] || { echo 'GRAPHICS_BLUE_FRAME_NOT_VISIBLE'; exit 1; }
 wait_log 'SDL_SURFACE_PRESENT_OK frame=59' || { echo 'GRAPHICS_GUEST_NO_SECOND_PRESENT'; exit 1; }
+wait_log 'SDL_GUEST_PLUS value=0 connected=1' || { echo 'PLUS_GUEST_NOT_CONNECTED'; exit 1; }
+press_plus portrait || { echo 'PLUS_PORTRAIT_FAILED'; exit 1; }
 # Rotate during a running real guest, not before the player starts. Require a
 # landscape screenshot with the guest's coloured surface, and later guest
 # presents; do not count portrait screenshots as rotation success.
@@ -229,6 +263,7 @@ wait_log 'SDL_SURFACE_PRESENT_OK frame=599' || { echo 'GRAPHICS_NO_CONTINUED_PRE
 adb exec-out screencap -p > "$W/player-frame-rotated-late.png"
 python3 tests/player_runtime_probe/check_frame.py "$W/player-frame-rotated-late.png" --landscape | tee -a "$W/redroid-status.txt" || { echo 'GRAPHICS_ROTATED_LATE_FRAME_FAILED'; exit 1; }
 echo 'GRAPHICS_ROTATED_FRAME_VISIBLE' | tee -a "$W/redroid-status.txt"
+press_plus landscape || { echo 'PLUS_LANDSCAPE_FAILED'; exit 1; }
 # Exit and the overlay must fit beside the actual system navigation strip.
 adb shell uiautomator dump /sdcard/player-ui.xml >/dev/null
 adb exec-out cat /sdcard/player-ui.xml > "$W/player-ui.xml"
