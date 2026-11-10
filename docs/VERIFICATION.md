@@ -6157,3 +6157,20 @@ Mali/телефон и причина `2202-0710` не проверены. [Ар
 графические callbacks, непроверенное закрытие UI ядра, устаревший TLS и его
 несовместимость с выравниванием 16 КБ. APK этим запуском не создан. По выбору
 пользователя продолжена доработка без обхода защиты и выпуска заглушек.
+
+[Android-проверка 42879445912](https://github.com/sj0404-collab/symbiosis/actions/runs/42879445912),
+`37183c2`: host tests и debug player build прошли. На ARM Android 15
+`RENDER_THREAD_REFERENCE_OK threads=2`: в тестовом процессе JNI SymbEK и
+production callback записали `pthread_self` и время monotonic в свои отдельные
+экспортированные объекты на потоке Activity и на отдельном pthread. Проверка не
+покрывает конкурентные вызовы или потребителей состояния в настоящем ядре.
+`GRAPHICS_REFERENCE_OK cases=1034 public_surface=8` повторяет сравнение
+кандидатной таблицы transform и доступность API; production transform всё ещё
+пуст. Реальный player прошёл три режима ввода/выхода, SDL frame/поворот/Plus и
+шейдерный RGB-треугольник с cache true/true/false на SwiftShader, не на GPU
+телефона и не в коммерческой игре. Общий ARM Redroid job **failed**: его
+итог перечисляет незавершённые `SDL`, `SWKBD`, `SWKBD_STOP`, `SWKBD_HOLD`,
+`SWKBD_OVERLAP`; при этом отдельные reference, UI response/race и isolated
+exit проверки вернули успех. [Логи](https://github.com/sj0404-collab/symbiosis/actions/runs/42879445912/artifacts/13794741487).
+Релизная защита сохраняется: выполнение callback и этот результат не доказывают
+интеграцию графики или устранение 2202-0710.
