@@ -30,6 +30,10 @@ on:
         description: "Try community-built ARM-host Android emulator in software mode (no release)"
         type: boolean
         default: false
+      run_player_runtime:
+        description: "Build and run disposable actual player on ARM Android (not release)"
+        type: boolean
+        default: false
       run_player_compile:
         description: "Compile real patched app Kotlin without assembling or releasing an APK"
         type: boolean
@@ -300,3 +304,8 @@ jobs:
   kenji-player-compile:
     if: github.event_name == 'workflow_dispatch' && inputs.run_player_compile == true
     uses: ./.github/workflows/kenji-player-compile.yml
+
+  # Actual player with a test-only launcher and NRO; never a release APK.
+  kenji-player-runtime:
+    if: github.event_name == 'workflow_dispatch' && inputs.run_player_runtime == true
+    uses: ./.github/workflows/kenji-player-runtime.yml

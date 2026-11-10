@@ -1,0 +1,132 @@
+name: Real-player ARM Android diagnostic (never release)
+on:
+  workflow_call:
+permissions:
+  contents: read
+jobs:
+  build-diagnostic:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      PLAY_WORK: /tmp/player-runtime
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: fork
+          persist-credentials: false
+      - name: Check out exact Eden source
+        run: |
+          git clone --depth 50 --single-branch --branch v0.2.1 https://git.eden-emu.dev/eden-emu/eden.git eden
+          test "$(git -C eden rev-parse HEAD)" = 58c1e20ee58efa3900ba616207d460886214480b
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v4
+      - name: Install real native build dependencies
+        run: |
+          sdkmanager --install 'ndk;28.2.13676358' 'cmake;3.31.6' 'build-tools;35.0.0' 'platforms;android-36'
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq glslang-tools ccache
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: player-diag-gradle-${{ runner.os }}-${{ hashFiles('fork/patch/**') }}
+          restore-keys: |
+            gradle-${{ runner.os }}-
+            player-diag-gradle-${{ runner.os }}-
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/ccache
+          key: ccache-symbiosis-v0.2.1-debug-${{ hashFiles('fork/patch/upstream_changes.patch', 'fork/patch/native_symbiosis.cpp') }}
+          restore-keys: ccache-symbiosis-v0.2.1-debug-
+      - name: Build production OpenAL source for Android ARM64
+        run: |
+          set -euo pipefail
+          NDK="$ANDROID_HOME/ndk/28.2.13676358"
+          git clone --depth 1 https://git.ryujinx.app/kenji-nx/openal-soft.git /tmp/openal-soft
+          git -C /tmp/openal-soft rev-parse HEAD
+          cmake -S /tmp/openal-soft -B /tmp/openal-build \
+            -DCMAKE_TOOLCHAIN_FILE="$NDK/build/cmake/android.toolchain.cmake" \
+            -DANDROID_ABI=arm64-v8a -DANDROID_PLATFORM=android-26 -DCMAKE_BUILD_TYPE=Release \
+            -DLIBTYPE=SHARED -DALSOFT_EXAMPLES=OFF -DALSOFT_UTILS=OFF -DALSOFT_TESTS=OFF -DALSOFT_INSTALL=OFF
+          cmake --build /tmp/openal-build -j4 --target OpenAL
+          SO="$(find /tmp/openal-build -name 'libopenal.so*' -type f | head -1)"
+          test -n "$SO"
+          cp "$SO" fork/patch/libs/arm64-v8a/libopenal.so
+          sha256sum "$SO"
+      - name: Apply real production sources and add CI-only launcher
+        run: |
+          set -euo pipefail
+          bash fork/tools/apply_patch.sh --patch "$GITHUB_WORKSPACE/fork/patch" --eden "$GITHUB_WORKSPACE/eden"
+          test ! -e eden/src/android/app/src/debug/AndroidManifest.xml
+          mkdir -p eden/src/android/app/src/debug/java/dev/symbiosis/playerruntime
+          cp fork/tests/player_runtime_probe/AndroidManifest.xml eden/src/android/app/src/debug/AndroidManifest.xml
+          cp fork/tests/player_runtime_probe/DiagnosticLauncher.kt eden/src/android/app/src/debug/java/dev/symbiosis/playerruntime/
+      - name: Build disposable debug application, not a release
+        working-directory: eden/src/android
+        run: |
+          export CCACHE_DIR="$HOME/.cache/ccache"
+          ccache --set-config=max_size=3G
+          ccache --set-config=base_dir="$GITHUB_WORKSPACE"
+          ccache --set-config=hash_dir=false
+          ccache --set-config=compiler_check=content
+          ./gradlew assembleLegacyDebug -PYUZU_ANDROID_ARGS='-DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache' --parallel --max-workers=4
+      - name: Prepare pinned core and self-authored NRO
+        working-directory: fork
+        run: |
+          set -euo pipefail
+          mkdir -p "$PLAY_WORK"
+          mapfile -t APK < <(find "$GITHUB_WORKSPACE/eden/src/android/app/build/outputs/apk/legacy/debug" -name '*.apk')
+          [ "${#APK[@]}" = 1 ]
+          cp "${APK[0]}" "$PLAY_WORK/player-debug.apk"
+          "$ANDROID_HOME/build-tools/35.0.0/aapt" dump badging "$PLAY_WORK/player-debug.apk" | sed -n "s/^package: name='\\([^']*\\)'.*/\\1/p" > "$PLAY_WORK/package.txt"
+          test -s "$PLAY_WORK/package.txt"
+          curl -fsSL --retry 3 -o "$PLAY_WORK/core_sym.so" https://github.com/sj0404-collab/symbiosis/releases/download/engine-kenji/libkenji.so
+          echo "969431b3962408dd02ce38bd2cd4b2a954d11e5212ddef3f65c80a0b419918b8  $PLAY_WORK/core_sym.so" | sha256sum -c -
+          bash tests/player_runtime_probe/build_nro.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: disposable-player-runtime-not-release
+          path: |
+            /tmp/player-runtime/player-debug.apk
+            /tmp/player-runtime/package.txt
+            /tmp/player-runtime/core_sym.so
+            /tmp/player-runtime/swkbd.nro
+          if-no-files-found: error
+          retention-days: 1
+
+  real-player-on-arm:
+    needs: build-diagnostic
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 25
+    env:
+      PLAY_WORK: /tmp/player-runtime
+      ANDROID_SERIAL: 127.0.0.1:5558
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        with:
+          name: disposable-player-runtime-not-release
+          path: /tmp/player-runtime
+      - name: Install authentic adb
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends adb
+      - name: Run actual player and its dialog in Android ARM
+        run: bash tests/player_runtime_probe/run.sh
+      - name: Preserve logs only, never diagnostic APK or core
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: actual-player-runtime-logs
+          path: |
+            /tmp/player-runtime/redroid-*.txt
+            /tmp/player-runtime/player-*.txt
+            /tmp/player-runtime/player-ui.xml
+          if-no-files-found: warn
+          retention-days: 3
