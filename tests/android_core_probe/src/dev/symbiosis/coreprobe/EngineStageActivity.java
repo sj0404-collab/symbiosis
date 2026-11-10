@@ -222,21 +222,26 @@ public class EngineStageActivity extends Activity {
             step("BEFORE_graphicsInitializeRenderer");
             if (!check("graphicsInitializeRenderer", bridge.nativeAttachSurface(holder.getSurface(), 1280, 720))) return;
             if (getIntent().getBooleanExtra("ui_setup", false)) {
-                if (getIntent().getBooleanExtra("ui_response", false)) {
-                    long generation = bridge.nativeUiActivate();
-                    if (generation <= 0) { Log.e(TAG, "ENGINE_FAIL UI response activation"); return; }
-                    boolean realUi = getIntent().getBooleanExtra("ui_real", false);
-                    if (realUi) KeyboardUiFixture.configure(this, bridge, generation,
+                boolean realUi = getIntent().getBooleanExtra("ui_real", false);
+                if (realUi) {
+                    step("BEFORE_realUiSetup");
+                    if (!KeyboardUiFixture.configure(this, bridge,
                             getIntent().getBooleanExtra("ui_stop", false),
                             getIntent().getBooleanExtra("ui_overlap", false),
                             getIntent().getBooleanExtra("race_stop", false) ? new Runnable() {
                                 @Override public void run() { uiStopIssued.countDown(); }
-                            } : null);
-                    KeyboardFixture.configure(bridge, generation, realUi);
+                            } : null)) { Log.e(TAG, "ENGINE_FAIL UI session setup"); return; }
                     step("realUiResponse_ACTIVATED");
+                } else {
+                    if (getIntent().getBooleanExtra("ui_response", false)) {
+                        long generation = bridge.nativeUiActivate();
+                        if (generation <= 0) { Log.e(TAG, "ENGINE_FAIL UI response activation"); return; }
+                        KeyboardFixture.configure(bridge, generation, false);
+                        step("realUiResponse_ACTIVATED");
+                    }
+                    step("BEFORE_realUiSetup");
+                    if (!bridge.nativeUiSetup()) { Log.e(TAG, "ENGINE_FAIL UI setup"); return; }
                 }
-                step("BEFORE_realUiSetup");
-                if (!bridge.nativeUiSetup()) { Log.e(TAG, "ENGINE_FAIL UI setup"); return; }
                 step("realUiSetup_RETURNED_OK");
             }
             step("BEFORE_deviceInitialize");

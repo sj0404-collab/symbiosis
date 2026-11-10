@@ -66,9 +66,11 @@ done
   "$ROOT/patch/android/utils/KenjiUiText.kt" \
   "$ROOT/patch/android/utils/KenjiUiCoordinator.kt" \
   "$ROOT/patch/android/utils/KenjiUiDispatcher.kt" \
+  "$ROOT/patch/android/utils/KenjiUiSession.kt" \
   "$ROOT/patch/android/activities/KenjiUiPresenter.kt" \
   "$ROOT/tests/android_core_probe/src/dev/symbiosis/coreprobe/UiProbeActivity.kt" \
   "$ROOT/tests/android_core_probe/src/dev/symbiosis/coreprobe/KeyboardUiFixture.kt" \
+  "$ROOT/tests/android_core_probe/src/dev/symbiosis/coreprobe/KeyboardFixture.java" \
   "$ROOT/tests/android_core_probe/src/org/yuzu/yuzu_emu/utils/KenjiBridge.java" \
   -jvm-target 17 -classpath "$ANDROID_JAR" -d "$WORK/classes"
 javac -encoding UTF-8 -source 8 -target 8 -bootclasspath "$ANDROID_JAR" \

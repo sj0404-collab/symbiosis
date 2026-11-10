@@ -211,6 +211,7 @@ if command -v kotlinc >/dev/null 2>&1; then
       KenjiCrashTest) echo "$HERE/patch/android/utils/KenjiCrash.kt" ;;
       KenjiUiTextTest) echo "$HERE/patch/android/utils/KenjiUiText.kt" ;;
       KenjiUiCoordinatorTest) echo "$HERE/patch/android/utils/KenjiUiCoordinator.kt $HERE/patch/android/utils/KenjiUiText.kt" ;;
+      KenjiUiSessionTest) echo "$HERE/patch/android/utils/KenjiUiSession.kt $HERE/patch/android/utils/KenjiUiDispatcher.kt $HERE/patch/android/utils/KenjiUiCoordinator.kt $HERE/patch/android/utils/KenjiUiText.kt $HERE/patch/android/kenjinx/KenjinxNative.kt" ;;
       KenjiInputMapTest) echo "$HERE/patch/android/utils/KenjiInputMap.kt" ;;
       KenjiSurfaceStartGateTest) echo "$HERE/patch/android/utils/KenjiSurfaceStartGate.kt" ;;
       KenjiStartupCoordinatorTest) echo "$HERE/patch/android/utils/KenjiStartupCoordinator.kt" ;;
