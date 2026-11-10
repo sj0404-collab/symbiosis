@@ -103,8 +103,9 @@ log="$W/player-logcat.txt"
 adb logcat -v threadtime > "$log" 2>&1 &
 logpid=$!
 trap 'kill "$logpid" 2>/dev/null || true; cleanup' EXIT
-main_pid=$(adb shell pidof "$package" | tr -d '\r' || true)
-[ -n "$main_pid" ] || { echo 'PLAYER_MAIN_PROCESS_NOT_RUNNING'; exit 1; }
+# On a fresh install, the launcher activity itself may create the main
+# process; do not require a PID before it has been started.
+main_pid=''
 player_pid=''
 app_crashed() {
   [ -n "$player_pid" ] && grep -qE "Fatal signal.*pid $player_pid( |\))|^[0-9-]+ +[0-9:.]+ +$player_pid +[0-9]+ [FE] .*FATAL EXCEPTION" "$log"
@@ -147,6 +148,10 @@ for mode in 2 0 1; do
   adb shell am start -W -n "$package/dev.symbiosis.playerruntime.DiagnosticLauncher" \
     --es test_config "memory=$mode" | tee "$W/player-launch-$mode.txt"
   player_pid=$(adb shell pidof "$package:kenji" | tr -d '\r' || true)
+  this_main=$(adb shell pidof "$package" | tr -d '\r' || true)
+  [ -n "$this_main" ] || { echo "PLAYER_MAIN_PROCESS_NOT_RUNNING mode=$mode"; exit 1; }
+  [ -n "$main_pid" ] || main_pid=$this_main
+  [ "$this_main" = "$main_pid" ] || { echo "PLAYER_MAIN_PROCESS_CHANGED mode=$mode"; exit 1; }
   [ -n "$player_pid" ] || { echo "PLAYER_PROCESS_NOT_RUNNING mode=$mode"; exit 1; }
   printf 'PLAYER_PID=%s MAIN_PID=%s MODE=%s\n' "$player_pid" "$main_pid" "$mode" | tee -a "$W/redroid-status.txt"
   wait_log 'SWKBD_SHOW_BEGIN' || { echo "PLAYER_NO_KEYBOARD_BEGIN mode=$mode"; exit 1; }

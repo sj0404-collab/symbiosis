@@ -6032,3 +6032,10 @@ launcher, не релиз; реальные телефон, игра, Eden, по
 и ошибка 710 не проверены. Build и Android job success, общий workflow failed:
 тест плагинов ещё ожидал неверный режим 3; обновлён отдельно в `a25cbfa`.
 [Логи](https://github.com/sj0404-collab/symbiosis/actions/runs/42791971087/artifacts/13751966801).
+
+[Run 42793483676](https://github.com/sj0404-collab/symbiosis/actions/runs/42793483676),
+`58a765e`: диагностический APK собран, но повторный runtime-тест ошибочно
+остановился до запуска плеера: CI требовал уже существующий PID главного процесса
+на свежей установке, а `monkey` не нашёл launcher-активность; собственный CI-only
+launcher ещё не был вызван. Это ошибка тестового скрипта, не результат ядра.
+[Логи](https://github.com/sj0404-collab/symbiosis/actions/runs/42793483676/artifacts/13751963508).
