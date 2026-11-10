@@ -6197,3 +6197,40 @@ player ARM runtime прошли, включая input/exit, кадры и shader
 Ядро вызвало transform только со значением 0; GPU — SwiftShader. Полный запуск
 failed из-за ошибки компиляции в отдельном тестовом probe (затенённый указатель),
 позже исправленной в `96c23bd` и проверенной в 42883636188. APK релиза нет.
+
+[TLS candidate в плеере 42887118690](https://github.com/sj0404-collab/symbiosis/actions/runs/42887118690),
+`60d68a3`: весь workflow success, включая host tests, сборку disposable debug
+player и ARM Android Redroid. В debug APK вместо bundled 1.1.1l только для
+этой проверки собран hash-pinned OpenSSL 3.5.9. Плеер в режимах 2/0/1
+загружал `libcrypto.so` из каталога установленного приложения, версия
+`0x30500090`; keyboard/input/exit, SDL кадры и RGB shader тесты прошли.
+Аудит APK: 11 ARM64 ELF с 16 КБ PT_LOAD, несовместимых 0; все 11 `.so`
+сжаты, установщик извлекает их, а не отображает непосредственно из ZIP.
+[Логи](https://github.com/sj0404-collab/symbiosis/actions/runs/42887118690/artifacts/13797217586).
+Это не .NET TLS handshake, не проверка системного trust store, не коммерческая
+игра и не Android с 16 КБ страницами; в production OpenSSL ещё не заменён,
+релизные blockers сохраняются. Предыдущий независимый Bionic handshake
+проверял 3.5.9, но не запускался в процессе плеера.
+
+[TLS handshake внутри плеера 42893261470](https://github.com/sj0404-collab/symbiosis/actions/runs/42893261470),
+`2512a7e`: host suite, diagnostic build и ARM Redroid player success. В каждом
+из процессов режимов 2/0/1 debug-only test library открыла именно упакованный
+OpenSSL 3.5.9 и выполнила настоящий TLS client/server handshake через memory
+BIO с проверкой временного сертификата, передачей и чтением зашифрованных
+данных. Верное имя: `good=0 verify=0`; неверное: `wrong_host=5 wrong_verify=62`
+(именно hostname mismatch). Сертификат/ключ одноразовые и не поставляются в
+релиз. После этого плеер прошёл UI/exit, кадры и три shader-сценария.
+APK audit: 12 ARM64 ELF (один дополнительный — test-only), все PT_LOAD
+совместимы с 16 КБ, `.so` сжаты, `zipalign -c -P 16` вернул success.
+[Логи](https://github.com/sj0404-collab/symbiosis/actions/runs/42893261470/artifacts/13800282228).
+Это не проверка сетевого кода .NET/ядра, системного trust store, настоящей
+игры или запуска Android на страницах 16 КБ. Замена production TLS и снятие
+релизных blockers не выполнены.
+
+Запуски [42889293001](https://github.com/sj0404-collab/symbiosis/actions/runs/42889293001)
+и [42891260431](https://github.com/sj0404-collab/symbiosis/actions/runs/42891260431)
+остановились на диагностическом handshake: Android запретил приложению читать
+сертификат и ключ, созданные ADB во внешней папке (`errno=13`). В `2512a7e`
+одноразовые файлы созданы с владельцем приложения в его закрытом каталоге;
+оба читаются (`errno=0`). Это устранение ошибки тестового окружения, а не
+доказательство исправления сетевой работы ядра.
