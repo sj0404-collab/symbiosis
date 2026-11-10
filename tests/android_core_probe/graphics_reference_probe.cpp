@@ -9,6 +9,9 @@
 #include <cstring>
 #include <dlfcn.h>
 #include <limits>
+#include <pthread.h>
+#include <time.h>
+#include <string>
 #include "kenji_transform_map.h"
 
 namespace {
@@ -43,6 +46,40 @@ int expected(int value, bool initiallyFlipped) {
     }
 }
 
+
+struct ThreadProbe {
+    void (*reference)();
+    void (*candidate)();
+    pthread_t* referenceId;
+    pthread_t* candidateId;
+    std::int64_t* referenceTime;
+    std::int64_t* candidateTime;
+    bool ok;
+};
+
+std::int64_t monotonicNanos() {
+    timespec ts{};
+    if (clock_gettime(CLOCK_MONOTONIC, &ts) != 0) return -1;
+    return std::int64_t(ts.tv_sec) * 1000000000LL + ts.tv_nsec;
+}
+
+// Run on two genuinely different pthreads: the activity's and a new worker.
+// Compare identities and monotonic timestamps, not numeric thread IDs to tids.
+void* exerciseThreadState(void* input) {
+    auto* p = static_cast<ThreadProbe*>(input);
+    const pthread_t expected = pthread_self();
+    const auto start = monotonicNanos();
+    p->reference();
+    const auto between = monotonicNanos();
+    p->candidate();
+    const auto end = monotonicNanos();
+    p->ok = start > 0 && start <= between && between <= end &&
+        pthread_equal(*p->referenceId, expected) && pthread_equal(*p->candidateId, expected) &&
+        *p->referenceTime >= start && *p->referenceTime <= between &&
+        *p->candidateTime >= between && *p->candidateTime <= end;
+    return nullptr;
+}
+
 jstring failure(JNIEnv* env, const char* message) { return env->NewStringUTF(message); }
 } // namespace
 
@@ -64,6 +101,43 @@ Java_dev_symbiosis_coreprobe_GraphicsProbeActivity_nativeRun(JNIEnv* env, jclass
         dlclose(library);
         return failure(env, "reference symbols or default orientation differ");
     }
+    // Compare actual reference state storage with the actual production JNI
+    // bridge. Both are local distinct libraries in a disposable test process.
+    const char* pathChars = env->GetStringUTFChars(path, nullptr);
+    if (!pathChars) { dlclose(library); return failure(env, "candidate path unavailable"); }
+    std::string candidatePath(pathChars);
+    env->ReleaseStringUTFChars(path, pathChars);
+    const auto slash = candidatePath.find_last_of('/');
+    if (slash == std::string::npos) { dlclose(library); return failure(env, "candidate directory unavailable"); }
+    candidatePath = candidatePath.substr(0, slash + 1) + "libkenjinxjni.so";
+    void* candidate = dlopen(candidatePath.c_str(), RTLD_NOW | RTLD_LOCAL);
+    if (!candidate) {
+        __android_log_print(ANDROID_LOG_ERROR, "SymGraphicsProbe", "candidate dlopen: %s", dlerror());
+        dlclose(library);
+        return failure(env, "candidate JNI did not load");
+    }
+    auto getFn = [](void* h) { return reinterpret_cast<void (*)()>(dlsym(h, "setRenderingThread")); };
+    auto getId = [](void* h) { return reinterpret_cast<pthread_t*>(dlsym(h, "_renderingThreadId")); };
+    auto getTime = [](void* h) { return reinterpret_cast<std::int64_t*>(dlsym(h, "_currentTimePoint")); };
+    ThreadProbe threadProbe{getFn(library), getFn(candidate), getId(library), getId(candidate),
+                            getTime(library), getTime(candidate), false};
+    if (!threadProbe.reference || !threadProbe.candidate || !threadProbe.referenceId ||
+        !threadProbe.candidateId || !threadProbe.referenceTime || !threadProbe.candidateTime ||
+        threadProbe.referenceId == threadProbe.candidateId || threadProbe.referenceTime == threadProbe.candidateTime) {
+        dlclose(candidate); dlclose(library);
+        return failure(env, "thread callback symbols missing or interposed");
+    }
+    exerciseThreadState(&threadProbe);
+    if (!threadProbe.ok) { dlclose(candidate); dlclose(library); return failure(env, "render thread state differs on activity thread"); }
+    pthread_t worker;
+    if (pthread_create(&worker, nullptr, exerciseThreadState, &threadProbe) != 0) {
+        dlclose(candidate); dlclose(library); return failure(env, "render worker did not start");
+    }
+    pthread_join(worker, nullptr);
+    if (!threadProbe.ok) { dlclose(candidate); dlclose(library); return failure(env, "render thread state differs on worker thread"); }
+    __android_log_print(ANDROID_LOG_INFO, "SymGraphicsProbe", "RENDER_THREAD_REFERENCE_OK threads=2");
+    dlclose(candidate);
+
     // Test-only fake: the pinned binary reads its perform pointer at offset
     // 0x98. It is never handed to Android and is not a real ANativeWindow.
     alignas(16) unsigned char fake[0xa0] = {};

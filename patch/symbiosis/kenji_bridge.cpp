@@ -54,6 +54,7 @@
 #include <link.h>
 #include <ucontext.h>
 
+#include <chrono>
 #include <cerrno>
 #include <cstdlib>
 #include <pthread.h>
@@ -541,10 +542,16 @@ void TapSetLogPath(const char* crashPath) {
 
 extern "C" {
 
-// Unimplemented: the reference JNI records pthread_self and a time point.
-// Its consumers and the necessary equivalent in this bridge are not proven.
-// The release guard intentionally rejects this empty body.
+// SymbEK's pinned JNI exposes these two state objects and updates them from
+// this callback. Preserve the observable ABI and actual values, rather than
+// returning success without doing anything. Consumers of the recorded state
+// and the other core's contract still require investigation; the explicit
+// graphics integration release blocker remains in force.
+JNIEXPORT pthread_t _renderingThreadId = {};
+JNIEXPORT std::chrono::steady_clock::time_point _currentTimePoint = {};
 JNIEXPORT void setRenderingThread() {
+    _renderingThreadId = pthread_self();
+    _currentTimePoint = std::chrono::steady_clock::now();
 }
 
 // Called by the core at points it considers worth breaking on, including from
