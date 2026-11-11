@@ -15,6 +15,7 @@ container_started=0
 cleanup() {
   if [ -n "${guest_server_pid:-}" ]; then kill "$guest_server_pid" 2>/dev/null || true; fi
   rm -f "$W/ci-test-key.pem" "$W/ci-test-cert.pem" "$W/ci-wrong-key.pem" "$W/ci-wrong-ca.pem" "$W/ci-leaf-key.pem" "$W/ci-leaf.pem" "$W/ci-test-cert.der"
+  rm -rf "$W/ci-pki"
   if [ "$container_started" = 1 ]; then
     timeout 20s adb -s "$ANDROID_SERIAL" logcat -d -v threadtime > "$W/redroid-logcat.txt" 2>&1 || true
     if [ -n "${package:-}" ]; then
@@ -131,7 +132,8 @@ fi
 # Neither is included in the APK or uploaded in test artifacts.
 if [ "${PLAYER_EXPECT_TLS_CANDIDATE:-0}" = 1 ] || [ "${PLAYER_GUEST_TLS:-0}" = 1 ]; then
   openssl req -x509 -newkey rsa:2048 -nodes -keyout "$W/ci-test-key.pem" -out "$W/ci-test-cert.pem" \
-    -days 1 -subj '/CN=localhost' -addext 'subjectAltName=DNS:localhost' >/dev/null 2>&1
+    -days 1 -subj '/CN=localhost' -addext 'subjectAltName=DNS:localhost' \
+    -addext 'basicConstraints=critical,CA:TRUE' -addext 'keyUsage=critical,keyCertSign,cRLSign,digitalSignature,keyEncipherment' >/dev/null 2>&1
   adb push "$W/ci-test-key.pem" /data/local/tmp/player-ci-test-key.pem >/dev/null
   adb push "$W/ci-test-cert.pem" /data/local/tmp/player-ci-test-cert.pem >/dev/null
   adb shell chmod 644 /data/local/tmp/player-ci-test-key.pem /data/local/tmp/player-ci-test-cert.pem
@@ -146,6 +148,7 @@ if [ "${PLAYER_EXPECT_TLS_CANDIDATE:-0}" = 1 ] || [ "${PLAYER_GUEST_TLS:-0}" = 1
     openssl req -x509 -newkey rsa:2048 -nodes -keyout "$W/ci-leaf-key.pem" -out "$W/ci-leaf.pem" \
       -days 1 -subj '/CN=not-an-authority' -addext 'basicConstraints=critical,CA:FALSE' >/dev/null 2>&1
     openssl x509 -in "$W/ci-test-cert.pem" -outform DER -out "$W/ci-test-cert.der"
+    bash tests/guest_tls_probe/generate_chain_fixture.sh "$W/ci-pki" "$W/ci-test-cert.pem" "$W/ci-test-key.pem"
     for name in ci-wrong-ca.pem ci-leaf.pem ci-test-cert.der; do
       adb push "$W/$name" "/data/local/tmp/player-$name" >/dev/null
       adb shell chmod 644 "/data/local/tmp/player-$name"
@@ -306,7 +309,7 @@ if [ "${PLAYER_GUEST_TLS:-0}" = 1 ]; then
       [ "$hash" = d781048671e4cef1cde2ec15db8fe29b949df9949d83569ceaf776ad12901590 ] || { echo 'GUEST_TLS_SPACE_HASH_MISMATCH'; exit 1; }
     fi
     server_log="$W/guest-tls-server-$guest_core.txt"
-    python3 tests/guest_tls_probe/server.py "$W/ci-test-cert.pem" "$W/ci-test-key.pem" > "$server_log" 2>&1 &
+    python3 tests/guest_tls_probe/server.py "$W/ci-test-cert.pem" "$W/ci-test-key.pem" 19443 10 "$W/ci-pki" > "$server_log" 2>&1 &
     guest_server_pid=$!
     for ((n=0;n<20;n++)); do
       grep -q 'LOCAL_TLS_SERVER_READY' "$server_log" && break
@@ -328,9 +331,9 @@ if [ "${PLAYER_GUEST_TLS:-0}" = 1 ]; then
     done
     grep -E "^[0-9-]+ +[0-9:.]+ +$player_pid +[0-9]+ .*(GUEST_TLS_|ServiceSsl .*Stubbed|Unhandled exception in guest thread|System\.Security\.Authentication)" "$log" | tee -a "$W/redroid-status.txt" || true
     if [ "$guest_result" = 1 ]; then
-      # Wait for the endpoint to observe all seven client connections.
+      # Wait for the endpoint to observe all ten client connections.
       for ((n=0;n<10;n++)); do
-        grep -qE 'LOCAL_TLS_HANDSHAKE_OK 6 |LOCAL_TLS_HANDSHAKE_OR_IO_FAILED 6 ' "$server_log" && break
+        grep -qE 'LOCAL_TLS_HANDSHAKE_OK 9 |LOCAL_TLS_HANDSHAKE_OR_IO_FAILED 9 ' "$server_log" && break
         sleep 1
       done
       if [ "${PLAYER_REFERENCE_TLS_PATCH:-0}" = 1 ]; then

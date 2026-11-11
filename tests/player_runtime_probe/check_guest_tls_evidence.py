@@ -3,7 +3,7 @@
 
 The server can finish its side of TLS 1.3 before the client rejects its cert;
 require actual client validation-policy observations and guest IPC results in
-order, plus seven local server connections and encrypted payload exchanges.
+order, plus ten local server connections and encrypted payload exchanges.
 """
 from pathlib import Path
 import re
@@ -54,7 +54,25 @@ markers = [
     r'GUEST_TLS_DER_CA_IMPORT_RETURNED',
     r'GUEST_TLS_VERIFY_DISABLE_REJECTED',
     r'CI_ONLY_TLS_POLICY imported_groups=1 errors=.*RemoteCertificateChainErrors',
+    r'CI_ONLY_TLS_CUSTOM_CHAIN valid=True',
     r'GUEST_TLS_VERIFIED_EXCHANGE_OK',
+    r'GUEST_TLS_CHAIN_CASE valid_server',
+    r'GUEST_TLS_VERIFY_DISABLE_REJECTED',
+    r'CI_ONLY_TLS_POLICY imported_groups=1 errors=.*RemoteCertificateChainErrors',
+    r'CI_ONLY_TLS_CUSTOM_CHAIN valid=True',
+    r'GUEST_TLS_VERIFIED_EXCHANGE_OK',
+    r'GUEST_TLS_CHAIN_CASE expired_server',
+    r'GUEST_TLS_VERIFY_DISABLE_REJECTED',
+    r'CI_ONLY_TLS_POLICY imported_groups=1 errors=.*RemoteCertificateChainErrors',
+    r'CI_ONLY_TLS_CUSTOM_CHAIN valid=False statuses=.*NotTimeValid',
+    r'GUEST_TLS_NEGATIVE_HANDSHAKE_FAILED case=expired_server',
+    r'GUEST_TLS_FAILED_HANDSHAKE_IO_REJECTED case=expired_server',
+    r'GUEST_TLS_CHAIN_CASE client_eku_only',
+    r'GUEST_TLS_VERIFY_DISABLE_REJECTED',
+    r'CI_ONLY_TLS_POLICY imported_groups=1 errors=.*RemoteCertificateChainErrors',
+    r'CI_ONLY_TLS_CUSTOM_CHAIN valid=False statuses=.*NotValidForUsage',
+    r'GUEST_TLS_NEGATIVE_HANDSHAKE_FAILED case=client_eku_only',
+    r'GUEST_TLS_FAILED_HANDSHAKE_IO_REJECTED case=client_eku_only',
     r'GUEST_TLS_COMPLETE',
 ]
 position = 0
@@ -67,16 +85,19 @@ for pattern in markers:
         raise SystemExit('GUEST_TLS_EVIDENCE_MISSING_OR_OUT_OF_ORDER ' + pattern)
 if any(re.search(r'GUEST_TLS_ERROR|Unhandled exception in guest thread|FATAL EXCEPTION|Fatal signal', row) for row in rows):
     raise SystemExit('GUEST_TLS_EVIDENCE_HAS_ERROR')
-for n in (2, 6):
+for n in (2, 6, 7):
     if not re.search(rf'^LOCAL_TLS_EXCHANGE_OK {n}$', server, re.M):
         raise SystemExit('GUEST_TLS_EVIDENCE_SERVER_EXCHANGE_MISSING ' + str(n))
-for n in (0, 1, 3, 4, 5):
+for n in (0, 1, 3, 4, 5, 8, 9):
     # In TLS 1.3 the server can complete before client verification. Require
     # the ordered client policy result separately; server marker is not proof.
     ok = re.search(rf'^LOCAL_TLS_HANDSHAKE_OK {n} TLSv', server, re.M)
-    alert = re.search(rf'^LOCAL_TLS_HANDSHAKE_OR_IO_FAILED {n} SSLError .*ALERT_(BAD_CERTIFICATE|CERTIFICATE_UNKNOWN|UNKNOWN_CA)', server, re.M)
+    alert = re.search(rf'^LOCAL_TLS_HANDSHAKE_OR_IO_FAILED {n} SSLError .*ALERT_(BAD_CERTIFICATE|CERTIFICATE_UNKNOWN|UNKNOWN_CA|CERTIFICATE_EXPIRED|UNSUPPORTED_CERTIFICATE)', server, re.M)
     if not (ok or alert):
         raise SystemExit('GUEST_TLS_EVIDENCE_SERVER_NEGATIVE_CONNECTION_MISSING ' + str(n))
     if re.search(rf'^LOCAL_TLS_EXCHANGE_OK {n}$', server, re.M):
         raise SystemExit('GUEST_TLS_EVIDENCE_UNEXPECTED_EXCHANGE ' + str(n))
+for n, profile in ((7, 'server'), (8, 'expired'), (9, 'client')):
+    if not re.search(rf'^LOCAL_TLS_CERT_PROFILE {n} {profile}$', server, re.M):
+        raise SystemExit('GUEST_TLS_EVIDENCE_SERVER_CERT_PROFILE_MISSING ' + str(n))
 print('GUEST_TLS_RESEARCH_EVIDENCE_OK ordered_client_policy_and_server_exchange')

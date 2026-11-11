@@ -22,9 +22,21 @@ MARKERS = [
  'CI_ONLY_TLS_POLICY imported_groups=0 errors=RemoteCertificateChainErrors',
  'GUEST_TLS_NEGATIVE_HANDSHAKE_FAILED case=untrusted_after_remove', 'GUEST_TLS_FAILED_HANDSHAKE_IO_REJECTED case=untrusted_after_remove', 'GUEST_TLS_DER_CA_IMPORT_RETURNED',
  'GUEST_TLS_VERIFY_DISABLE_REJECTED', 'CI_ONLY_TLS_POLICY imported_groups=1 errors=RemoteCertificateChainErrors',
- 'GUEST_TLS_VERIFIED_EXCHANGE_OK', 'GUEST_TLS_COMPLETE',
+ 'CI_ONLY_TLS_CUSTOM_CHAIN valid=True statuses=', 'GUEST_TLS_VERIFIED_EXCHANGE_OK',
+ 'GUEST_TLS_CHAIN_CASE valid_server', 'GUEST_TLS_VERIFY_DISABLE_REJECTED',
+ 'CI_ONLY_TLS_POLICY imported_groups=1 errors=RemoteCertificateChainErrors',
+ 'CI_ONLY_TLS_CUSTOM_CHAIN valid=True statuses=', 'GUEST_TLS_VERIFIED_EXCHANGE_OK',
+ 'GUEST_TLS_CHAIN_CASE expired_server', 'GUEST_TLS_VERIFY_DISABLE_REJECTED',
+ 'CI_ONLY_TLS_POLICY imported_groups=1 errors=RemoteCertificateChainErrors',
+ 'CI_ONLY_TLS_CUSTOM_CHAIN valid=False statuses=NotTimeValid',
+ 'GUEST_TLS_NEGATIVE_HANDSHAKE_FAILED case=expired_server', 'GUEST_TLS_FAILED_HANDSHAKE_IO_REJECTED case=expired_server',
+ 'GUEST_TLS_CHAIN_CASE client_eku_only', 'GUEST_TLS_VERIFY_DISABLE_REJECTED',
+ 'CI_ONLY_TLS_POLICY imported_groups=1 errors=RemoteCertificateChainErrors',
+ 'CI_ONLY_TLS_CUSTOM_CHAIN valid=False statuses=NotValidForUsage',
+ 'GUEST_TLS_NEGATIVE_HANDSHAKE_FAILED case=client_eku_only', 'GUEST_TLS_FAILED_HANDSHAKE_IO_REJECTED case=client_eku_only',
+ 'GUEST_TLS_COMPLETE',
 ]
-SERVER = ''.join(f'LOCAL_TLS_HANDSHAKE_OK {n} TLSv1.3\n' for n in range(7)) + 'LOCAL_TLS_EXCHANGE_OK 2\nLOCAL_TLS_EXCHANGE_OK 6\n'
+SERVER = ''.join(f'LOCAL_TLS_HANDSHAKE_OK {n} TLSv1.3\n' for n in range(10)) + 'LOCAL_TLS_EXCHANGE_OK 2\nLOCAL_TLS_EXCHANGE_OK 6\nLOCAL_TLS_EXCHANGE_OK 7\nLOCAL_TLS_CERT_PROFILE 7 server\nLOCAL_TLS_CERT_PROFILE 8 expired\nLOCAL_TLS_CERT_PROFILE 9 client\n'
 
 
 class EvidenceTest(unittest.TestCase):
@@ -36,6 +48,10 @@ class EvidenceTest(unittest.TestCase):
    return subprocess.run([sys.executable,str(CHECKER),str(log),pid,str(srv)],capture_output=True,text=True)
  def test_success(self): self.assertEqual(self.check().returncode,0)
  def test_missing_policy_not_accepted(self): self.assertNotEqual(self.check([m for m in MARKERS if 'NameMismatch' not in m]).returncode,0)
+ def test_missing_expiry_or_purpose_not_accepted(self):
+  for status in ('NotTimeValid', 'NotValidForUsage'):
+   self.assertNotEqual(self.check([m.replace(status, 'OtherError') for m in MARKERS]).returncode, 0)
+  self.assertNotEqual(self.check(server=SERVER.replace('LOCAL_TLS_CERT_PROFILE 9 client', 'LOCAL_TLS_CERT_PROFILE 9 server')).returncode, 0)
  def test_wrong_order_not_accepted(self): self.assertNotEqual(self.check(MARKERS[:5]+list(reversed(MARKERS[5:]))).returncode,0)
  def test_wrong_pid_not_accepted(self): self.assertNotEqual(self.check(pid='1234').returncode,0)
  def test_server_missing_and_guest_error_rejected(self):

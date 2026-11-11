@@ -158,6 +158,13 @@ int main(void) {
     if (!check("import_der_ca", sslContextImportServerPki(&ctx, der, (u32)der_len, SslCertificateFormat_Der, &id))) goto ctx_done;
     say("GUEST_TLS_DER_CA_IMPORT_RETURNED");
     if (!connection(&ctx, "localhost", NULL)) goto ctx_done;
+    // Server presents leaf certificates signed by the same imported root.
+    say("GUEST_TLS_CHAIN_CASE valid_server");
+    if (!connection(&ctx, "localhost", NULL)) goto ctx_done;
+    say("GUEST_TLS_CHAIN_CASE expired_server");
+    if (!connection(&ctx, "localhost", "expired_server")) goto ctx_done;
+    say("GUEST_TLS_CHAIN_CASE client_eku_only");
+    if (!connection(&ctx, "localhost", "client_eku_only")) goto ctx_done;
     say("GUEST_TLS_COMPLETE");
 ctx_done:
     if (other_open) sslContextClose(&other);

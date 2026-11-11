@@ -185,10 +185,10 @@ index 7b371d29..053c6dc2 100644
  }
 diff --git a/src/Ryujinx.HLE/HOS/Services/Ssl/SslService/ServerTrustStore.cs b/src/Ryujinx.HLE/HOS/Services/Ssl/SslService/ServerTrustStore.cs
 new file mode 100644
-index 00000000..87d27981
+index 00000000..55715646
 --- /dev/null
 +++ b/src/Ryujinx.HLE/HOS/Services/Ssl/SslService/ServerTrustStore.cs
-@@ -0,0 +1,108 @@
+@@ -0,0 +1,111 @@
 +// Research-only implementation. This is not a release core.
 +using Ryujinx.HLE.HOS.Services.Ssl.Types;
 +using Ryujinx.Common.Logging;
@@ -290,7 +290,10 @@ index 00000000..87d27981
 +                    foreach (X509ChainElement element in presentedChain.ChainElements)
 +                        chain.ChainPolicy.ExtraStore.Add(element.Certificate);
 +                using X509Certificate2 leaf = new(certificate);
-+                return chain.Build(leaf);
++                bool valid = chain.Build(leaf);
++                string statuses = string.Join(",", Array.ConvertAll(chain.ChainStatus, s => s.Status.ToString()));
++                Logger.Info?.Print(LogClass.ServiceSsl, $"CI_ONLY_TLS_CUSTOM_CHAIN valid={valid} statuses={statuses}");
++                return valid;
 +            }
 +            catch (CryptographicException) { return false; }
 +            finally { foreach (X509Certificate2 c in owned) c.Dispose(); }
