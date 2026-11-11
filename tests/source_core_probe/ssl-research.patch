@@ -252,7 +252,7 @@ index 00000000..87d27981
 +    }
 +}
 diff --git a/src/Ryujinx.HLE/HOS/Services/Ssl/SslService/SslManagedSocketConnection.cs b/src/Ryujinx.HLE/HOS/Services/Ssl/SslService/SslManagedSocketConnection.cs
-index e089250a..d8da23af 100644
+index e089250a..71289b1c 100644
 --- a/src/Ryujinx.HLE/HOS/Services/Ssl/SslService/SslManagedSocketConnection.cs
 +++ b/src/Ryujinx.HLE/HOS/Services/Ssl/SslService/SslManagedSocketConnection.cs
 @@ -19,12 +19,14 @@ namespace Ryujinx.HLE.HOS.Services.Ssl.SslService
@@ -315,3 +315,49 @@ index e089250a..d8da23af 100644
          }
  
          public ResultCode Peek(out int peekCount, Memory<byte> buffer)
+@@ -161,6 +187,11 @@ namespace Ryujinx.HLE.HOS.Services.Ssl.SslService
+ 
+         public ResultCode Read(out int readCount, Memory<byte> buffer)
+         {
++            if (_stream == null)
++            {
++                readCount = -1;
++                return ResultCode.ConnectionAbort;
++            }
+             if (!Socket.Poll(0, SelectMode.SelectRead))
+             {
+                 readCount = -1;
+@@ -206,6 +237,11 @@ namespace Ryujinx.HLE.HOS.Services.Ssl.SslService
+ 
+         public ResultCode Write(out int writtenCount, ReadOnlyMemory<byte> buffer)
+         {
++            if (_stream == null)
++            {
++                writtenCount = -1;
++                return ResultCode.ConnectionAbort;
++            }
+             if (!Socket.Poll(0, SelectMode.SelectWrite))
+             {
+                 writtenCount = 0;
+@@ -254,6 +290,12 @@ namespace Ryujinx.HLE.HOS.Services.Ssl.SslService
+ 
+         public ResultCode GetServerCertificate(string hostname, Span<byte> certificates, out uint storageSize, out uint certificateCount)
+         {
++            if (_stream == null)
++            {
++                storageSize = 0;
++                certificateCount = 0;
++                return ResultCode.ConnectionAbort;
++            }
+             if (_stream.RemoteCertificate != null)
+             {
+                 byte[] rawCertData = _stream.RemoteCertificate.GetRawCertData();
+@@ -276,6 +318,8 @@ namespace Ryujinx.HLE.HOS.Services.Ssl.SslService
+ 
+         public void Dispose()
+         {
++            _stream?.Dispose();
++            _stream = null;
+             _bsdContext.CloseFileDescriptor(SocketFd);
+         }
+     }

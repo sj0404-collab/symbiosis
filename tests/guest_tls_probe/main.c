@@ -61,8 +61,20 @@ static int connection(SslContext* ctx, const char* host, const char* negative) {
     rc = sslConnectionDoHandshake(&conn, NULL, NULL, NULL, 0);
     say("GUEST_TLS_HANDSHAKE host=%s rc=0x%08x module=%u description=%u", host, rc, R_MODULE(rc), R_DESCRIPTION(rc));
     if (negative) {
-        if (R_FAILED(rc)) { say("GUEST_TLS_NEGATIVE_HANDSHAKE_FAILED case=%s rc=0x%08x", negative, rc); status = 1; }
-        else say("GUEST_TLS_ERROR stage=negative_accepted case=%s", negative);
+        if (R_FAILED(rc)) {
+            say("GUEST_TLS_NEGATIVE_HANDSHAKE_FAILED case=%s rc=0x%08x", negative, rc);
+            // A rejected handshake must not leave I/O reporting success or
+            // kill the guest process. These are not application data tests.
+            char dummy[8]; u32 count = 0;
+            Result rd = sslConnectionRead(&conn, dummy, sizeof(dummy), &count);
+            Result wr = sslConnectionWrite(&conn, "x", 1, &count);
+            if (R_SUCCEEDED(rd) || R_SUCCEEDED(wr)) {
+                say("GUEST_TLS_ERROR stage=io_after_failed_handshake case=%s rd=0x%08x wr=0x%08x", negative, rd, wr);
+                goto done;
+            }
+            say("GUEST_TLS_FAILED_HANDSHAKE_IO_REJECTED case=%s rd=0x%08x wr=0x%08x", negative, rd, wr);
+            status = 1;
+        } else say("GUEST_TLS_ERROR stage=negative_accepted case=%s", negative);
         goto done;
     }
     if (!check("handshake", rc)) goto done;
