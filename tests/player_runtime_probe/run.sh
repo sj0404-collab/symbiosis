@@ -289,7 +289,7 @@ if [ "${PLAYER_GUEST_TLS:-0}" = 1 ]; then
     grep -q 'LOCAL_TLS_SERVER_READY' "$server_log" || { echo 'GUEST_TLS_SERVER_NOT_READY'; exit 1; }
     echo "PLAYER_GUEST_TLS_ATTEMPT core=$guest_core internet=true bind=loopback" | tee -a "$W/redroid-status.txt"
     adb shell am start -W -n "$package/dev.symbiosis.playerruntime.DiagnosticLauncher" \
-      --es test_config 'memory=2;internet=true' --es test_kind tls | tee "$W/player-guest-tls-launch-$guest_core.txt"
+      --es test_config 'internet=true' --es test_kind tls | tee "$W/player-guest-tls-launch-$guest_core.txt"
     player_pid=$(adb shell pidof "$package:kenji" | tr -d '\r' || true)
     [ -n "$player_pid" ] || { echo 'GUEST_TLS_PLAYER_NOT_RUNNING'; exit 1; }
     guest_result=0
