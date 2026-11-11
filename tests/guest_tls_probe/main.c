@@ -140,7 +140,10 @@ int main(void) {
     if (!connection(&other, "localhost", "other_context")) goto ctx_done;
     if (!connection(&ctx, "wrong.invalid", "wrong_host")) goto ctx_done;
     if (!check("remove_test_ca", sslContextRemovePki(&ctx, id))) goto ctx_done;
-    Result second_remove = sslContextRemovePki(&ctx, id);
+    // libnx's convenience wrapper probes server, client and CRL removal on
+    // a missing ID. Test command 6 directly so an unsupported *different*
+    // command does not hide whether server removal correctly reports missing.
+    Result second_remove = serviceDispatchIn(&ctx.s, 6, id);
     if (R_SUCCEEDED(second_remove)) { say("GUEST_TLS_ERROR stage=removed_id_still_exists"); goto ctx_done; }
     say("GUEST_TLS_REMOVED_ID_REJECTED rc=0x%08x", second_remove);
     if (!connection(&ctx, "localhost", "untrusted_after_remove")) goto ctx_done;
