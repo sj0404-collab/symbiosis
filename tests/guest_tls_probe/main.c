@@ -127,6 +127,9 @@ int main(void) {
     Result invalid = sslContextImportServerPki(&ctx, invalid_cert, sizeof(invalid_cert)-1, SslCertificateFormat_Pem, &id);
     if (R_SUCCEEDED(invalid)) { say("GUEST_TLS_ERROR stage=invalid_certificate_accepted"); goto ctx_done; }
     say("GUEST_TLS_INVALID_CERT_REJECTED rc=0x%08x", invalid);
+    Result client_rc = sslContextImportClientPki(&ctx, invalid_cert, sizeof(invalid_cert)-1, "", 1, &id);
+    if (R_SUCCEEDED(client_rc)) { say("GUEST_TLS_ERROR stage=unsupported_client_pki_succeeded"); goto ctx_done; }
+    say("GUEST_TLS_CLIENT_PKI_REJECTED rc=0x%08x", client_rc);
     Result leaf_rc = sslContextImportServerPki(&ctx, leaf, (u32)leaf_len, SslCertificateFormat_Pem, &id);
     if (R_SUCCEEDED(leaf_rc)) { say("GUEST_TLS_ERROR stage=leaf_as_ca_accepted"); goto ctx_done; }
     say("GUEST_TLS_LEAF_AS_CA_REJECTED rc=0x%08x", leaf_rc);
@@ -146,6 +149,11 @@ int main(void) {
     Result second_remove = serviceDispatchIn(&ctx.s, 6, id);
     if (R_SUCCEEDED(second_remove)) { say("GUEST_TLS_ERROR stage=removed_id_still_exists"); goto ctx_done; }
     say("GUEST_TLS_REMOVED_ID_REJECTED rc=0x%08x", second_remove);
+    // Also exercise libnx's server/client/CRL fallback; unsupported client PKI
+    // must return an error rather than crash or pretend a successful removal.
+    Result fallback = sslContextRemovePki(&ctx, id);
+    if (R_SUCCEEDED(fallback)) { say("GUEST_TLS_ERROR stage=unsupported_pki_removal_succeeded"); goto ctx_done; }
+    say("GUEST_TLS_REMOVE_FALLBACK_REJECTED rc=0x%08x", fallback);
     if (!connection(&ctx, "localhost", "untrusted_after_remove")) goto ctx_done;
     if (!check("import_der_ca", sslContextImportServerPki(&ctx, der, (u32)der_len, SslCertificateFormat_Der, &id))) goto ctx_done;
     say("GUEST_TLS_DER_CA_IMPORT_RETURNED");

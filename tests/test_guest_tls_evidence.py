@@ -7,7 +7,7 @@ import unittest
 
 CHECKER = Path(__file__).parent / 'player_runtime_probe/check_guest_tls_evidence.py'
 MARKERS = [
- 'GUEST_TLS_INVALID_CERT_REJECTED', 'GUEST_TLS_LEAF_AS_CA_REJECTED',
+ 'GUEST_TLS_INVALID_CERT_REJECTED', 'GUEST_TLS_CLIENT_PKI_REJECTED', 'GUEST_TLS_LEAF_AS_CA_REJECTED',
  'GUEST_TLS_VERIFY_DISABLE_REJECTED', 'CI_ONLY_TLS_POLICY imported_groups=0 errors=RemoteCertificateChainErrors',
  'GUEST_TLS_NEGATIVE_HANDSHAKE_FAILED case=no_import', 'GUEST_TLS_FAILED_HANDSHAKE_IO_REJECTED case=no_import', 'GUEST_TLS_STAGE import_wrong_ca rc=0x00000000',
  'GUEST_TLS_VERIFY_DISABLE_REJECTED', 'CI_ONLY_TLS_POLICY imported_groups=1 errors=RemoteCertificateChainErrors',
@@ -18,7 +18,7 @@ MARKERS = [
  'GUEST_TLS_NEGATIVE_HANDSHAKE_FAILED case=other_context', 'GUEST_TLS_FAILED_HANDSHAKE_IO_REJECTED case=other_context', 'GUEST_TLS_VERIFY_DISABLE_REJECTED',
  'CI_ONLY_TLS_POLICY imported_groups=1 errors=RemoteCertificateNameMismatch, RemoteCertificateChainErrors',
  'GUEST_TLS_NEGATIVE_HANDSHAKE_FAILED case=wrong_host', 'GUEST_TLS_FAILED_HANDSHAKE_IO_REJECTED case=wrong_host', 'GUEST_TLS_STAGE remove_test_ca rc=0x00000000',
- 'GUEST_TLS_REMOVED_ID_REJECTED', 'GUEST_TLS_VERIFY_DISABLE_REJECTED',
+ 'GUEST_TLS_REMOVED_ID_REJECTED', 'GUEST_TLS_REMOVE_FALLBACK_REJECTED', 'GUEST_TLS_VERIFY_DISABLE_REJECTED',
  'CI_ONLY_TLS_POLICY imported_groups=0 errors=RemoteCertificateChainErrors',
  'GUEST_TLS_NEGATIVE_HANDSHAKE_FAILED case=untrusted_after_remove', 'GUEST_TLS_FAILED_HANDSHAKE_IO_REJECTED case=untrusted_after_remove', 'GUEST_TLS_DER_CA_IMPORT_RETURNED',
  'GUEST_TLS_VERIFY_DISABLE_REJECTED', 'CI_ONLY_TLS_POLICY imported_groups=1 errors=RemoteCertificateChainErrors',

@@ -20,6 +20,7 @@ if not rows:
     raise SystemExit('GUEST_TLS_EVIDENCE_NO_PID_LOG')
 markers = [
     r'GUEST_TLS_INVALID_CERT_REJECTED',
+    r'GUEST_TLS_CLIENT_PKI_REJECTED',
     r'GUEST_TLS_LEAF_AS_CA_REJECTED',
     r'GUEST_TLS_VERIFY_DISABLE_REJECTED',
     r'CI_ONLY_TLS_POLICY imported_groups=0 errors=.*RemoteCertificateChainErrors',
@@ -45,6 +46,7 @@ markers = [
     r'GUEST_TLS_FAILED_HANDSHAKE_IO_REJECTED case=wrong_host',
     r'GUEST_TLS_STAGE remove_test_ca rc=0x00000000',
     r'GUEST_TLS_REMOVED_ID_REJECTED',
+    r'GUEST_TLS_REMOVE_FALLBACK_REJECTED',
     r'GUEST_TLS_VERIFY_DISABLE_REJECTED',
     r'CI_ONLY_TLS_POLICY imported_groups=0 errors=.*RemoteCertificateChainErrors',
     r'GUEST_TLS_NEGATIVE_HANDSHAKE_FAILED case=untrusted_after_remove',

@@ -71,19 +71,27 @@ index 92e73f9f..1e8c8436 100644
          }
  
 diff --git a/src/Ryujinx.HLE/HOS/Services/Ssl/SslService/ISslContext.cs b/src/Ryujinx.HLE/HOS/Services/Ssl/SslService/ISslContext.cs
-index 7b371d29..e89bf5c0 100644
+index 7b371d29..053c6dc2 100644
 --- a/src/Ryujinx.HLE/HOS/Services/Ssl/SslService/ISslContext.cs
 +++ b/src/Ryujinx.HLE/HOS/Services/Ssl/SslService/ISslContext.cs
-@@ -10,7 +10,7 @@ namespace Ryujinx.HLE.HOS.Services.Ssl.SslService
+@@ -1,6 +1,5 @@
+ using Ryujinx.Common.Logging;
+ using Ryujinx.HLE.HOS.Services.Ssl.Types;
+-using System.Text;
+ 
+ namespace Ryujinx.HLE.HOS.Services.Ssl.SslService
+ {
+@@ -10,8 +9,7 @@ namespace Ryujinx.HLE.HOS.Services.Ssl.SslService
  
          private readonly ulong _processId;
          private readonly SslVersion _sslVersion;
 -        private ulong _serverCertificateId;
+-        private ulong _clientCertificateId;
 +        private readonly ServerTrustStore _serverTrust = new();
-         private ulong _clientCertificateId;
  
          public ISslContext(ulong processId, SslVersion sslVersion)
-@@ -23,7 +23,7 @@ namespace Ryujinx.HLE.HOS.Services.Ssl.SslService
+         {
+@@ -23,7 +21,7 @@ namespace Ryujinx.HLE.HOS.Services.Ssl.SslService
          // CreateConnection() -> object<nn::ssl::sf::ISslConnection>
          public ResultCode CreateConnection(ServiceCtx context)
          {
@@ -92,7 +100,7 @@ index 7b371d29..e89bf5c0 100644
  
              _connectionCount++;
  
-@@ -45,20 +45,33 @@ namespace Ryujinx.HLE.HOS.Services.Ssl.SslService
+@@ -45,43 +43,53 @@ namespace Ryujinx.HLE.HOS.Services.Ssl.SslService
          // ImportServerPki(nn::ssl::sf::CertificateFormat certificateFormat, buffer<bytes, 5> certificate) -> u64 certificateId
          public ResultCode ImportServerPki(ServiceCtx context)
          {
@@ -135,8 +143,46 @@ index 7b371d29..e89bf5c0 100644
 +        }
 +
          [CommandCmif(5)]
-         // ImportClientPki(buffer<bytes, 5> certificate, buffer<bytes, 5> ascii_password) -> u64 certificateId
+-        // ImportClientPki(buffer<bytes, 5> certificate, buffer<bytes, 5> ascii_password) -> u64 certificateId
++        // ImportClientPki is not implemented in this research candidate.
          public ResultCode ImportClientPki(ServiceCtx context)
+         {
+-#pragma warning disable IDE0059 // Remove unnecessary value assignment
+-            ulong certificateDataPosition = context.Request.SendBuff[0].Position;
+-            ulong certificateDataSize = context.Request.SendBuff[0].Size;
+-#pragma warning restore IDE0059
+-
+-            ulong asciiPasswordDataPosition = context.Request.SendBuff[1].Position;
+-            ulong asciiPasswordDataSize = context.Request.SendBuff[1].Size;
+-
+-            byte[] asciiPasswordData = new byte[asciiPasswordDataSize];
+-
+-            context.Memory.Read(asciiPasswordDataPosition, asciiPasswordData);
+-
+-            string asciiPassword = Encoding.ASCII.GetString(asciiPasswordData).Trim('\0');
+-
+-            context.ResponseData.Write(_clientCertificateId++);
++            return ResultCode.InvalidOption;
++        }
+ 
+-            Logger.Stub?.PrintStub(LogClass.ServiceSsl, new { asciiPassword });
++        [CommandCmif(7)]
++        // Fail closed: do not claim a client PKI was removed.
++        public ResultCode RemoveClientPki(ServiceCtx context)
++        {
++            return ResultCode.InvalidOption;
++        }
+ 
+-            return ResultCode.Success;
++        [CommandCmif(11)]
++        // Fail closed: CRL storage is not implemented.
++        public ResultCode RemoveCrl(ServiceCtx context)
++        {
++            return ResultCode.InvalidOption;
+         }
++
+     }
+ }
 diff --git a/src/Ryujinx.HLE/HOS/Services/Ssl/SslService/ServerTrustStore.cs b/src/Ryujinx.HLE/HOS/Services/Ssl/SslService/ServerTrustStore.cs
 new file mode 100644
 index 00000000..87d27981
