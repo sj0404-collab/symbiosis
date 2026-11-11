@@ -70,6 +70,14 @@ on:
         description: "Use nonexistent interface in research-only negative test"
         type: boolean
         default: false
+      run_player_reference_zero_interface:
+        description: "Test zero auto sentinel in research core"
+        type: boolean
+        default: false
+      run_player_reference_valid_interface:
+        description: "Test explicit loopback adapter in research core"
+        type: boolean
+        default: false
       run_player_compile:
         description: "Compile real patched app Kotlin without assembling or releasing an APK"
         type: boolean
@@ -359,6 +367,8 @@ jobs:
       reference_tls_patch: ${{ inputs.run_player_reference_tls_patch == true }}
       reference_network_patch: ${{ inputs.run_player_reference_network_patch == true }}
       reference_missing_interface: ${{ inputs.run_player_reference_missing_interface == true }}
+      reference_zero_interface: ${{ inputs.run_player_reference_zero_interface == true }}
+      reference_valid_interface: ${{ inputs.run_player_reference_valid_interface == true }}
 
   # Baseline only. Source is a public related project, not claimed to be the
   # source of either existing pinned binary. No resulting .so is shipped.

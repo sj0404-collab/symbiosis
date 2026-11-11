@@ -1,0 +1,13 @@
+diff --git a/src/LibKenjinx/LibKenjinx.cs b/src/LibKenjinx/LibKenjinx.cs
+index 4b68e2b3..7a8531e5 100644
+--- a/src/LibKenjinx/LibKenjinx.cs
++++ b/src/LibKenjinx/LibKenjinx.cs
+@@ -922,7 +922,7 @@ namespace LibKenjinx
+                                                                   LibKenjinx.GraphicsConfiguration.AspectRatio,
+                                                                   100,
+                                                                   useHypervisor,
+-                                                                  "",
++                                                                  System.Net.NetworkInformation.NetworkInterface.GetAllNetworkInterfaces().First(adapter => adapter.Id != "0" && adapter.GetIPProperties().UnicastAddresses.Any(info => info.Address.Equals(System.Net.IPAddress.Loopback))).Id,
+                                                                   Ryujinx.Common.Configuration.Multiplayer.MultiplayerMode.Disabled,
+                                                                   false,
+                                                                   "",

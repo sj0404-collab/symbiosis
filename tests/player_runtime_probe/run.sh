@@ -119,6 +119,8 @@ if [ "${PLAYER_REFERENCE_CORE:-0}" = 1 ]; then
   if [ "${PLAYER_REFERENCE_TLS_PATCH:-0}" = 1 ]; then primary_core="$primary_core-ssl-patch"; fi
   if [ "${PLAYER_REFERENCE_NETWORK_PATCH:-0}" = 1 ]; then primary_core="$primary_core-network-patch"; fi
   if [ "${PLAYER_REFERENCE_MISSING_INTERFACE:-0}" = 1 ]; then primary_core="$primary_core-missing-interface-fixture"; fi
+  if [ "${PLAYER_REFERENCE_ZERO_INTERFACE:-0}" = 1 ]; then primary_core="$primary_core-zero-interface-fixture"; fi
+  if [ "${PLAYER_REFERENCE_VALID_INTERFACE:-0}" = 1 ]; then primary_core="$primary_core-valid-interface-fixture"; fi
 else
   [ "$primary_hash" = 969431b3962408dd02ce38bd2cd4b2a954d11e5212ddef3f65c80a0b419918b8 ] || { echo 'SYM_CORE_HASH_MISMATCH'; exit 1; }
   primary_core=sym
@@ -369,6 +371,11 @@ if [ "${PLAYER_GUEST_NETWORK:-0}" = 1 ]; then
           if python3 tests/player_runtime_probe/check_guest_network_evidence.py "$log" "$player_pid" invalid-auto "$internet" "$server_log" >> "$W/guest-network-guest-$name.txt" 2>&1; then
             outcome=verified_missing_interface_error
           else outcome=invalid_interface_evidence_mismatch; fi
+        fi
+        if [ "${PLAYER_REFERENCE_VALID_INTERFACE:-0}:$bind_mode:$outcome" = 1:auto:verified_exchange ]; then
+          if grep -Eq "^[0-9-]+ +[0-9:.]+ +$player_pid +[0-9]+ .*CI_EXACT_INTERFACE_BOUND address=127\.0\.0\.1 id=.+" "$log"; then
+            echo 'CI_EXACT_INTERFACE_BOUND_CONFIRMED' >> "$W/guest-network-guest-$name.txt"
+          else outcome=valid_interface_evidence_missing; fi
         fi
         echo "PLAYER_GUEST_NET_RESULT core=$net_label internet=$internet bind=$bind_mode outcome=$outcome" | tee -a "$W/redroid-status.txt"
         # Disabled Internet may legitimately reject the request, but this

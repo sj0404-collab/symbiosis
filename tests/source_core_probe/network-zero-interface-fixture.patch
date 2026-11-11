@@ -1,0 +1,13 @@
+diff --git a/src/LibKenjinx/LibKenjinx.cs b/src/LibKenjinx/LibKenjinx.cs
+index 4b68e2b3..ed2fcebf 100644
+--- a/src/LibKenjinx/LibKenjinx.cs
++++ b/src/LibKenjinx/LibKenjinx.cs
+@@ -922,7 +922,7 @@ namespace LibKenjinx
+                                                                   LibKenjinx.GraphicsConfiguration.AspectRatio,
+                                                                   100,
+                                                                   useHypervisor,
+-                                                                  "",
++                                                                  "0",
+                                                                   Ryujinx.Common.Configuration.Multiplayer.MultiplayerMode.Disabled,
+                                                                   false,
+                                                                   "",
