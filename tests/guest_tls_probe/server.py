@@ -4,16 +4,17 @@ import socket
 import ssl
 import sys
 
-cert, key = sys.argv[1:]
+cert, key = sys.argv[1:3]
+port = int(sys.argv[3]) if len(sys.argv) > 3 else 19443
 context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
 context.load_cert_chain(cert, key)
 with socket.socket() as listener:
     listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-    listener.bind(('127.0.0.1', 19443))
+    listener.bind(('127.0.0.1', port))
     listener.listen(4)
     listener.settimeout(180)
-    print('LOCAL_TLS_SERVER_READY', flush=True)
-    for i in range(2):
+    print(f'LOCAL_TLS_SERVER_READY port={listener.getsockname()[1]}', flush=True)
+    for i in range(3):
         try:
             client, address = listener.accept()
             client.settimeout(20)

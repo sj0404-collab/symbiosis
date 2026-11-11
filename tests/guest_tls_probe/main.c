@@ -21,11 +21,14 @@ static int check(const char *stage, Result rc) {
 }
 
 /* Require genuine verify flags and the same local server in both trials. */
-static int connection(SslContext* ctx, const char* host, int correct) {
+static int connection(SslContext* ctx, const char* host, const char* negative) {
     SslConnection conn = {0};
     int fd = -1, transferred = -1, status = 0;
     Result rc;
     if (!check("connection_create", sslContextCreateConnection(ctx, &conn))) return 0;
+    rc = sslConnectionSetVerifyOption(&conn, 0);
+    if (R_SUCCEEDED(rc)) { say("GUEST_TLS_ERROR stage=verification_disabled"); goto done; }
+    say("GUEST_TLS_VERIFY_DISABLE_REJECTED rc=0x%08x", rc);
     if (!check("set_verify", sslConnectionSetVerifyOption(&conn, SslVerifyOption_PeerCa | SslVerifyOption_HostName))) goto done;
     u32 flags = 0;
     if (!check("get_verify", sslConnectionGetVerifyOption(&conn, &flags))) goto done;
@@ -57,9 +60,9 @@ static int connection(SslContext* ctx, const char* host, int correct) {
     }
     rc = sslConnectionDoHandshake(&conn, NULL, NULL, NULL, 0);
     say("GUEST_TLS_HANDSHAKE host=%s rc=0x%08x module=%u description=%u", host, rc, R_MODULE(rc), R_DESCRIPTION(rc));
-    if (!correct) {
-        if (R_FAILED(rc)) { say("GUEST_TLS_WRONG_HOST_HANDSHAKE_FAILED rc=0x%08x", rc); status = 1; }
-        else say("GUEST_TLS_ERROR stage=wrong_hostname_accepted");
+    if (negative) {
+        if (R_FAILED(rc)) { say("GUEST_TLS_NEGATIVE_HANDSHAKE_FAILED case=%s rc=0x%08x", negative, rc); status = 1; }
+        else say("GUEST_TLS_ERROR stage=negative_accepted case=%s", negative);
         goto done;
     }
     if (!check("handshake", rc)) goto done;
@@ -67,7 +70,13 @@ static int connection(SslContext* ctx, const char* host, int correct) {
     u32 wrote = 0, read = 0;
     if (!check("write", sslConnectionWrite(&conn, request, sizeof(request)-1, &wrote)) || wrote != sizeof(request)-1) goto done;
     char answer[32] = {0};
-    if (!check("read", sslConnectionRead(&conn, answer, sizeof(answer), &read))) goto done;
+    // WouldBlock may be returned before the server has sent its response.
+    for (int attempt = 0; attempt < 60; attempt++) {
+        rc = sslConnectionRead(&conn, answer, sizeof(answer), &read);
+        if (rc != MAKERESULT(123, 204)) break;
+        svcSleepThread(50000000LL);
+    }
+    if (!check("read", rc)) goto done;
     if (read != 10 || memcmp(answer, "guest-pong", 10) != 0) {
         say("GUEST_TLS_ERROR stage=payload size=%u", read); goto done;
     }
@@ -89,10 +98,16 @@ int main(void) {
     unsigned char cert[4096]; size_t len = fread(cert, 1, sizeof(cert), f); fclose(f);
     if (!len || len == sizeof(cert)) { say("GUEST_TLS_ERROR stage=guest_cert_size bytes=%zu", len); goto ctx_done; }
     u64 id = 0;
+    const char invalid_cert[] = "not a certificate";
+    Result invalid = sslContextImportServerPki(&ctx, invalid_cert, sizeof(invalid_cert)-1, SslCertificateFormat_Pem, &id);
+    if (R_SUCCEEDED(invalid)) { say("GUEST_TLS_ERROR stage=invalid_certificate_accepted"); goto ctx_done; }
+    say("GUEST_TLS_INVALID_CERT_REJECTED rc=0x%08x", invalid);
     if (!check("import_test_ca", sslContextImportServerPki(&ctx, cert, (u32)len, SslCertificateFormat_Pem, &id))) goto ctx_done;
     say("GUEST_TLS_CA_IMPORT_RETURNED bytes=%zu id=%llu", len, (unsigned long long)id);
-    if (!connection(&ctx, "localhost", 1)) goto ctx_done;
-    if (!connection(&ctx, "wrong.invalid", 0)) goto ctx_done;
+    if (!connection(&ctx, "localhost", NULL)) goto ctx_done;
+    if (!connection(&ctx, "wrong.invalid", "wrong_host")) goto ctx_done;
+    if (!check("remove_test_ca", sslContextRemovePki(&ctx, id))) goto ctx_done;
+    if (!connection(&ctx, "localhost", "untrusted_after_remove")) goto ctx_done;
     say("GUEST_TLS_COMPLETE");
 ctx_done:
     sslContextClose(&ctx);

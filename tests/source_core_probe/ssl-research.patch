@@ -1,0 +1,307 @@
+diff --git a/src/Ryujinx.HLE/HOS/Services/Ssl/ResultCode.cs b/src/Ryujinx.HLE/HOS/Services/Ssl/ResultCode.cs
+index e23621d..d0ac56f 100644
+--- a/src/Ryujinx.HLE/HOS/Services/Ssl/ResultCode.cs
++++ b/src/Ryujinx.HLE/HOS/Services/Ssl/ResultCode.cs
+@@ -16,5 +16,6 @@ namespace Ryujinx.HLE.HOS.Services.Ssl
+         Timeout = (205 << ErrorCodeShift) | OsModuleId,
+         ConnectionReset = (209 << ErrorCodeShift) | OsModuleId,
+         ConnectionAbort = (210 << ErrorCodeShift) | OsModuleId,
++        PkiNotFound = (214 << ErrorCodeShift) | OsModuleId,
+     }
+ }
+diff --git a/src/Ryujinx.HLE/HOS/Services/Ssl/SslService/ISslConnection.cs b/src/Ryujinx.HLE/HOS/Services/Ssl/SslService/ISslConnection.cs
+index 92e73f9..1e8c843 100644
+--- a/src/Ryujinx.HLE/HOS/Services/Ssl/SslService/ISslConnection.cs
++++ b/src/Ryujinx.HLE/HOS/Services/Ssl/SslService/ISslConnection.cs
+@@ -16,6 +16,7 @@ namespace Ryujinx.HLE.HOS.Services.Ssl.SslService
+         private bool _enableAlpn;
+ 
+         private readonly SslVersion _sslVersion;
++        private readonly ServerTrustStore _serverTrust;
+         private IoMode _ioMode;
+         private VerifyOption _verifyOption;
+         private SessionCacheMode _sessionCacheMode;
+@@ -27,8 +28,9 @@ namespace Ryujinx.HLE.HOS.Services.Ssl.SslService
+ 
+         private byte[] _nextAplnProto;
+ 
+-        public ISslConnection(ulong processId, SslVersion sslVersion)
++        public ISslConnection(ulong processId, SslVersion sslVersion, ServerTrustStore serverTrust)
+         {
++            _serverTrust = serverTrust;
+             _processId = processId;
+             _sslVersion = sslVersion;
+             _ioMode = IoMode.Blocking;
+@@ -79,7 +81,7 @@ namespace Ryujinx.HLE.HOS.Services.Ssl.SslService
+         {
+             ISocket bsdSocket = _bsdContext.RetrieveSocket(socketFd);
+ 
+-            _connection = new SslManagedSocketConnection(_bsdContext, _sslVersion, socketFd, bsdSocket);
++            _connection = new SslManagedSocketConnection(_bsdContext, _sslVersion, socketFd, bsdSocket, _serverTrust);
+         }
+ 
+         [CommandCmif(1)]
+@@ -104,9 +106,16 @@ namespace Ryujinx.HLE.HOS.Services.Ssl.SslService
+         // SetVerifyOption(nn::ssl::sf::VerifyOption)
+         public ResultCode SetVerifyOption(ServiceCtx context)
+         {
+-            _verifyOption = (VerifyOption)context.RequestData.ReadUInt32();
+-
+-            Logger.Stub?.PrintStub(LogClass.ServiceSsl, new { _verifyOption });
++            VerifyOption requested = (VerifyOption)context.RequestData.ReadUInt32();
++            const VerifyOption required = VerifyOption.PeerCa | VerifyOption.HostName;
++            const VerifyOption supported = required | VerifyOption.DateCheck;
++            // Only the verified mode is implemented in this research build.
++            // Unsupported flags and any attempt to disable verification fail closed.
++            if ((requested & required) != required || (requested & ~supported) != 0)
++            {
++                return ResultCode.InvalidOption;
++            }
++            _verifyOption = requested;
+ 
+             return ResultCode.Success;
+         }
+@@ -163,8 +172,6 @@ namespace Ryujinx.HLE.HOS.Services.Ssl.SslService
+         {
+             context.ResponseData.Write((uint)_verifyOption);
+ 
+-            Logger.Stub?.PrintStub(LogClass.ServiceSsl, new { _verifyOption });
+-
+             return ResultCode.Success;
+         }
+ 
+diff --git a/src/Ryujinx.HLE/HOS/Services/Ssl/SslService/ISslContext.cs b/src/Ryujinx.HLE/HOS/Services/Ssl/SslService/ISslContext.cs
+index 7b371d2..e89bf5c 100644
+--- a/src/Ryujinx.HLE/HOS/Services/Ssl/SslService/ISslContext.cs
++++ b/src/Ryujinx.HLE/HOS/Services/Ssl/SslService/ISslContext.cs
+@@ -10,7 +10,7 @@ namespace Ryujinx.HLE.HOS.Services.Ssl.SslService
+ 
+         private readonly ulong _processId;
+         private readonly SslVersion _sslVersion;
+-        private ulong _serverCertificateId;
++        private readonly ServerTrustStore _serverTrust = new();
+         private ulong _clientCertificateId;
+ 
+         public ISslContext(ulong processId, SslVersion sslVersion)
+@@ -23,7 +23,7 @@ namespace Ryujinx.HLE.HOS.Services.Ssl.SslService
+         // CreateConnection() -> object<nn::ssl::sf::ISslConnection>
+         public ResultCode CreateConnection(ServiceCtx context)
+         {
+-            MakeObject(context, new ISslConnection(_processId, _sslVersion));
++            MakeObject(context, new ISslConnection(_processId, _sslVersion, _serverTrust));
+ 
+             _connectionCount++;
+ 
+@@ -45,20 +45,33 @@ namespace Ryujinx.HLE.HOS.Services.Ssl.SslService
+         // ImportServerPki(nn::ssl::sf::CertificateFormat certificateFormat, buffer<bytes, 5> certificate) -> u64 certificateId
+         public ResultCode ImportServerPki(ServiceCtx context)
+         {
+-            CertificateFormat certificateFormat = (CertificateFormat)context.RequestData.ReadUInt32();
+-
+-#pragma warning disable IDE0059 // Remove unnecessary value assignment
+-            ulong certificateDataPosition = context.Request.SendBuff[0].Position;
+-            ulong certificateDataSize = context.Request.SendBuff[0].Size;
+-#pragma warning restore IDE0059
+-
+-            context.ResponseData.Write(_serverCertificateId++);
+-
+-            Logger.Stub?.PrintStub(LogClass.ServiceSsl, new { certificateFormat });
+-
++            CertificateFormat format = (CertificateFormat)context.RequestData.ReadUInt32();
++            ulong position = context.Request.SendBuff[0].Position;
++            ulong size = context.Request.SendBuff[0].Size;
++            if (size == 0 || size > ServerTrustStore.MaxImportBytes)
++            {
++                return ResultCode.InvalidOption;
++            }
++
++            byte[] data = new byte[(int)size];
++            context.Memory.Read(position, data);
++            if (!_serverTrust.TryImport(format, data, out ulong id))
++            {
++                return ResultCode.InvalidOption;
++            }
++
++            context.ResponseData.Write(id);
+             return ResultCode.Success;
+         }
+ 
++        [CommandCmif(6)]
++        // RemoveServerPki(u64 certificateId)
++        public ResultCode RemoveServerPki(ServiceCtx context)
++        {
++            ulong id = context.RequestData.ReadUInt64();
++            return _serverTrust.Remove(id) ? ResultCode.Success : ResultCode.PkiNotFound;
++        }
++
+         [CommandCmif(5)]
+         // ImportClientPki(buffer<bytes, 5> certificate, buffer<bytes, 5> ascii_password) -> u64 certificateId
+         public ResultCode ImportClientPki(ServiceCtx context)
+diff --git a/src/Ryujinx.HLE/HOS/Services/Ssl/SslService/ServerTrustStore.cs b/src/Ryujinx.HLE/HOS/Services/Ssl/SslService/ServerTrustStore.cs
+new file mode 100644
+index 0000000..4721bc7
+--- /dev/null
++++ b/src/Ryujinx.HLE/HOS/Services/Ssl/SslService/ServerTrustStore.cs
+@@ -0,0 +1,98 @@
++// Research-only implementation. This is not a release core.
++using Ryujinx.HLE.HOS.Services.Ssl.Types;
++using System;
++using System.Collections.Generic;
++using System.Net.Security;
++using System.Security.Cryptography;
++using System.Security.Cryptography.X509Certificates;
++using System.Text;
++
++namespace Ryujinx.HLE.HOS.Services.Ssl.SslService
++{
++    // Roots are scoped to one SSL context, never added to the system store.
++    sealed class ServerTrustStore
++    {
++        public const int MaxImportBytes = 1024 * 1024;
++        private const int MaxImports = 71;
++        private readonly object _sync = new();
++        private readonly Dictionary<ulong, byte[][]> _imports = new();
++        private ulong _nextId;
++
++        public bool TryImport(CertificateFormat format, byte[] data, out ulong id)
++        {
++            id = 0;
++            if (data == null || data.Length == 0 || data.Length > MaxImportBytes ||
++                (format != CertificateFormat.Pem && format != CertificateFormat.Der)) return false;
++            X509Certificate2Collection collection = new();
++            try
++            {
++                if (format == CertificateFormat.Pem) collection.ImportFromPem(Encoding.ASCII.GetString(data));
++                else collection.Import(data);
++                if (collection.Count == 0 || collection.Count > 128) return false;
++                byte[][] certificates = new byte[collection.Count][];
++                for (int i = 0; i < collection.Count; i++)
++                {
++                    if (collection[i].HasPrivateKey) return false;
++                    certificates[i] = collection[i].RawData;
++                }
++                lock (_sync)
++                {
++                    if (_imports.Count >= MaxImports || _nextId == ulong.MaxValue) return false;
++                    id = _nextId++;
++                    _imports.Add(id, certificates);
++                    return true;
++                }
++            }
++            catch (CryptographicException) { return false; }
++            finally { foreach (X509Certificate2 c in collection) c.Dispose(); }
++        }
++
++        public bool Remove(ulong id)
++        {
++            lock (_sync) return _imports.Remove(id);
++        }
++
++        // A default system-valid chain is accepted; otherwise build a second
++        // chain rooted ONLY in explicitly imported context certificates. Never
++        // ignore a missing certificate or a hostname mismatch. Dates and normal
++        // chain constraints are enforced; revocation is not checked here, same
++        // as the pre-existing AuthenticateAsClient(..., checkRevocation:false).
++        public bool ValidateServerCertificate(object sender, X509Certificate certificate,
++            X509Chain presentedChain, SslPolicyErrors errors)
++        {
++            if (certificate == null ||
++                (errors & (SslPolicyErrors.RemoteCertificateNotAvailable | SslPolicyErrors.RemoteCertificateNameMismatch)) != 0)
++                return false;
++            if (errors == SslPolicyErrors.None) return true;
++            if ((errors & ~SslPolicyErrors.RemoteCertificateChainErrors) != 0) return false;
++            List<byte[]> roots = new();
++            lock (_sync)
++            {
++                foreach (byte[][] imported in _imports.Values) roots.AddRange(imported);
++            }
++            if (roots.Count == 0) return false;
++            X509Certificate2Collection owned = new();
++            try
++            {
++                using X509Chain chain = new();
++                chain.ChainPolicy.TrustMode = X509ChainTrustMode.CustomRootTrust;
++                chain.ChainPolicy.RevocationMode = X509RevocationMode.NoCheck;
++                chain.ChainPolicy.VerificationFlags = X509VerificationFlags.NoFlag;
++                chain.ChainPolicy.ApplicationPolicy.Add(new Oid("1.3.6.1.5.5.7.3.1")); // TLS server auth
++                foreach (byte[] raw in roots)
++                {
++                    X509Certificate2 root = new(raw);
++                    owned.Add(root);
++                    chain.ChainPolicy.CustomTrustStore.Add(root);
++                }
++                if (presentedChain != null)
++                    foreach (X509ChainElement element in presentedChain.ChainElements)
++                        chain.ChainPolicy.ExtraStore.Add(element.Certificate);
++                using X509Certificate2 leaf = new(certificate);
++                return chain.Build(leaf);
++            }
++            catch (CryptographicException) { return false; }
++            finally { foreach (X509Certificate2 c in owned) c.Dispose(); }
++        }
++    }
++}
+diff --git a/src/Ryujinx.HLE/HOS/Services/Ssl/SslService/SslManagedSocketConnection.cs b/src/Ryujinx.HLE/HOS/Services/Ssl/SslService/SslManagedSocketConnection.cs
+index e089250..d8da23a 100644
+--- a/src/Ryujinx.HLE/HOS/Services/Ssl/SslService/SslManagedSocketConnection.cs
++++ b/src/Ryujinx.HLE/HOS/Services/Ssl/SslService/SslManagedSocketConnection.cs
+@@ -19,12 +19,14 @@ namespace Ryujinx.HLE.HOS.Services.Ssl.SslService
+ 
+         private readonly BsdContext _bsdContext;
+         private readonly SslVersion _sslVersion;
++        private readonly ServerTrustStore _serverTrust;
+         private SslStream _stream;
+         private bool _isBlockingSocket;
+         private int _previousReadTimeout;
+ 
+-        public SslManagedSocketConnection(BsdContext bsdContext, SslVersion sslVersion, int socketFd, ISocket socket)
++        public SslManagedSocketConnection(BsdContext bsdContext, SslVersion sslVersion, int socketFd, ISocket socket, ServerTrustStore serverTrust)
+         {
++            _serverTrust = serverTrust;
+             _bsdContext = bsdContext;
+             _sslVersion = sslVersion;
+ 
+@@ -116,13 +118,37 @@ namespace Ryujinx.HLE.HOS.Services.Ssl.SslService
+ 
+         public ResultCode Handshake(string hostName)
+         {
++            // Do not permit an empty name in the mode implemented here.
++            if (string.IsNullOrWhiteSpace(hostName))
++            {
++                return ResultCode.InvalidOption;
++            }
+             StartSslOperation();
+-            _stream = new SslStream(new NetworkStream(((DefaultSocket)((ManagedSocket)Socket).Socket).BaseSocket, false), false, null, null);
+-            hostName = RetrieveHostName(hostName);
+-            _stream.AuthenticateAsClient(hostName, null, TranslateSslVersion(_sslVersion), false);
+-            EndSslOperation();
+-
+-            return ResultCode.Success;
++            try
++            {
++                _stream = new SslStream(
++                    new NetworkStream(((DefaultSocket)((ManagedSocket)Socket).Socket).BaseSocket, false),
++                    false, _serverTrust.ValidateServerCertificate, null);
++                _stream.AuthenticateAsClient(hostName, null, TranslateSslVersion(_sslVersion), false);
++                return ResultCode.Success;
++            }
++            catch (AuthenticationException)
++            {
++                // Research fallback, not a claim of precise Switch error mapping.
++                _stream?.Dispose();
++                _stream = null;
++                return ResultCode.ConnectionAbort;
++            }
++            catch (IOException)
++            {
++                _stream?.Dispose();
++                _stream = null;
++                return ResultCode.ConnectionAbort;
++            }
++            finally
++            {
++                EndSslOperation();
++            }
+         }
+ 
+         public ResultCode Peek(out int peekCount, Memory<byte> buffer)

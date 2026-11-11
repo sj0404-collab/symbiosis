@@ -111,7 +111,11 @@ if [ "${PLAYER_REFERENCE_CORE:-0}" = 1 ]; then
   [ "${PLAYER_COMPARE_SPACE:-0}" != 1 ] || { echo 'REFERENCE_AND_SPACE_COMPARISON_UNSUPPORTED'; exit 1; }
   source_hash=$(cat "$W/source-core-sha256.txt")
   [[ "$source_hash" =~ ^[0-9a-f]{64}$ ]] && [ "$primary_hash" = "$source_hash" ] || { echo 'SOURCE_CORE_HASH_MISMATCH'; exit 1; }
-  primary_core=source-research
+  if [ "${PLAYER_REFERENCE_TLS_PATCH:-0}" = 1 ]; then
+    primary_core=source-research-ssl-patch
+  else
+    primary_core=source-research
+  fi
 else
   [ "$primary_hash" = 969431b3962408dd02ce38bd2cd4b2a954d11e5212ddef3f65c80a0b419918b8 ] || { echo 'SYM_CORE_HASH_MISMATCH'; exit 1; }
   primary_core=sym
@@ -314,15 +318,17 @@ if [ "${PLAYER_GUEST_TLS:-0}" = 1 ]; then
     if [ "$guest_result" = 1 ]; then
       grep -q 'LOCAL_TLS_EXCHANGE_OK 0' "$server_log" || guest_result=0
       for ((n=0;n<10;n++)); do
-        grep -Eq 'LOCAL_TLS_HANDSHAKE_OR_IO_FAILED 1 SSLError .*ALERT_(BAD_CERTIFICATE|CERTIFICATE_UNKNOWN)' "$server_log" && break
+        grep -Eq 'LOCAL_TLS_HANDSHAKE_OR_IO_FAILED 1 SSLError .*ALERT_(BAD_CERTIFICATE|CERTIFICATE_UNKNOWN|UNKNOWN_CA)' "$server_log" && \
+          grep -Eq 'LOCAL_TLS_HANDSHAKE_OR_IO_FAILED 2 SSLError .*ALERT_(BAD_CERTIFICATE|CERTIFICATE_UNKNOWN|UNKNOWN_CA)' "$server_log" && break
         sleep 1
       done
-      grep -Eq 'LOCAL_TLS_HANDSHAKE_OR_IO_FAILED 1 SSLError .*ALERT_(BAD_CERTIFICATE|CERTIFICATE_UNKNOWN)' "$server_log" || guest_result=0
+      grep -Eq 'LOCAL_TLS_HANDSHAKE_OR_IO_FAILED 1 SSLError .*ALERT_(BAD_CERTIFICATE|CERTIFICATE_UNKNOWN|UNKNOWN_CA)' "$server_log" || guest_result=0
+      grep -Eq 'LOCAL_TLS_HANDSHAKE_OR_IO_FAILED 2 SSLError .*ALERT_(BAD_CERTIFICATE|CERTIFICATE_UNKNOWN|UNKNOWN_CA)' "$server_log" || guest_result=0
     fi
     if [ "$guest_result" = 1 ]; then
-      echo "PLAYER_GUEST_TLS_LOCAL_SERVICE_OK core=$guest_core" | tee -a "$W/redroid-status.txt"
+      echo "PLAYER_GUEST_TLS_LOCAL_SERVICE_OK core=$guest_label" | tee -a "$W/redroid-status.txt"
     else
-      echo "PLAYER_GUEST_TLS_NOT_VERIFIED core=$guest_core" | tee -a "$W/redroid-status.txt"
+      echo "PLAYER_GUEST_TLS_NOT_VERIFIED core=$guest_label" | tee -a "$W/redroid-status.txt"
       guest_failed=1
     fi
     cat "$server_log"
@@ -336,7 +342,7 @@ if [ "${PLAYER_GUEST_TLS:-0}" = 1 ]; then
       [ -z "$pid" ] && break; sleep 1
     done
     if [ -n "${pid:-}" ]; then
-      echo "GUEST_TLS_FORCE_STOP core=$guest_core (not a clean exit)" | tee -a "$W/redroid-status.txt"
+      echo "GUEST_TLS_FORCE_STOP core=$guest_label (not a clean exit)" | tee -a "$W/redroid-status.txt"
       guest_failed=1
       adb shell am force-stop "$package"
       adb shell monkey -p "$package" -c android.intent.category.LAUNCHER 1 >/dev/null || true
@@ -382,8 +388,9 @@ for core in sym space; do
     [ "$hash" = d781048671e4cef1cde2ec15db8fe29b949df9949d83569ceaf776ad12901590 ] || { echo 'SPACE_CORE_HASH_MISMATCH'; exit 1; }
     echo "PLAYER_TEST_CORE space sha256=$hash" | tee -a "$W/redroid-status.txt"
   else echo "PLAYER_TEST_CORE $primary_core sha256=$primary_hash" | tee -a "$W/redroid-status.txt"; fi
+  if [ "$core" = sym ]; then core_label=$primary_core; else core_label=$core; fi
 for delay in false true; do
-  echo "PLAYER_PENDING_UI_STOP_ATTEMPT core=$core delay=$delay"
+  echo "PLAYER_PENDING_UI_STOP_ATTEMPT core=$core_label delay=$delay"
   adb shell am start -W -n "$package/dev.symbiosis.playerruntime.DiagnosticLauncher" \
     --es test_config 'memory=2' --ez ci_test_stop_probe true --ez ci_delay_cancel "$delay" \
     | tee "$W/player-stop-launch-$delay.txt"
@@ -410,7 +417,7 @@ for delay in false true; do
   [ "$(adb shell pidof "$package" | tr -d '\r' || true)" = "$main_pid" ] || { echo 'STOP_PARENT_CHANGED'; exit 1; }
   python3 tests/player_runtime_probe/check_stop_order.py "$log" "$player_pid" "$delay" | tee -a "$W/redroid-status.txt"
   lock_probe acquired
-  echo "PLAYER_PENDING_UI_STOP_AND_LOCK_OK core=$core delay=$delay" | tee -a "$W/redroid-status.txt"
+  echo "PLAYER_PENDING_UI_STOP_AND_LOCK_OK core=$core_label delay=$delay" | tee -a "$W/redroid-status.txt"
 done
 done
 # In compare mode, keep the hash-pinned SymbEK binary for SDL and shader
