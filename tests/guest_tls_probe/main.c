@@ -36,6 +36,14 @@ static int connection(SslContext* ctx, const char* host, int correct) {
     if (!check("set_hostname", sslConnectionSetHostName(&conn, host, (u32)strlen(host)+1))) goto done;
     fd = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
     if (fd < 0) { say("GUEST_TLS_ERROR stage=socket errno=%d", errno); goto done; }
+    // Explicit guest loopback bind isolates TLS from the unrelated automatic
+    // interface-selection path. It does not fix or test general networking.
+    struct sockaddr_in local = {0};
+    local.sin_family = AF_INET; local.sin_addr.s_addr = htonl(0x7f000001);
+    if (bind(fd, (struct sockaddr*)&local, sizeof(local)) < 0) {
+        say("GUEST_TLS_ERROR stage=loopback_bind errno=%d bsd=0x%08x", errno, socketGetLastResult()); goto done;
+    }
+    say("GUEST_TLS_LOOPBACK_BOUND");
     struct sockaddr_in addr = {0};
     addr.sin_family = AF_INET; addr.sin_port = htons(19443); addr.sin_addr.s_addr = htonl(0x7f000001);
     if (connect(fd, (struct sockaddr*)&addr, sizeof(addr)) < 0) {
@@ -82,7 +90,7 @@ int main(void) {
     if (!len || len == sizeof(cert)) { say("GUEST_TLS_ERROR stage=guest_cert_size bytes=%zu", len); goto ctx_done; }
     u64 id = 0;
     if (!check("import_test_ca", sslContextImportServerPki(&ctx, cert, (u32)len, SslCertificateFormat_Pem, &id))) goto ctx_done;
-    say("GUEST_TLS_CA_IMPORTED bytes=%zu id=%llu", len, (unsigned long long)id);
+    say("GUEST_TLS_CA_IMPORT_RETURNED bytes=%zu id=%llu", len, (unsigned long long)id);
     if (!connection(&ctx, "localhost", 1)) goto ctx_done;
     if (!connection(&ctx, "wrong.invalid", 0)) goto ctx_done;
     say("GUEST_TLS_COMPLETE");

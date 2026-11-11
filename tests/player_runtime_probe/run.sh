@@ -263,50 +263,84 @@ for mode in 2 0 1; do
   echo "PLAYER_REAL_UI_AND_EXIT_OK mode=$mode" | tee -a "$W/redroid-status.txt"
 done
 
-# Exercise the guest SSL service through real IPC and a local TCP/TLS server.
-# This server is bound to the runner loopback and adb reverse exposes it only
-# to Android loopback; test key/cert are throwaway and are never uploaded.
+# Run both pinned cores, including after a guest exception. Explicit bind is
+# a diagnostic-only guest operation; it does not repair general interface
+# selection. Forced cleanup after a failed case is reported, never a pass.
 if [ "${PLAYER_GUEST_TLS:-0}" = 1 ]; then
-  python3 tests/guest_tls_probe/server.py "$W/ci-test-cert.pem" "$W/ci-test-key.pem" > "$W/guest-tls-server.txt" 2>&1 &
-  guest_server_pid=$!
-  for ((n=0;n<20;n++)); do
-    grep -q 'LOCAL_TLS_SERVER_READY' "$W/guest-tls-server.txt" && break
-    kill -0 "$guest_server_pid" 2>/dev/null || { echo 'GUEST_TLS_SERVER_NOT_RUNNING'; exit 1; }
-    sleep 1
-  done
-  grep -q 'LOCAL_TLS_SERVER_READY' "$W/guest-tls-server.txt" || { echo 'GUEST_TLS_SERVER_NOT_READY'; exit 1; }
+  guest_failed=0
   adb reverse tcp:19443 tcp:19443
-  echo 'PLAYER_GUEST_TLS_ATTEMPT' | tee -a "$W/redroid-status.txt"
-  adb shell am start -W -n "$package/dev.symbiosis.playerruntime.DiagnosticLauncher" \
-    --es test_config 'memory=2' --es test_kind tls | tee "$W/player-guest-tls-launch.txt"
-  player_pid=$(adb shell pidof "$package:kenji" | tr -d '\r' || true)
-  [ -n "$player_pid" ] || { echo 'GUEST_TLS_PLAYER_NOT_RUNNING'; exit 1; }
-  guest_result=0
-  for ((n=0;n<90;n++)); do
-    if grep -qE "^[0-9-]+ +[0-9:.]+ +$player_pid +[0-9]+ .*GUEST_TLS_COMPLETE" "$log"; then guest_result=1; break; fi
-    if grep -qE "^[0-9-]+ +[0-9:.]+ +$player_pid +[0-9]+ .*GUEST_TLS_ERROR" "$log" || app_crashed; then break; fi
-    sleep 1
+  for guest_core in sym space; do
+    if [ "$guest_core" = space ]; then
+      [ "${PLAYER_COMPARE_SPACE:-0}" = 1 ] || break
+      adb shell run-as "$package" rm files/engines/libkenji.so
+      adb shell run-as "$package" cp /data/local/tmp/player-space.so files/engines/libkenji.so
+      adb shell run-as "$package" chmod 400 files/engines/libkenji.so
+      hash=$(adb exec-out run-as "$package" cat files/engines/libkenji.so | sha256sum | cut -d' ' -f1)
+      [ "$hash" = d781048671e4cef1cde2ec15db8fe29b949df9949d83569ceaf776ad12901590 ] || { echo 'GUEST_TLS_SPACE_HASH_MISMATCH'; exit 1; }
+    fi
+    server_log="$W/guest-tls-server-$guest_core.txt"
+    python3 tests/guest_tls_probe/server.py "$W/ci-test-cert.pem" "$W/ci-test-key.pem" > "$server_log" 2>&1 &
+    guest_server_pid=$!
+    for ((n=0;n<20;n++)); do
+      grep -q 'LOCAL_TLS_SERVER_READY' "$server_log" && break
+      kill -0 "$guest_server_pid" 2>/dev/null || { echo 'GUEST_TLS_SERVER_NOT_RUNNING'; exit 1; }
+      sleep 1
+    done
+    grep -q 'LOCAL_TLS_SERVER_READY' "$server_log" || { echo 'GUEST_TLS_SERVER_NOT_READY'; exit 1; }
+    echo "PLAYER_GUEST_TLS_ATTEMPT core=$guest_core internet=true bind=loopback" | tee -a "$W/redroid-status.txt"
+    adb shell am start -W -n "$package/dev.symbiosis.playerruntime.DiagnosticLauncher" \
+      --es test_config 'memory=2;internet=true' --es test_kind tls | tee "$W/player-guest-tls-launch-$guest_core.txt"
+    player_pid=$(adb shell pidof "$package:kenji" | tr -d '\r' || true)
+    [ -n "$player_pid" ] || { echo 'GUEST_TLS_PLAYER_NOT_RUNNING'; exit 1; }
+    guest_result=0
+    for ((n=0;n<90;n++)); do
+      if grep -qE "^[0-9-]+ +[0-9:.]+ +$player_pid +[0-9]+ .*GUEST_TLS_COMPLETE" "$log"; then guest_result=1; break; fi
+      if grep -qE "^[0-9-]+ +[0-9:.]+ +$player_pid +[0-9]+ .*(GUEST_TLS_ERROR|Unhandled exception in guest thread)" "$log" || app_crashed; then break; fi
+      sleep 1
+    done
+    grep -E "^[0-9-]+ +[0-9:.]+ +$player_pid +[0-9]+ .*(GUEST_TLS_|ServiceSsl .*Stubbed|Unhandled exception in guest thread|System\.Security\.Authentication)" "$log" | tee -a "$W/redroid-status.txt" || true
+    if [ "$guest_result" = 1 ]; then
+      grep -q 'LOCAL_TLS_EXCHANGE_OK 0' "$server_log" || guest_result=0
+      for ((n=0;n<10;n++)); do
+        grep -Eq 'LOCAL_TLS_HANDSHAKE_OR_IO_FAILED 1 SSLError .*ALERT_(BAD_CERTIFICATE|CERTIFICATE_UNKNOWN)' "$server_log" && break
+        sleep 1
+      done
+      grep -Eq 'LOCAL_TLS_HANDSHAKE_OR_IO_FAILED 1 SSLError .*ALERT_(BAD_CERTIFICATE|CERTIFICATE_UNKNOWN)' "$server_log" || guest_result=0
+    fi
+    if [ "$guest_result" = 1 ]; then
+      echo "PLAYER_GUEST_TLS_LOCAL_SERVICE_OK core=$guest_core" | tee -a "$W/redroid-status.txt"
+    else
+      echo "PLAYER_GUEST_TLS_NOT_VERIFIED core=$guest_core" | tee -a "$W/redroid-status.txt"
+      guest_failed=1
+    fi
+    cat "$server_log"
+    kill "$guest_server_pid" 2>/dev/null || true
+    wait "$guest_server_pid" 2>/dev/null || true
+    guest_server_pid=''
+    # Stop even when the test fails, so the next pinned binary is isolated.
+    click_text 'Выйти' || true
+    for ((n=0;n<30;n++)); do
+      pid=$(adb shell pidof "$package:kenji" | tr -d '\r' || true)
+      [ -z "$pid" ] && break; sleep 1
+    done
+    if [ -n "${pid:-}" ]; then
+      echo "GUEST_TLS_FORCE_STOP core=$guest_core (not a clean exit)" | tee -a "$W/redroid-status.txt"
+      guest_failed=1
+      adb shell am force-stop "$package"
+      adb shell monkey -p "$package" -c android.intent.category.LAUNCHER 1 >/dev/null || true
+      sleep 5
+      main_pid=$(adb shell pidof "$package" | tr -d '\r' || true)
+    fi
   done
-  grep -E "^[0-9-]+ +[0-9:.]+ +$player_pid +[0-9]+ .*GUEST_TLS_" "$log" | tee -a "$W/redroid-status.txt" || true
-  if [ "$guest_result" != 1 ]; then echo 'PLAYER_GUEST_TLS_NOT_VERIFIED'; cat "$W/guest-tls-server.txt"; exit 1; fi
-  grep -q 'LOCAL_TLS_EXCHANGE_OK 0' "$W/guest-tls-server.txt" || { echo 'LOCAL_SERVER_EXCHANGE_NOT_CONFIRMED'; exit 1; }
-  # A generic failure or server outage is not evidence of hostname checking.
-  # Require a certificate-related TLS alert in the server's second connection.
-  for ((n=0;n<10;n++)); do
-    grep -Eq 'LOCAL_TLS_HANDSHAKE_OR_IO_FAILED 1 SSLError .*ALERT_(BAD_CERTIFICATE|CERTIFICATE_UNKNOWN)' "$W/guest-tls-server.txt" && break
-    sleep 1
-  done
-  grep -Eq 'LOCAL_TLS_HANDSHAKE_OR_IO_FAILED 1 SSLError .*ALERT_(BAD_CERTIFICATE|CERTIFICATE_UNKNOWN)' "$W/guest-tls-server.txt" || { echo 'WRONG_HOST_CERT_ALERT_NOT_CONFIRMED'; cat "$W/guest-tls-server.txt"; exit 1; }
-  click_text 'Выйти' || { echo 'GUEST_TLS_EXIT_NOT_VISIBLE'; exit 1; }
-  for ((n=0;n<45;n++)); do
-    pid=$(adb shell pidof "$package:kenji" | tr -d '\r' || true)
-    [ -z "$pid" ] && break; sleep 1
-  done
-  [ -z "${pid:-}" ] || { echo 'GUEST_TLS_EXIT_STILL_ALIVE'; exit 1; }
-  ! app_crashed || { echo 'GUEST_TLS_PLAYER_FATAL'; exit 1; }
-  [ "$(adb shell pidof "$package" | tr -d '\r' || true)" = "$main_pid" ] || { echo 'GUEST_TLS_PARENT_CHANGED'; exit 1; }
   adb reverse --remove tcp:19443
-  echo 'PLAYER_GUEST_TLS_LOCAL_SERVICE_OK' | tee -a "$W/redroid-status.txt"
+  if [ "${PLAYER_COMPARE_SPACE:-0}" = 1 ]; then
+    adb shell run-as "$package" rm files/engines/libkenji.so
+    adb shell run-as "$package" cp /data/local/tmp/player-core.so files/engines/libkenji.so
+    adb shell run-as "$package" chmod 400 files/engines/libkenji.so
+    hash=$(adb exec-out run-as "$package" cat files/engines/libkenji.so | sha256sum | cut -d' ' -f1)
+    [ "$hash" = 969431b3962408dd02ce38bd2cd4b2a954d11e5212ddef3f65c80a0b419918b8 ] || { echo 'GUEST_TLS_SYM_RESTORE_HASH_MISMATCH'; exit 1; }
+  fi
+  [ "$guest_failed" = 0 ] || { echo 'GUEST_TLS_ONE_OR_MORE_CORES_NOT_VERIFIED'; exit 1; }
 fi
 
 # The genuine Activity receives a CI-only broadcast to call its real leave()

@@ -194,6 +194,6 @@ jobs:
             /tmp/player-runtime/shader-*.txt
             /tmp/player-runtime/apk-16k-audit.txt
             /tmp/player-runtime/zipalign-16k.txt
-            /tmp/player-runtime/guest-tls-server.txt
+            /tmp/player-runtime/guest-tls-server-*.txt
           if-no-files-found: warn
           retention-days: 3
