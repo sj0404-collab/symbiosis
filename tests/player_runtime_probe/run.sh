@@ -316,14 +316,20 @@ if [ "${PLAYER_GUEST_TLS:-0}" = 1 ]; then
     done
     grep -E "^[0-9-]+ +[0-9:.]+ +$player_pid +[0-9]+ .*(GUEST_TLS_|ServiceSsl .*Stubbed|Unhandled exception in guest thread|System\.Security\.Authentication)" "$log" | tee -a "$W/redroid-status.txt" || true
     if [ "$guest_result" = 1 ]; then
-      grep -q 'LOCAL_TLS_EXCHANGE_OK 0' "$server_log" || guest_result=0
+      # Wait for the local endpoint to observe all three client connections.
       for ((n=0;n<10;n++)); do
-        grep -Eq 'LOCAL_TLS_HANDSHAKE_OR_IO_FAILED 1 SSLError .*ALERT_(BAD_CERTIFICATE|CERTIFICATE_UNKNOWN|UNKNOWN_CA)' "$server_log" && \
-          grep -Eq 'LOCAL_TLS_HANDSHAKE_OR_IO_FAILED 2 SSLError .*ALERT_(BAD_CERTIFICATE|CERTIFICATE_UNKNOWN|UNKNOWN_CA)' "$server_log" && break
+        grep -qE 'LOCAL_TLS_HANDSHAKE_OK 2 |LOCAL_TLS_HANDSHAKE_OR_IO_FAILED 2 ' "$server_log" && break
         sleep 1
       done
-      grep -Eq 'LOCAL_TLS_HANDSHAKE_OR_IO_FAILED 1 SSLError .*ALERT_(BAD_CERTIFICATE|CERTIFICATE_UNKNOWN|UNKNOWN_CA)' "$server_log" || guest_result=0
-      grep -Eq 'LOCAL_TLS_HANDSHAKE_OR_IO_FAILED 2 SSLError .*ALERT_(BAD_CERTIFICATE|CERTIFICATE_UNKNOWN|UNKNOWN_CA)' "$server_log" || guest_result=0
+      if [ "${PLAYER_REFERENCE_TLS_PATCH:-0}" = 1 ]; then
+        python3 tests/player_runtime_probe/check_guest_tls_evidence.py "$log" "$player_pid" "$server_log" | tee -a "$W/redroid-status.txt" || guest_result=0
+      else
+        # Without CI policy observations, preserve the stronger external-alert
+        # requirement; do not infer hostname validation from a generic error.
+        grep -q 'LOCAL_TLS_EXCHANGE_OK 0' "$server_log" || guest_result=0
+        grep -Eq 'LOCAL_TLS_HANDSHAKE_OR_IO_FAILED 1 SSLError .*ALERT_(BAD_CERTIFICATE|CERTIFICATE_UNKNOWN|UNKNOWN_CA)' "$server_log" || guest_result=0
+        grep -Eq 'LOCAL_TLS_HANDSHAKE_OR_IO_FAILED 2 SSLError .*ALERT_(BAD_CERTIFICATE|CERTIFICATE_UNKNOWN|UNKNOWN_CA)' "$server_log" || guest_result=0
+      fi
     fi
     if [ "$guest_result" = 1 ]; then
       echo "PLAYER_GUEST_TLS_LOCAL_SERVICE_OK core=$guest_label" | tee -a "$W/redroid-status.txt"

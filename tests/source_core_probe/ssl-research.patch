@@ -139,12 +139,13 @@ index 7b371d2..e89bf5c 100644
          public ResultCode ImportClientPki(ServiceCtx context)
 diff --git a/src/Ryujinx.HLE/HOS/Services/Ssl/SslService/ServerTrustStore.cs b/src/Ryujinx.HLE/HOS/Services/Ssl/SslService/ServerTrustStore.cs
 new file mode 100644
-index 0000000..4721bc7
+index 0000000..4425a14
 --- /dev/null
 +++ b/src/Ryujinx.HLE/HOS/Services/Ssl/SslService/ServerTrustStore.cs
-@@ -0,0 +1,98 @@
+@@ -0,0 +1,103 @@
 +// Research-only implementation. This is not a release core.
 +using Ryujinx.HLE.HOS.Services.Ssl.Types;
++using Ryujinx.Common.Logging;
 +using System;
 +using System.Collections.Generic;
 +using System.Net.Security;
@@ -205,6 +206,10 @@ index 0000000..4721bc7
 +        public bool ValidateServerCertificate(object sender, X509Certificate certificate,
 +            X509Chain presentedChain, SslPolicyErrors errors)
 +        {
++            // Explicit test-only observation: no certificate/key or user data.
++            int importedGroups;
++            lock (_sync) importedGroups = _imports.Count;
++            Logger.Info?.Print(LogClass.ServiceSsl, $"CI_ONLY_TLS_POLICY imported_groups={importedGroups} errors={errors}");
 +            if (certificate == null ||
 +                (errors & (SslPolicyErrors.RemoteCertificateNotAvailable | SslPolicyErrors.RemoteCertificateNameMismatch)) != 0)
 +                return false;

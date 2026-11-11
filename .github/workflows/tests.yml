@@ -165,6 +165,7 @@ jobs:
           python3 fork/tests/test_player_tls_audit.py
           python3 fork/tests/test_player_stop_observer.py
           python3 fork/tests/test_guest_tls_harness.py
+          python3 fork/tests/test_guest_tls_evidence.py
           python3 fork/tests/test_standalone_gpt.py
           python3 fork/tests/test_standalone_log_capture.py
           python3 fork/tests/test_standalone_property_init.py
