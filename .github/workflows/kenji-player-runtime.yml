@@ -11,6 +11,9 @@ on:
       guest_tls:
         type: boolean
         default: false
+      reference_core:
+        type: boolean
+        default: false
 permissions:
   contents: read
 jobs:
@@ -38,6 +41,33 @@ jobs:
           sdkmanager --install 'ndk;28.2.13676358' 'cmake;3.31.6' 'build-tools;35.0.0' 'platforms;android-36'
           sudo apt-get update -qq
           sudo apt-get install -y -qq glslang-tools ccache
+      - uses: actions/setup-dotnet@v4
+        if: inputs.reference_core
+        with:
+          dotnet-version: '9.0.x'
+      - name: Build pinned-source research core (not a release)
+        if: inputs.reference_core
+        run: |
+          set -euo pipefail
+          # Combining two alternate debug pins would obscure which core ran.
+          [ "${{ inputs.compare_space }}" = false ] || { echo 'REFERENCE_AND_SPACE_COMPARISON_UNSUPPORTED'; exit 1; }
+          git init /tmp/reference-kenji
+          git -C /tmp/reference-kenji remote add origin https://git.ryujinx.app/projects/Kenji-NX.git
+          git -C /tmp/reference-kenji fetch --depth=1 origin 280c427c550c5fe3bcc46b378e06a9b90a7e6b09
+          git -C /tmp/reference-kenji checkout --detach FETCH_HEAD
+          test "$(git -C /tmp/reference-kenji rev-parse HEAD)" = 280c427c550c5fe3bcc46b378e06a9b90a7e6b09
+          mkdir -p "$PLAY_WORK/source-output"
+          export PATH="$ANDROID_HOME/ndk/28.2.13676358/toolchains/llvm/prebuilt/linux-x86_64/bin:$PATH"
+          cd /tmp/reference-kenji
+          dotnet publish src/LibKenjinx/LibKenjinx.csproj -r linux-bionic-arm64 -c Release \
+            -p:DisableUnsupportedError=true -p:PublishAotUsingRuntimePack=true \
+            -p:CppCompilerAndLinker="$ANDROID_HOME/ndk/28.2.13676358/toolchains/llvm/prebuilt/linux-x86_64/bin/clang" \
+            -p:StripSymbols=false -p:DefineConstants=ANDROID -o "$PLAY_WORK/source-output"
+          test -f "$PLAY_WORK/source-output/LibKenjinx.so"
+          cp "$PLAY_WORK/source-output/LibKenjinx.so" "$PLAY_WORK/core-source.so"
+          sha256sum "$PLAY_WORK/core-source.so" | cut -d' ' -f1 | tee "$PLAY_WORK/source-core-sha256.txt"
+          rm -rf /tmp/reference-kenji "$PLAY_WORK/source-output"
+          echo 'SOURCE_CORE_FOR_DIAGNOSTIC_ONLY'
       - uses: actions/cache@v4
         with:
           path: |
@@ -88,6 +118,9 @@ jobs:
           if [ "${{ inputs.compare_space }}" = true ]; then
             python3 fork/tests/player_runtime_probe/instrument_core_space.py eden/src/android/app/src/main/java/org/yuzu/yuzu_emu/utils/EngineLoader.kt
           fi
+          if [ "${{ inputs.reference_core }}" = true ]; then
+            python3 fork/tests/player_runtime_probe/instrument_core_source.py eden/src/android/app/src/main/java/org/yuzu/yuzu_emu/utils/EngineLoader.kt "$(cat "$PLAY_WORK/source-core-sha256.txt")"
+          fi
           python3 fork/tests/player_runtime_probe/instrument_overlay.py eden/src/android/app/src/main/java/org/yuzu/yuzu_emu/overlay/InputOverlay.kt
           python3 fork/tests/player_runtime_probe/instrument_shader_config.py eden/src/android/app/src/main/java/org/yuzu/yuzu_emu/utils/KenjiBridge.kt
           test ! -e eden/src/android/app/src/debug/AndroidManifest.xml
@@ -122,8 +155,14 @@ jobs:
           cp "${APK[0]}" "$PLAY_WORK/player-debug.apk"
           "$ANDROID_HOME/build-tools/35.0.0/aapt" dump badging "$PLAY_WORK/player-debug.apk" | sed -n "s/^package: name='\\([^']*\\)'.*/\\1/p" > "$PLAY_WORK/package.txt"
           test -s "$PLAY_WORK/package.txt"
-          curl -fsSL --retry 3 -o "$PLAY_WORK/core_sym.so" https://github.com/sj0404-collab/symbiosis/releases/download/engine-kenji/libkenji.so
-          echo "969431b3962408dd02ce38bd2cd4b2a954d11e5212ddef3f65c80a0b419918b8  $PLAY_WORK/core_sym.so" | sha256sum -c -
+          if [ "${{ inputs.reference_core }}" = true ]; then
+            cp "$PLAY_WORK/core-source.so" "$PLAY_WORK/core_sym.so"
+            echo "$(cat "$PLAY_WORK/source-core-sha256.txt")  $PLAY_WORK/core_sym.so" | sha256sum -c -
+            echo 'PLAYER_PRIMARY_CORE=SOURCE_RESEARCH_NOT_PINNED_USER_BINARY'
+          else
+            curl -fsSL --retry 3 -o "$PLAY_WORK/core_sym.so" https://github.com/sj0404-collab/symbiosis/releases/download/engine-kenji/libkenji.so
+            echo "969431b3962408dd02ce38bd2cd4b2a954d11e5212ddef3f65c80a0b419918b8  $PLAY_WORK/core_sym.so" | sha256sum -c -
+          fi
           if [ "${{ inputs.compare_space }}" = true ]; then
             curl -fsSL --retry 3 -o "$PLAY_WORK/reference.apk" https://github.com/sj0404-collab/SymbEK/releases/download/v1.0.121/Kenji-Space-1.0.121.apk
             echo "f9eb3ecfaf5700df1b5d575984ab1588848c0eb6a70b2acb19b9e6243705f95e  $PLAY_WORK/reference.apk" | sha256sum -c -
@@ -146,6 +185,7 @@ jobs:
             /tmp/player-runtime/player-debug.apk
             /tmp/player-runtime/package.txt
             /tmp/player-runtime/core_sym.so
+            /tmp/player-runtime/source-core-sha256.txt
             /tmp/player-runtime/core_space.so
             /tmp/player-runtime/swkbd.nro
             /tmp/player-runtime/graphics.nro
@@ -166,6 +206,7 @@ jobs:
       PLAYER_EXPECT_TLS_CANDIDATE: ${{ inputs.tls_candidate && '1' || '0' }}
       PLAYER_COMPARE_SPACE: ${{ inputs.compare_space && '1' || '0' }}
       PLAYER_GUEST_TLS: ${{ inputs.guest_tls && '1' || '0' }}
+      PLAYER_REFERENCE_CORE: ${{ inputs.reference_core && '1' || '0' }}
     steps:
       - uses: actions/checkout@v4
         with:

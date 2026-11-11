@@ -30,6 +30,23 @@ class PlayerStopObserverTest(unittest.TestCase):
             self.assertNotIn(digest, original.read_text())
             self.assertIn('!got.equals(want, ignoreCase = true)', source.read_text())
 
+    def test_source_core_pin_is_exact_and_debug_only(self):
+        script = ROOT / 'tests/player_runtime_probe/instrument_core_source.py'
+        original = ROOT / 'patch/android/utils/EngineLoader.kt'
+        with tempfile.TemporaryDirectory() as d:
+            source = Path(d) / 'EngineLoader.kt'
+            source.write_bytes(original.read_bytes())
+            pin = 'a' * 64
+            subprocess.run([sys.executable, str(script), str(source), pin], check=True)
+            self.assertIn(f'!got.equals("{pin}", ignoreCase = true)', source.read_text())
+            self.assertIn('!got.equals(want, ignoreCase = true)', source.read_text())
+            self.assertNotIn(pin, original.read_text())
+            self.assertNotEqual(subprocess.run([sys.executable, str(script), str(source), pin], capture_output=True).returncode, 0)
+            source.write_bytes(original.read_bytes())
+            for invalid in ('a' * 63, 'z' * 64, '"; arbitrary code', ''):
+                self.assertNotEqual(subprocess.run([sys.executable, str(script), str(source), invalid], capture_output=True).returncode, 0)
+            self.assertNotEqual(subprocess.run([sys.executable, str(script), str(original), pin], capture_output=True).returncode, 0)
+
     def test_order_fails_if_close_precedes_reply(self):
         script = ROOT / 'tests/player_runtime_probe/check_stop_order.py'
         events = ['CI_UI_PRESENTED type=2', 'CI_STOP_TRIGGERED', 'CI_STOP_REQUESTED',

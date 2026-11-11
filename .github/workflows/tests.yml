@@ -50,6 +50,10 @@ on:
         description: "Build pinned public Kenji source for research only, not release"
         type: boolean
         default: false
+      run_player_reference_core:
+        description: "Run pinned-source research core in disposable player (not release)"
+        type: boolean
+        default: false
       run_player_compile:
         description: "Compile real patched app Kotlin without assembling or releasing an APK"
         type: boolean
@@ -331,6 +335,7 @@ jobs:
       tls_candidate: ${{ inputs.run_player_tls_candidate == true }}
       compare_space: ${{ inputs.run_player_compare_space == true }}
       guest_tls: ${{ inputs.run_player_guest_tls == true }}
+      reference_core: ${{ inputs.run_player_reference_core == true }}
 
   # Baseline only. Source is a public related project, not claimed to be the
   # source of either existing pinned binary. No resulting .so is shipped.

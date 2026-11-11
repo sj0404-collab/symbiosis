@@ -106,6 +106,17 @@ fi
 adb shell run-as "$package" mkdir -p files/engines
 adb shell run-as "$package" cp /data/local/tmp/player-core.so files/engines/libkenji.so
 adb shell run-as "$package" chmod 400 files/engines/libkenji.so
+primary_hash=$(adb exec-out run-as "$package" cat files/engines/libkenji.so | sha256sum | cut -d' ' -f1)
+if [ "${PLAYER_REFERENCE_CORE:-0}" = 1 ]; then
+  [ "${PLAYER_COMPARE_SPACE:-0}" != 1 ] || { echo 'REFERENCE_AND_SPACE_COMPARISON_UNSUPPORTED'; exit 1; }
+  source_hash=$(cat "$W/source-core-sha256.txt")
+  [[ "$source_hash" =~ ^[0-9a-f]{64}$ ]] && [ "$primary_hash" = "$source_hash" ] || { echo 'SOURCE_CORE_HASH_MISMATCH'; exit 1; }
+  primary_core=source-research
+else
+  [ "$primary_hash" = 969431b3962408dd02ce38bd2cd4b2a954d11e5212ddef3f65c80a0b419918b8 ] || { echo 'SYM_CORE_HASH_MISMATCH'; exit 1; }
+  primary_core=sym
+fi
+echo "PLAYER_PRIMARY_CORE $primary_core sha256=$primary_hash" | tee -a "$W/redroid-status.txt"
 adb shell run-as "$package" cp /data/local/tmp/player-swkb.nro files/swkbd-probe.nro
 adb shell run-as "$package" cp /data/local/tmp/player-graphics.nro files/graphics-probe.nro
 adb shell run-as "$package" cp /data/local/tmp/player-shader.nro files/shader-probe.nro
@@ -287,7 +298,8 @@ if [ "${PLAYER_GUEST_TLS:-0}" = 1 ]; then
       sleep 1
     done
     grep -q 'LOCAL_TLS_SERVER_READY' "$server_log" || { echo 'GUEST_TLS_SERVER_NOT_READY'; exit 1; }
-    echo "PLAYER_GUEST_TLS_ATTEMPT core=$guest_core internet=true bind=loopback" | tee -a "$W/redroid-status.txt"
+    if [ "$guest_core" = sym ]; then guest_label=$primary_core; else guest_label=$guest_core; fi
+    echo "PLAYER_GUEST_TLS_ATTEMPT core=$guest_label internet=true bind=loopback" | tee -a "$W/redroid-status.txt"
     adb shell am start -W -n "$package/dev.symbiosis.playerruntime.DiagnosticLauncher" \
       --es test_config 'internet=true' --es test_kind tls | tee "$W/player-guest-tls-launch-$guest_core.txt"
     player_pid=$(adb shell pidof "$package:kenji" | tr -d '\r' || true)
@@ -369,7 +381,7 @@ for core in sym space; do
     hash=$(adb exec-out run-as "$package" cat files/engines/libkenji.so | sha256sum | cut -d' ' -f1)
     [ "$hash" = d781048671e4cef1cde2ec15db8fe29b949df9949d83569ceaf776ad12901590 ] || { echo 'SPACE_CORE_HASH_MISMATCH'; exit 1; }
     echo "PLAYER_TEST_CORE space sha256=$hash" | tee -a "$W/redroid-status.txt"
-  else echo 'PLAYER_TEST_CORE sym sha256=969431b3962408dd02ce38bd2cd4b2a954d11e5212ddef3f65c80a0b419918b8' | tee -a "$W/redroid-status.txt"; fi
+  else echo "PLAYER_TEST_CORE $primary_core sha256=$primary_hash" | tee -a "$W/redroid-status.txt"; fi
 for delay in false true; do
   echo "PLAYER_PENDING_UI_STOP_ATTEMPT core=$core delay=$delay"
   adb shell am start -W -n "$package/dev.symbiosis.playerruntime.DiagnosticLauncher" \
@@ -406,7 +418,7 @@ done
 if [ "${PLAYER_COMPARE_SPACE:-0}" = 1 ]; then
   echo 'PLAYER_GRAPHICS_TEST_CORE space' | tee -a "$W/redroid-status.txt"
 else
-  echo 'PLAYER_GRAPHICS_TEST_CORE sym' | tee -a "$W/redroid-status.txt"
+  echo "PLAYER_GRAPHICS_TEST_CORE $primary_core" | tee -a "$W/redroid-status.txt"
 fi
 
 # Real player + self-authored modern SDL frame. Callback instrumentation is
