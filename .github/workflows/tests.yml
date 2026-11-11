@@ -66,6 +66,10 @@ on:
         description: "Try experimental source socket-binding patch (not release)"
         type: boolean
         default: false
+      run_player_reference_missing_interface:
+        description: "Use nonexistent interface in research-only negative test"
+        type: boolean
+        default: false
       run_player_compile:
         description: "Compile real patched app Kotlin without assembling or releasing an APK"
         type: boolean
@@ -354,6 +358,7 @@ jobs:
       reference_core: ${{ inputs.run_player_reference_core == true }}
       reference_tls_patch: ${{ inputs.run_player_reference_tls_patch == true }}
       reference_network_patch: ${{ inputs.run_player_reference_network_patch == true }}
+      reference_missing_interface: ${{ inputs.run_player_reference_missing_interface == true }}
 
   # Baseline only. Source is a public related project, not claimed to be the
   # source of either existing pinned binary. No resulting .so is shipped.

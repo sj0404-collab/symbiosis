@@ -1,8 +1,13 @@
 diff --git a/src/Ryujinx.HLE/HOS/Services/Sockets/Bsd/Proxy/DefaultSocket.cs b/src/Ryujinx.HLE/HOS/Services/Sockets/Bsd/Proxy/DefaultSocket.cs
-index f1040e79..135cb8eb 100644
+index f1040e79..304e2605 100644
 --- a/src/Ryujinx.HLE/HOS/Services/Sockets/Bsd/Proxy/DefaultSocket.cs
 +++ b/src/Ryujinx.HLE/HOS/Services/Sockets/Bsd/Proxy/DefaultSocket.cs
-@@ -46,10 +46,16 @@ namespace Ryujinx.HLE.HOS.Services.Sockets.Bsd.Proxy
+@@ -1,4 +1,3 @@
+-using Ryujinx.Common.Utilities;
+ using System;
+ using System.Net;
+ using System.Net.NetworkInformation;
+@@ -46,11 +45,39 @@ namespace Ryujinx.HLE.HOS.Services.Sockets.Bsd.Proxy
  
          private void EnsureNetworkInterfaceBound()
          {
@@ -12,12 +17,37 @@ index f1040e79..135cb8eb 100644
 +            // Never silently fall back if an explicit interface was requested.
 +            if (!string.IsNullOrEmpty(_lanInterfaceId) && _lanInterfaceId != "0" && !BaseSocket.IsBound)
              {
-                 (_, UnicastIPAddressInformation ipInfo) = NetworkHelpers.GetLocalInterface(_lanInterfaceId);
+-                (_, UnicastIPAddressInformation ipInfo) = NetworkHelpers.GetLocalInterface(_lanInterfaceId);
 -
-+                if (ipInfo == null)
+-                BaseSocket.Bind(new IPEndPoint(ipInfo.Address, 0));
++                // NetworkHelpers.GetLocalInterface may fall back to a different
++                // adapter when the requested ID is missing; do not use it here.
++                IPAddress selectedAddress = null;
++                try
++                {
++                    NetworkInterface selected = Array.Find(NetworkInterface.GetAllNetworkInterfaces(),
++                        adapter => string.Equals(adapter.Id, _lanInterfaceId, StringComparison.Ordinal));
++                    if (selected != null)
++                    {
++                        foreach (UnicastIPAddressInformation info in selected.GetIPProperties().UnicastAddresses)
++                        {
++                            if (info.Address.AddressFamily == BaseSocket.AddressFamily)
++                            {
++                                selectedAddress = info.Address;
++                                break;
++                            }
++                        }
++                    }
++                }
++                catch (NetworkInformationException)
 +                {
 +                    throw new SocketException((int)SocketError.AddressNotAvailable);
 +                }
-                 BaseSocket.Bind(new IPEndPoint(ipInfo.Address, 0));
++                if (selectedAddress == null)
++                {
++                    throw new SocketException((int)SocketError.AddressNotAvailable);
++                }
++                BaseSocket.Bind(new IPEndPoint(selectedAddress, 0));
              }
          }
+ 

@@ -16,6 +16,11 @@ class GuestNetworkHarnessTest(unittest.TestCase):
         self.assertIn('!string.IsNullOrEmpty(_lanInterfaceId)', patch)
         self.assertIn('_lanInterfaceId != "0"', patch)
         self.assertIn('SocketError.AddressNotAvailable', patch)
+        self.assertIn('NetworkInterface.GetAllNetworkInterfaces()', patch)
+        self.assertIn('string.Equals(adapter.Id, _lanInterfaceId, StringComparison.Ordinal)', patch)
+        self.assertNotIn('+                (_, UnicastIPAddressInformation ipInfo) = NetworkHelpers.GetLocalInterface', patch)
+        self.assertIn('network-missing-interface-fixture.patch', workflow)
+        self.assertIn('MISSING_INTERFACE_FIXTURE_REQUIRES_SOURCE_PATCH_AND_NETWORK_PROBE', workflow)
         self.assertIn('inputs.reference_network_patch', workflow)
         self.assertIn('git -C /tmp/reference-kenji apply --check', workflow)
         self.assertNotIn('network-research.patch', (ROOT / '.github/workflows/build.yml').read_text())
@@ -57,5 +62,16 @@ class GuestNetworkHarnessTest(unittest.TestCase):
                     'GUEST_NET_CONNECT_BEGIN bind=0', 'GUEST_NET_CONNECTED bind=0', 'GUEST_NET_EXCHANGE_OK bind=0']
             write(auto); self.assertEqual(run(mode='auto').returncode, 0)
             write(auto + ['GUEST_NET_LOOPBACK_BOUND']); self.assertNotEqual(run(mode='auto').returncode, 0)
+            invalid = ['CI_ONLY_RESOLVED_INTERNET value=true', 'GUEST_NET_BEGIN bind=0',
+                       'GUEST_NET_SOCKET_INIT rc=0x00000000', 'GUEST_NET_CONNECT_BEGIN bind=0',
+                       'GUEST_NET_ERROR stage=connect errno=125 address_unavailable=1 bsd=0x00000000', 'GUEST_NET_DONE']
+            server.write_text('LOCAL_NET_READY port=19444\n')
+            write(invalid); self.assertEqual(run(mode='invalid-auto').returncode, 0)
+            server.write_text('LOCAL_NET_READY port=19444\nLOCAL_NET_ACCEPTED\n')
+            self.assertNotEqual(run(mode='invalid-auto').returncode, 0)
+            server.write_text('LOCAL_NET_READY port=19444\n')
+            write([line.replace('address_unavailable=1', 'address_unavailable=0') for line in invalid])
+            self.assertNotEqual(run(mode='invalid-auto').returncode, 0)
+            write(invalid[:-1]); self.assertNotEqual(run(mode='invalid-auto').returncode, 0)
 
 if __name__ == '__main__': unittest.main()

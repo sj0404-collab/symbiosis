@@ -39,7 +39,8 @@ int main(void) {
     remote.sin_family = AF_INET; remote.sin_port = htons(19444); remote.sin_addr.s_addr = htonl(0x7f000001);
     record("GUEST_NET_CONNECT_BEGIN bind=%d", bound);
     if (connect(fd, (struct sockaddr*)&remote, sizeof(remote)) < 0) {
-        record("GUEST_NET_ERROR stage=connect errno=%d bsd=0x%08x", errno, socketGetLastResult()); goto socket_done;
+        int connect_errno = errno;
+        record("GUEST_NET_ERROR stage=connect errno=%d address_unavailable=%d bsd=0x%08x", connect_errno, connect_errno == EADDRNOTAVAIL, socketGetLastResult()); goto socket_done;
     }
     record("GUEST_NET_CONNECTED bind=%d", bound);
     if (send(fd, "net-ping", 8, 0) != 8) { record("GUEST_NET_ERROR stage=send errno=%d bsd=0x%08x", errno, socketGetLastResult()); goto socket_done; }

@@ -12,6 +12,7 @@ with socket.socket() as listener:
     print(f'LOCAL_NET_READY port={listener.getsockname()[1]}', flush=True)
     try:
         client, address = listener.accept()
+        print('LOCAL_NET_ACCEPTED', flush=True)
         with client:
             client.settimeout(10)
             received = b''

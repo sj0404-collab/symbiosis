@@ -118,6 +118,7 @@ if [ "${PLAYER_REFERENCE_CORE:-0}" = 1 ]; then
   primary_core=source-research
   if [ "${PLAYER_REFERENCE_TLS_PATCH:-0}" = 1 ]; then primary_core="$primary_core-ssl-patch"; fi
   if [ "${PLAYER_REFERENCE_NETWORK_PATCH:-0}" = 1 ]; then primary_core="$primary_core-network-patch"; fi
+  if [ "${PLAYER_REFERENCE_MISSING_INTERFACE:-0}" = 1 ]; then primary_core="$primary_core-missing-interface-fixture"; fi
 else
   [ "$primary_hash" = 969431b3962408dd02ce38bd2cd4b2a954d11e5212ddef3f65c80a0b419918b8 ] || { echo 'SYM_CORE_HASH_MISMATCH'; exit 1; }
   primary_core=sym
@@ -358,11 +359,26 @@ if [ "${PLAYER_GUEST_NETWORK:-0}" = 1 ]; then
             outcome=verified_exchange
           else outcome=evidence_mismatch; fi
         fi
+        if [ "${PLAYER_REFERENCE_MISSING_INTERFACE:-0}" = 1 ] && [ "$bind_mode" = auto ] && [ "$outcome" = guest_error ]; then
+          for ((n=0;n<10;n++)); do
+            grep -qE "^[0-9-]+ +[0-9:.]+ +$player_pid +[0-9]+ .*GUEST_NET_DONE" "$log" && break
+            sleep 1
+          done
+          # Ensure the server did not accept a connection on an unintended adapter.
+          sleep 1
+          if python3 tests/player_runtime_probe/check_guest_network_evidence.py "$log" "$player_pid" invalid-auto "$internet" "$server_log" >> "$W/guest-network-guest-$name.txt" 2>&1; then
+            outcome=verified_missing_interface_error
+          else outcome=invalid_interface_evidence_mismatch; fi
+        fi
         echo "PLAYER_GUEST_NET_RESULT core=$net_label internet=$internet bind=$bind_mode outcome=$outcome" | tee -a "$W/redroid-status.txt"
         # Disabled Internet may legitimately reject the request, but this
         # diagnostic's green outcome requires independent exchange evidence.
         # An expected policy rejection stays recorded as a non-pass observation.
-        [ "$outcome" = verified_exchange ] || net_failure=1
+        case "$outcome" in
+          verified_exchange) [ "${PLAYER_REFERENCE_MISSING_INTERFACE:-0}:$bind_mode" != 1:auto ] || net_failure=1 ;;
+          verified_missing_interface_error) [ "${PLAYER_REFERENCE_MISSING_INTERFACE:-0}:$bind_mode" = 1:auto ] || net_failure=1 ;;
+          *) net_failure=1 ;;
+        esac
         kill "$guest_server_pid" 2>/dev/null || true
         wait "$guest_server_pid" 2>/dev/null || true
         guest_server_pid=''
