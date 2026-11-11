@@ -309,7 +309,7 @@ if [ "${PLAYER_GUEST_TLS:-0}" = 1 ]; then
       [ "$hash" = d781048671e4cef1cde2ec15db8fe29b949df9949d83569ceaf776ad12901590 ] || { echo 'GUEST_TLS_SPACE_HASH_MISMATCH'; exit 1; }
     fi
     server_log="$W/guest-tls-server-$guest_core.txt"
-    python3 tests/guest_tls_probe/server.py "$W/ci-test-cert.pem" "$W/ci-test-key.pem" 19443 10 "$W/ci-pki" > "$server_log" 2>&1 &
+    python3 tests/guest_tls_probe/server.py "$W/ci-test-cert.pem" "$W/ci-test-key.pem" 19443 12 "$W/ci-pki" > "$server_log" 2>&1 &
     guest_server_pid=$!
     for ((n=0;n<20;n++)); do
       grep -q 'LOCAL_TLS_SERVER_READY' "$server_log" && break
@@ -331,9 +331,9 @@ if [ "${PLAYER_GUEST_TLS:-0}" = 1 ]; then
     done
     grep -E "^[0-9-]+ +[0-9:.]+ +$player_pid +[0-9]+ .*(GUEST_TLS_|ServiceSsl .*Stubbed|Unhandled exception in guest thread|System\.Security\.Authentication)" "$log" | tee -a "$W/redroid-status.txt" || true
     if [ "$guest_result" = 1 ]; then
-      # Wait for the endpoint to observe all ten client connections.
+      # Wait for the endpoint to observe all twelve client connections.
       for ((n=0;n<10;n++)); do
-        grep -qE 'LOCAL_TLS_HANDSHAKE_OK 9 |LOCAL_TLS_HANDSHAKE_OR_IO_FAILED 9 ' "$server_log" && break
+        grep -qE 'LOCAL_TLS_HANDSHAKE_OK 11 |LOCAL_TLS_HANDSHAKE_OR_IO_FAILED 11 ' "$server_log" && break
         sleep 1
       done
       if [ "${PLAYER_REFERENCE_TLS_PATCH:-0}" = 1 ]; then

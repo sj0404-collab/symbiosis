@@ -19,6 +19,8 @@ load_context('root', cert, key)
 if fixture_dir is not None:
     for name in ('server', 'expired', 'client'):
         load_context(name, fixture_dir / f'{name}.pem', fixture_dir / 'server-key.pem')
+    load_context('intermediate_chain', fixture_dir / 'intermediate-chain.pem', fixture_dir / 'server-key.pem')
+    load_context('missing_intermediate', fixture_dir / 'intermediate-leaf.pem', fixture_dir / 'server-key.pem')
 with socket.socket() as listener:
     listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     listener.bind(('127.0.0.1', port))
@@ -31,7 +33,7 @@ with socket.socket() as listener:
             client.settimeout(20)
             with client:
                 try:
-                    profile = {7: 'server', 8: 'expired', 9: 'client'}.get(i, 'root') if fixture_dir else 'root'
+                    profile = {7: 'server', 8: 'expired', 9: 'client', 10: 'intermediate_chain', 11: 'missing_intermediate'}.get(i, 'root') if fixture_dir else 'root'
                     print('LOCAL_TLS_CERT_PROFILE', i, profile, flush=True)
                     with contexts[profile].wrap_socket(client, server_side=True) as secure:
                         print('LOCAL_TLS_HANDSHAKE_OK', i, secure.version(), flush=True)

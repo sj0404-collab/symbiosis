@@ -3,7 +3,7 @@
 
 The server can finish its side of TLS 1.3 before the client rejects its cert;
 require actual client validation-policy observations and guest IPC results in
-order, plus ten local server connections and encrypted payload exchanges.
+order, plus twelve local server connections and encrypted payload exchanges.
 """
 from pathlib import Path
 import re
@@ -90,6 +90,20 @@ markers = [
     r'GUEST_TLS_NEGATIVE_HANDSHAKE_FAILED case=client_eku_only',
     r'GUEST_TLS_FAILED_HANDSHAKE_IO_REJECTED case=client_eku_only',
     r'GUEST_TLS_VERIFY_DETAILS_UNSUPPORTED case=client_eku_only',
+    r'GUEST_TLS_CHAIN_CASE intermediate_chain',
+    r'GUEST_TLS_UNSUPPORTED_OPTIONS_REJECTED',
+    r'GUEST_TLS_VERIFY_DISABLE_REJECTED',
+    r'CI_ONLY_TLS_POLICY imported_groups=1 errors=.*RemoteCertificateChainErrors',
+    r'CI_ONLY_TLS_CUSTOM_CHAIN valid=True',
+    r'GUEST_TLS_VERIFIED_EXCHANGE_OK',
+    r'GUEST_TLS_CHAIN_CASE missing_intermediate',
+    r'GUEST_TLS_UNSUPPORTED_OPTIONS_REJECTED',
+    r'GUEST_TLS_VERIFY_DISABLE_REJECTED',
+    r'CI_ONLY_TLS_POLICY imported_groups=1 errors=.*RemoteCertificateChainErrors',
+    r'CI_ONLY_TLS_CUSTOM_CHAIN valid=False statuses=.*PartialChain',
+    r'GUEST_TLS_NEGATIVE_HANDSHAKE_FAILED case=missing_intermediate',
+    r'GUEST_TLS_FAILED_HANDSHAKE_IO_REJECTED case=missing_intermediate',
+    r'GUEST_TLS_VERIFY_DETAILS_UNSUPPORTED case=missing_intermediate',
     r'GUEST_TLS_COMPLETE',
 ]
 position = 0
@@ -102,10 +116,10 @@ for pattern in markers:
         raise SystemExit('GUEST_TLS_EVIDENCE_MISSING_OR_OUT_OF_ORDER ' + pattern)
 if any(re.search(r'GUEST_TLS_ERROR|Unhandled exception in guest thread|FATAL EXCEPTION|Fatal signal', row) for row in rows):
     raise SystemExit('GUEST_TLS_EVIDENCE_HAS_ERROR')
-for n in (2, 6, 7):
+for n in (2, 6, 7, 10):
     if not re.search(rf'^LOCAL_TLS_EXCHANGE_OK {n}$', server, re.M):
         raise SystemExit('GUEST_TLS_EVIDENCE_SERVER_EXCHANGE_MISSING ' + str(n))
-for n in (0, 1, 3, 4, 5, 8, 9):
+for n in (0, 1, 3, 4, 5, 8, 9, 11):
     # In TLS 1.3 the server can complete before client verification. Require
     # the ordered client policy result separately; server marker is not proof.
     ok = re.search(rf'^LOCAL_TLS_HANDSHAKE_OK {n} TLSv', server, re.M)
@@ -114,7 +128,7 @@ for n in (0, 1, 3, 4, 5, 8, 9):
         raise SystemExit('GUEST_TLS_EVIDENCE_SERVER_NEGATIVE_CONNECTION_MISSING ' + str(n))
     if re.search(rf'^LOCAL_TLS_EXCHANGE_OK {n}$', server, re.M):
         raise SystemExit('GUEST_TLS_EVIDENCE_UNEXPECTED_EXCHANGE ' + str(n))
-for n, profile in ((7, 'server'), (8, 'expired'), (9, 'client')):
+for n, profile in ((7, 'server'), (8, 'expired'), (9, 'client'), (10, 'intermediate_chain'), (11, 'missing_intermediate')):
     if not re.search(rf'^LOCAL_TLS_CERT_PROFILE {n} {profile}$', server, re.M):
         raise SystemExit('GUEST_TLS_EVIDENCE_SERVER_CERT_PROFILE_MISSING ' + str(n))
 print('GUEST_TLS_RESEARCH_EVIDENCE_OK ordered_client_policy_and_server_exchange')

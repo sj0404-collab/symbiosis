@@ -181,6 +181,10 @@ int main(void) {
     if (!connection(&ctx, "localhost", "expired_server")) goto ctx_done;
     say("GUEST_TLS_CHAIN_CASE client_eku_only");
     if (!connection(&ctx, "localhost", "client_eku_only")) goto ctx_done;
+    say("GUEST_TLS_CHAIN_CASE intermediate_chain");
+    if (!connection(&ctx, "localhost", NULL)) goto ctx_done;
+    say("GUEST_TLS_CHAIN_CASE missing_intermediate");
+    if (!connection(&ctx, "localhost", "missing_intermediate")) goto ctx_done;
     say("GUEST_TLS_COMPLETE");
 ctx_done:
     if (other_open) sslContextClose(&other);

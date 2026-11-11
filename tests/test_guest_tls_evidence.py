@@ -34,9 +34,14 @@ MARKERS = [
  'CI_ONLY_TLS_POLICY imported_groups=1 errors=RemoteCertificateChainErrors',
  'CI_ONLY_TLS_CUSTOM_CHAIN valid=False statuses=NotValidForUsage',
  'GUEST_TLS_NEGATIVE_HANDSHAKE_FAILED case=client_eku_only', 'GUEST_TLS_FAILED_HANDSHAKE_IO_REJECTED case=client_eku_only', 'GUEST_TLS_VERIFY_DETAILS_UNSUPPORTED case=client_eku_only',
- 'GUEST_TLS_COMPLETE',
+ 'GUEST_TLS_CHAIN_CASE intermediate_chain', 'GUEST_TLS_UNSUPPORTED_OPTIONS_REJECTED', 'GUEST_TLS_VERIFY_DISABLE_REJECTED',
+ 'CI_ONLY_TLS_POLICY imported_groups=1 errors=RemoteCertificateChainErrors', 'CI_ONLY_TLS_CUSTOM_CHAIN valid=True statuses=', 'GUEST_TLS_VERIFIED_EXCHANGE_OK',
+ 'GUEST_TLS_CHAIN_CASE missing_intermediate', 'GUEST_TLS_UNSUPPORTED_OPTIONS_REJECTED', 'GUEST_TLS_VERIFY_DISABLE_REJECTED',
+ 'CI_ONLY_TLS_POLICY imported_groups=1 errors=RemoteCertificateChainErrors', 'CI_ONLY_TLS_CUSTOM_CHAIN valid=False statuses=PartialChain',
+ 'GUEST_TLS_NEGATIVE_HANDSHAKE_FAILED case=missing_intermediate', 'GUEST_TLS_FAILED_HANDSHAKE_IO_REJECTED case=missing_intermediate',
+ 'GUEST_TLS_VERIFY_DETAILS_UNSUPPORTED case=missing_intermediate', 'GUEST_TLS_COMPLETE',
 ]
-SERVER = ''.join(f'LOCAL_TLS_HANDSHAKE_OK {n} TLSv1.3\n' for n in range(10)) + 'LOCAL_TLS_EXCHANGE_OK 2\nLOCAL_TLS_EXCHANGE_OK 6\nLOCAL_TLS_EXCHANGE_OK 7\nLOCAL_TLS_CERT_PROFILE 7 server\nLOCAL_TLS_CERT_PROFILE 8 expired\nLOCAL_TLS_CERT_PROFILE 9 client\n'
+SERVER = ''.join(f'LOCAL_TLS_HANDSHAKE_OK {n} TLSv1.3\n' for n in range(12)) + 'LOCAL_TLS_EXCHANGE_OK 2\nLOCAL_TLS_EXCHANGE_OK 6\nLOCAL_TLS_EXCHANGE_OK 7\nLOCAL_TLS_EXCHANGE_OK 10\nLOCAL_TLS_CERT_PROFILE 7 server\nLOCAL_TLS_CERT_PROFILE 8 expired\nLOCAL_TLS_CERT_PROFILE 9 client\nLOCAL_TLS_CERT_PROFILE 10 intermediate_chain\nLOCAL_TLS_CERT_PROFILE 11 missing_intermediate\n'
 
 
 class EvidenceTest(unittest.TestCase):
@@ -49,7 +54,7 @@ class EvidenceTest(unittest.TestCase):
  def test_success(self): self.assertEqual(self.check().returncode,0)
  def test_missing_policy_not_accepted(self): self.assertNotEqual(self.check([m for m in MARKERS if 'NameMismatch' not in m]).returncode,0)
  def test_missing_expiry_or_purpose_not_accepted(self):
-  for status in ('NotTimeValid', 'NotValidForUsage'):
+  for status in ('NotTimeValid', 'NotValidForUsage', 'PartialChain'):
    self.assertNotEqual(self.check([m.replace(status, 'OtherError') for m in MARKERS]).returncode, 0)
   self.assertNotEqual(self.check(server=SERVER.replace('LOCAL_TLS_CERT_PROFILE 9 client', 'LOCAL_TLS_CERT_PROFILE 9 server')).returncode, 0)
  def test_wrong_order_not_accepted(self): self.assertNotEqual(self.check(MARKERS[:5]+list(reversed(MARKERS[5:]))).returncode,0)
