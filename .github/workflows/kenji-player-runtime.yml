@@ -8,6 +8,9 @@ on:
       compare_space:
         type: boolean
         default: false
+      guest_tls:
+        type: boolean
+        default: false
 permissions:
   contents: read
 jobs:
@@ -147,6 +150,7 @@ jobs:
             /tmp/player-runtime/swkbd.nro
             /tmp/player-runtime/graphics.nro
             /tmp/player-runtime/shader.nro
+            /tmp/player-runtime/guest-tls.nro
             /tmp/player-runtime/apk-16k-audit.txt
             /tmp/player-runtime/zipalign-16k.txt
           if-no-files-found: error
@@ -161,6 +165,7 @@ jobs:
       ANDROID_SERIAL: 127.0.0.1:5558
       PLAYER_EXPECT_TLS_CANDIDATE: ${{ inputs.tls_candidate && '1' || '0' }}
       PLAYER_COMPARE_SPACE: ${{ inputs.compare_space && '1' || '0' }}
+      PLAYER_GUEST_TLS: ${{ inputs.guest_tls && '1' || '0' }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -189,5 +194,6 @@ jobs:
             /tmp/player-runtime/shader-*.txt
             /tmp/player-runtime/apk-16k-audit.txt
             /tmp/player-runtime/zipalign-16k.txt
+            /tmp/player-runtime/guest-tls-server.txt
           if-no-files-found: warn
           retention-days: 3

@@ -7,6 +7,7 @@ docker run --rm --network none --cap-drop ALL --security-opt no-new-privileges \
   --user "$(id -u):$(id -g)" --read-only --tmpfs /tmp:rw,nosuid,size=512m \
   --mount "type=bind,src=$PWD/tests/swkbd_android_probe,dst=/input,readonly" \
   --mount "type=bind,src=$PWD/tests/sdl_android_surface,dst=/graphics,readonly" \
+  --mount "type=bind,src=$PWD/tests/guest_tls_probe,dst=/tls,readonly" \
   --mount "type=bind,src=$PLAY_WORK,dst=/output" --entrypoint /bin/bash "$IMAGE" -euc '
     /opt/devkitpro/devkitA64/bin/aarch64-none-elf-gcc \
       -specs=/opt/devkitpro/libnx/switch.specs -march=armv8-a+crc+crypto \
@@ -17,6 +18,15 @@ docker run --rm --network none --cap-drop ALL --security-opt no-new-privileges \
     elf2nro /output/swkbd.elf /output/swkbd.nro \
       --nacp=/output/swkbd.nacp --icon=/opt/devkitpro/libnx/default_icon.jpg
     sha256sum /output/swkbd.nro
+    /opt/devkitpro/devkitA64/bin/aarch64-none-elf-gcc \
+      -specs=/opt/devkitpro/libnx/switch.specs -march=armv8-a+crc+crypto \
+      -mtune=cortex-a57 -mtp=soft -fPIE -O2 -Wall -Wextra \
+      -I/opt/devkitpro/libnx/include /tls/main.c \
+      -L/opt/devkitpro/libnx/lib -lnx -o /output/guest-tls.elf
+    nacptool --create "CI TLS probe" "Symbiosis CI" "1.0.0" /output/guest-tls.nacp
+    elf2nro /output/guest-tls.elf /output/guest-tls.nro \
+      --nacp=/output/guest-tls.nacp --icon=/opt/devkitpro/libnx/default_icon.jpg
+    sha256sum /output/guest-tls.nro
     SDL_CONFIG=/opt/devkitpro/portlibs/switch/bin/sdl2-config
     /opt/devkitpro/devkitA64/bin/aarch64-none-elf-gcc \
       -specs=/opt/devkitpro/libnx/switch.specs -march=armv8-a+crc+crypto \

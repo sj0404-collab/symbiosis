@@ -16,6 +16,7 @@ class DiagnosticLauncher : Activity() {
             val filename = when (kind) {
                 "graphics" -> "graphics-probe.nro"
                 "shader" -> "shader-probe.nro"
+                "tls" -> "guest-tls-probe.nro"
                 else -> "swkbd-probe.nro"
             }
             val game = File(filesDir, filename)

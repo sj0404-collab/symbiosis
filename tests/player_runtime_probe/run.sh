@@ -13,6 +13,8 @@ mkdir -p "$W" "$B"
 mounted=0
 container_started=0
 cleanup() {
+  if [ -n "${guest_server_pid:-}" ]; then kill "$guest_server_pid" 2>/dev/null || true; fi
+  rm -f "$W/ci-test-key.pem" "$W/ci-test-cert.pem"
   if [ "$container_started" = 1 ]; then
     timeout 20s adb -s "$ANDROID_SERIAL" logcat -d -v threadtime > "$W/redroid-logcat.txt" 2>&1 || true
     if [ -n "${package:-}" ]; then
@@ -98,15 +100,21 @@ fi
 adb push "$W/swkbd.nro" /data/local/tmp/player-swkb.nro >/dev/null
 adb push "$W/graphics.nro" /data/local/tmp/player-graphics.nro >/dev/null
 adb push "$W/shader.nro" /data/local/tmp/player-shader.nro >/dev/null
+if [ "${PLAYER_GUEST_TLS:-0}" = 1 ]; then
+  adb push "$W/guest-tls.nro" /data/local/tmp/player-guest-tls.nro >/dev/null
+fi
 adb shell run-as "$package" mkdir -p files/engines
 adb shell run-as "$package" cp /data/local/tmp/player-core.so files/engines/libkenji.so
 adb shell run-as "$package" chmod 400 files/engines/libkenji.so
 adb shell run-as "$package" cp /data/local/tmp/player-swkb.nro files/swkbd-probe.nro
 adb shell run-as "$package" cp /data/local/tmp/player-graphics.nro files/graphics-probe.nro
 adb shell run-as "$package" cp /data/local/tmp/player-shader.nro files/shader-probe.nro
+if [ "${PLAYER_GUEST_TLS:-0}" = 1 ]; then
+  adb shell run-as "$package" cp /data/local/tmp/player-guest-tls.nro files/guest-tls-probe.nro
+fi
 # Generate a disposable local test certificate/key on this isolated runner.
 # Neither is included in the APK or uploaded in test artifacts.
-if [ "${PLAYER_EXPECT_TLS_CANDIDATE:-0}" = 1 ]; then
+if [ "${PLAYER_EXPECT_TLS_CANDIDATE:-0}" = 1 ] || [ "${PLAYER_GUEST_TLS:-0}" = 1 ]; then
   openssl req -x509 -newkey rsa:2048 -nodes -keyout "$W/ci-test-key.pem" -out "$W/ci-test-cert.pem" \
     -days 1 -subj '/CN=localhost' -addext 'subjectAltName=DNS:localhost' >/dev/null 2>&1
   adb push "$W/ci-test-key.pem" /data/local/tmp/player-ci-test-key.pem >/dev/null
@@ -114,8 +122,12 @@ if [ "${PLAYER_EXPECT_TLS_CANDIDATE:-0}" = 1 ]; then
   adb shell chmod 644 /data/local/tmp/player-ci-test-key.pem /data/local/tmp/player-ci-test-cert.pem
   adb shell run-as "$package" cp /data/local/tmp/player-ci-test-key.pem files/ci-test-key.pem
   adb shell run-as "$package" cp /data/local/tmp/player-ci-test-cert.pem files/ci-test-cert.pem
+  if [ "${PLAYER_GUEST_TLS:-0}" = 1 ]; then
+    adb shell run-as "$package" mkdir -p files/kenji/sdcard
+    adb shell run-as "$package" cp /data/local/tmp/player-ci-test-cert.pem files/kenji/sdcard/ci-test-cert.pem
+  fi
   adb shell rm /data/local/tmp/player-ci-test-key.pem /data/local/tmp/player-ci-test-cert.pem
-  rm -f "$W/ci-test-key.pem" "$W/ci-test-cert.pem"
+  if [ "${PLAYER_GUEST_TLS:-0}" != 1 ]; then rm -f "$W/ci-test-key.pem" "$W/ci-test-cert.pem"; fi
 fi
 # Let the actual main app perform its normal initialization before asking its
 # real intent factory to capture Eden input settings. No intent data is faked.
@@ -250,6 +262,52 @@ for mode in 2 0 1; do
   [ "$parent_after" = "$main_pid" ] || { echo "PLAYER_MAIN_PROCESS_CHANGED mode=$mode"; exit 1; }
   echo "PLAYER_REAL_UI_AND_EXIT_OK mode=$mode" | tee -a "$W/redroid-status.txt"
 done
+
+# Exercise the guest SSL service through real IPC and a local TCP/TLS server.
+# This server is bound to the runner loopback and adb reverse exposes it only
+# to Android loopback; test key/cert are throwaway and are never uploaded.
+if [ "${PLAYER_GUEST_TLS:-0}" = 1 ]; then
+  python3 tests/guest_tls_probe/server.py "$W/ci-test-cert.pem" "$W/ci-test-key.pem" > "$W/guest-tls-server.txt" 2>&1 &
+  guest_server_pid=$!
+  for ((n=0;n<20;n++)); do
+    grep -q 'LOCAL_TLS_SERVER_READY' "$W/guest-tls-server.txt" && break
+    kill -0 "$guest_server_pid" 2>/dev/null || { echo 'GUEST_TLS_SERVER_NOT_RUNNING'; exit 1; }
+    sleep 1
+  done
+  grep -q 'LOCAL_TLS_SERVER_READY' "$W/guest-tls-server.txt" || { echo 'GUEST_TLS_SERVER_NOT_READY'; exit 1; }
+  adb reverse tcp:19443 tcp:19443
+  echo 'PLAYER_GUEST_TLS_ATTEMPT' | tee -a "$W/redroid-status.txt"
+  adb shell am start -W -n "$package/dev.symbiosis.playerruntime.DiagnosticLauncher" \
+    --es test_config 'memory=2' --es test_kind tls | tee "$W/player-guest-tls-launch.txt"
+  player_pid=$(adb shell pidof "$package:kenji" | tr -d '\r' || true)
+  [ -n "$player_pid" ] || { echo 'GUEST_TLS_PLAYER_NOT_RUNNING'; exit 1; }
+  guest_result=0
+  for ((n=0;n<90;n++)); do
+    if grep -qE "^[0-9-]+ +[0-9:.]+ +$player_pid +[0-9]+ .*GUEST_TLS_COMPLETE" "$log"; then guest_result=1; break; fi
+    if grep -qE "^[0-9-]+ +[0-9:.]+ +$player_pid +[0-9]+ .*GUEST_TLS_ERROR" "$log" || app_crashed; then break; fi
+    sleep 1
+  done
+  grep -E "^[0-9-]+ +[0-9:.]+ +$player_pid +[0-9]+ .*GUEST_TLS_" "$log" | tee -a "$W/redroid-status.txt" || true
+  if [ "$guest_result" != 1 ]; then echo 'PLAYER_GUEST_TLS_NOT_VERIFIED'; cat "$W/guest-tls-server.txt"; exit 1; fi
+  grep -q 'LOCAL_TLS_EXCHANGE_OK 0' "$W/guest-tls-server.txt" || { echo 'LOCAL_SERVER_EXCHANGE_NOT_CONFIRMED'; exit 1; }
+  # A generic failure or server outage is not evidence of hostname checking.
+  # Require a certificate-related TLS alert in the server's second connection.
+  for ((n=0;n<10;n++)); do
+    grep -Eq 'LOCAL_TLS_HANDSHAKE_OR_IO_FAILED 1 SSLError .*ALERT_(BAD_CERTIFICATE|CERTIFICATE_UNKNOWN)' "$W/guest-tls-server.txt" && break
+    sleep 1
+  done
+  grep -Eq 'LOCAL_TLS_HANDSHAKE_OR_IO_FAILED 1 SSLError .*ALERT_(BAD_CERTIFICATE|CERTIFICATE_UNKNOWN)' "$W/guest-tls-server.txt" || { echo 'WRONG_HOST_CERT_ALERT_NOT_CONFIRMED'; cat "$W/guest-tls-server.txt"; exit 1; }
+  click_text 'Выйти' || { echo 'GUEST_TLS_EXIT_NOT_VISIBLE'; exit 1; }
+  for ((n=0;n<45;n++)); do
+    pid=$(adb shell pidof "$package:kenji" | tr -d '\r' || true)
+    [ -z "$pid" ] && break; sleep 1
+  done
+  [ -z "${pid:-}" ] || { echo 'GUEST_TLS_EXIT_STILL_ALIVE'; exit 1; }
+  ! app_crashed || { echo 'GUEST_TLS_PLAYER_FATAL'; exit 1; }
+  [ "$(adb shell pidof "$package" | tr -d '\r' || true)" = "$main_pid" ] || { echo 'GUEST_TLS_PARENT_CHANGED'; exit 1; }
+  adb reverse --remove tcp:19443
+  echo 'PLAYER_GUEST_TLS_LOCAL_SERVICE_OK' | tee -a "$W/redroid-status.txt"
+fi
 
 # The genuine Activity receives a CI-only broadcast to call its real leave()
 # while a real keyboard dialog is visible. The delay applies only to the
