@@ -87,29 +87,57 @@ done:
     if (fd >= 0) close(fd);
     return status;
 }
+static int read_cert(const char* path, unsigned char* out, size_t capacity, size_t* length) {
+    FILE* f = fopen(path, "rb");
+    if (!f) { say("GUEST_TLS_ERROR stage=guest_cert_open path=%s errno=%d", path, errno); return 0; }
+    *length = fread(out, 1, capacity, f);
+    int failed = ferror(f); fclose(f);
+    if (failed || !*length || *length == capacity) { say("GUEST_TLS_ERROR stage=guest_cert_size path=%s", path); return 0; }
+    return 1;
+}
 int main(void) {
     say("GUEST_TLS_BEGIN");
     if (!check("socket_init", socketInitializeDefault())) goto finish;
     if (!check("ssl_init", sslInitialize(1))) { socketExit(); goto finish; }
-    SslContext ctx = {0};
+    SslContext ctx = {0}, other = {0};
+    int other_open = 0;
     if (!check("context", sslCreateContext(&ctx, SslVersion_Auto))) goto ssl_done;
-    FILE* f = fopen("sdmc:/ci-test-cert.pem", "rb");
-    if (!f) { say("GUEST_TLS_ERROR stage=guest_cert_open errno=%d", errno); goto ctx_done; }
-    unsigned char cert[4096]; size_t len = fread(cert, 1, sizeof(cert), f); fclose(f);
-    if (!len || len == sizeof(cert)) { say("GUEST_TLS_ERROR stage=guest_cert_size bytes=%zu", len); goto ctx_done; }
-    u64 id = 0;
+    if (!check("other_context", sslCreateContext(&other, SslVersion_Auto))) goto ctx_done;
+    other_open = 1;
+    unsigned char cert[4096], wrong[4096], leaf[4096], der[4096];
+    size_t len, wrong_len, leaf_len, der_len;
+    if (!read_cert("sdmc:/ci-test-cert.pem", cert, sizeof(cert), &len) ||
+        !read_cert("sdmc:/ci-wrong-ca.pem", wrong, sizeof(wrong), &wrong_len) ||
+        !read_cert("sdmc:/ci-leaf.pem", leaf, sizeof(leaf), &leaf_len) ||
+        !read_cert("sdmc:/ci-test-cert.der", der, sizeof(der), &der_len)) goto ctx_done;
+    u64 id = 0, wrong_id = 0;
     const char invalid_cert[] = "not a certificate";
     Result invalid = sslContextImportServerPki(&ctx, invalid_cert, sizeof(invalid_cert)-1, SslCertificateFormat_Pem, &id);
     if (R_SUCCEEDED(invalid)) { say("GUEST_TLS_ERROR stage=invalid_certificate_accepted"); goto ctx_done; }
     say("GUEST_TLS_INVALID_CERT_REJECTED rc=0x%08x", invalid);
+    Result leaf_rc = sslContextImportServerPki(&ctx, leaf, (u32)leaf_len, SslCertificateFormat_Pem, &id);
+    if (R_SUCCEEDED(leaf_rc)) { say("GUEST_TLS_ERROR stage=leaf_as_ca_accepted"); goto ctx_done; }
+    say("GUEST_TLS_LEAF_AS_CA_REJECTED rc=0x%08x", leaf_rc);
+    if (!connection(&ctx, "localhost", "no_import")) goto ctx_done;
+    if (!check("import_wrong_ca", sslContextImportServerPki(&ctx, wrong, (u32)wrong_len, SslCertificateFormat_Pem, &wrong_id))) goto ctx_done;
+    if (!connection(&ctx, "localhost", "wrong_ca")) goto ctx_done;
+    if (!check("remove_wrong_ca", sslContextRemovePki(&ctx, wrong_id))) goto ctx_done;
     if (!check("import_test_ca", sslContextImportServerPki(&ctx, cert, (u32)len, SslCertificateFormat_Pem, &id))) goto ctx_done;
     say("GUEST_TLS_CA_IMPORT_RETURNED bytes=%zu id=%llu", len, (unsigned long long)id);
     if (!connection(&ctx, "localhost", NULL)) goto ctx_done;
+    if (!connection(&other, "localhost", "other_context")) goto ctx_done;
     if (!connection(&ctx, "wrong.invalid", "wrong_host")) goto ctx_done;
     if (!check("remove_test_ca", sslContextRemovePki(&ctx, id))) goto ctx_done;
+    Result second_remove = sslContextRemovePki(&ctx, id);
+    if (R_SUCCEEDED(second_remove)) { say("GUEST_TLS_ERROR stage=removed_id_still_exists"); goto ctx_done; }
+    say("GUEST_TLS_REMOVED_ID_REJECTED rc=0x%08x", second_remove);
     if (!connection(&ctx, "localhost", "untrusted_after_remove")) goto ctx_done;
+    if (!check("import_der_ca", sslContextImportServerPki(&ctx, der, (u32)der_len, SslCertificateFormat_Der, &id))) goto ctx_done;
+    say("GUEST_TLS_DER_CA_IMPORT_RETURNED");
+    if (!connection(&ctx, "localhost", NULL)) goto ctx_done;
     say("GUEST_TLS_COMPLETE");
 ctx_done:
+    if (other_open) sslContextClose(&other);
     sslContextClose(&ctx);
 ssl_done:
     sslExit(); socketExit();

@@ -20,7 +20,7 @@ class GuestTlsFixtureTest(unittest.TestCase):
             # Server can bind an arbitrary port for host tests. Port 0 means
             # select one safely; the readiness line tells us which one.
             server = subprocess.Popen([sys.executable, str(ROOT / 'tests/guest_tls_probe/server.py'),
-                                       str(cert), str(key), '0'], stdout=subprocess.PIPE,
+                                       str(cert), str(key), '0', '3'], stdout=subprocess.PIPE,
                                       stderr=subprocess.STDOUT, text=True)
             try:
                 ready = server.stdout.readline().strip()

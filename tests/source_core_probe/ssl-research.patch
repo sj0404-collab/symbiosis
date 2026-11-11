@@ -1,5 +1,5 @@
 diff --git a/src/Ryujinx.HLE/HOS/Services/Ssl/ResultCode.cs b/src/Ryujinx.HLE/HOS/Services/Ssl/ResultCode.cs
-index e23621d..d0ac56f 100644
+index e23621d0..d0ac56f8 100644
 --- a/src/Ryujinx.HLE/HOS/Services/Ssl/ResultCode.cs
 +++ b/src/Ryujinx.HLE/HOS/Services/Ssl/ResultCode.cs
 @@ -16,5 +16,6 @@ namespace Ryujinx.HLE.HOS.Services.Ssl
@@ -10,7 +10,7 @@ index e23621d..d0ac56f 100644
      }
  }
 diff --git a/src/Ryujinx.HLE/HOS/Services/Ssl/SslService/ISslConnection.cs b/src/Ryujinx.HLE/HOS/Services/Ssl/SslService/ISslConnection.cs
-index 92e73f9..1e8c843 100644
+index 92e73f9f..1e8c8436 100644
 --- a/src/Ryujinx.HLE/HOS/Services/Ssl/SslService/ISslConnection.cs
 +++ b/src/Ryujinx.HLE/HOS/Services/Ssl/SslService/ISslConnection.cs
 @@ -16,6 +16,7 @@ namespace Ryujinx.HLE.HOS.Services.Ssl.SslService
@@ -71,7 +71,7 @@ index 92e73f9..1e8c843 100644
          }
  
 diff --git a/src/Ryujinx.HLE/HOS/Services/Ssl/SslService/ISslContext.cs b/src/Ryujinx.HLE/HOS/Services/Ssl/SslService/ISslContext.cs
-index 7b371d2..e89bf5c 100644
+index 7b371d29..e89bf5c0 100644
 --- a/src/Ryujinx.HLE/HOS/Services/Ssl/SslService/ISslContext.cs
 +++ b/src/Ryujinx.HLE/HOS/Services/Ssl/SslService/ISslContext.cs
 @@ -10,7 +10,7 @@ namespace Ryujinx.HLE.HOS.Services.Ssl.SslService
@@ -139,10 +139,10 @@ index 7b371d2..e89bf5c 100644
          public ResultCode ImportClientPki(ServiceCtx context)
 diff --git a/src/Ryujinx.HLE/HOS/Services/Ssl/SslService/ServerTrustStore.cs b/src/Ryujinx.HLE/HOS/Services/Ssl/SslService/ServerTrustStore.cs
 new file mode 100644
-index 0000000..4425a14
+index 00000000..87d27981
 --- /dev/null
 +++ b/src/Ryujinx.HLE/HOS/Services/Ssl/SslService/ServerTrustStore.cs
-@@ -0,0 +1,103 @@
+@@ -0,0 +1,108 @@
 +// Research-only implementation. This is not a release core.
 +using Ryujinx.HLE.HOS.Services.Ssl.Types;
 +using Ryujinx.Common.Logging;
@@ -179,6 +179,11 @@ index 0000000..4425a14
 +                for (int i = 0; i < collection.Count; i++)
 +                {
 +                    if (collection[i].HasPrivateKey) return false;
++                    // Never promote a server leaf to a trusted CA anchor.
++                    X509BasicConstraintsExtension constraints = null;
++                    foreach (X509Extension extension in collection[i].Extensions)
++                        if (extension is X509BasicConstraintsExtension basic) constraints = basic;
++                    if (constraints == null || !constraints.CertificateAuthority) return false;
 +                    certificates[i] = collection[i].RawData;
 +                }
 +                lock (_sync)
@@ -247,7 +252,7 @@ index 0000000..4425a14
 +    }
 +}
 diff --git a/src/Ryujinx.HLE/HOS/Services/Ssl/SslService/SslManagedSocketConnection.cs b/src/Ryujinx.HLE/HOS/Services/Ssl/SslService/SslManagedSocketConnection.cs
-index e089250..d8da23a 100644
+index e089250a..d8da23af 100644
 --- a/src/Ryujinx.HLE/HOS/Services/Ssl/SslService/SslManagedSocketConnection.cs
 +++ b/src/Ryujinx.HLE/HOS/Services/Ssl/SslService/SslManagedSocketConnection.cs
 @@ -19,12 +19,14 @@ namespace Ryujinx.HLE.HOS.Services.Ssl.SslService

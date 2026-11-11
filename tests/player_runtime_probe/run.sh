@@ -14,7 +14,7 @@ mounted=0
 container_started=0
 cleanup() {
   if [ -n "${guest_server_pid:-}" ]; then kill "$guest_server_pid" 2>/dev/null || true; fi
-  rm -f "$W/ci-test-key.pem" "$W/ci-test-cert.pem"
+  rm -f "$W/ci-test-key.pem" "$W/ci-test-cert.pem" "$W/ci-wrong-key.pem" "$W/ci-wrong-ca.pem" "$W/ci-leaf-key.pem" "$W/ci-leaf.pem" "$W/ci-test-cert.der"
   if [ "$container_started" = 1 ]; then
     timeout 20s adb -s "$ANDROID_SERIAL" logcat -d -v threadtime > "$W/redroid-logcat.txt" 2>&1 || true
     if [ -n "${package:-}" ]; then
@@ -140,6 +140,18 @@ if [ "${PLAYER_EXPECT_TLS_CANDIDATE:-0}" = 1 ] || [ "${PLAYER_GUEST_TLS:-0}" = 1
   if [ "${PLAYER_GUEST_TLS:-0}" = 1 ]; then
     adb shell run-as "$package" mkdir -p files/kenji/sdcard
     adb shell run-as "$package" cp /data/local/tmp/player-ci-test-cert.pem files/kenji/sdcard/ci-test-cert.pem
+    # Independent wrong CA, non-CA leaf and DER representation of the actual CA.
+    openssl req -x509 -newkey rsa:2048 -nodes -keyout "$W/ci-wrong-key.pem" -out "$W/ci-wrong-ca.pem" \
+      -days 1 -subj '/CN=unrelated-test-root' -addext 'basicConstraints=critical,CA:TRUE' >/dev/null 2>&1
+    openssl req -x509 -newkey rsa:2048 -nodes -keyout "$W/ci-leaf-key.pem" -out "$W/ci-leaf.pem" \
+      -days 1 -subj '/CN=not-an-authority' -addext 'basicConstraints=critical,CA:FALSE' >/dev/null 2>&1
+    openssl x509 -in "$W/ci-test-cert.pem" -outform DER -out "$W/ci-test-cert.der"
+    for name in ci-wrong-ca.pem ci-leaf.pem ci-test-cert.der; do
+      adb push "$W/$name" "/data/local/tmp/player-$name" >/dev/null
+      adb shell chmod 644 "/data/local/tmp/player-$name"
+      adb shell run-as "$package" cp "/data/local/tmp/player-$name" "files/kenji/sdcard/$name"
+      adb shell rm "/data/local/tmp/player-$name"
+    done
   fi
   adb shell rm /data/local/tmp/player-ci-test-key.pem /data/local/tmp/player-ci-test-cert.pem
   if [ "${PLAYER_GUEST_TLS:-0}" != 1 ]; then rm -f "$W/ci-test-key.pem" "$W/ci-test-cert.pem"; fi
@@ -316,19 +328,16 @@ if [ "${PLAYER_GUEST_TLS:-0}" = 1 ]; then
     done
     grep -E "^[0-9-]+ +[0-9:.]+ +$player_pid +[0-9]+ .*(GUEST_TLS_|ServiceSsl .*Stubbed|Unhandled exception in guest thread|System\.Security\.Authentication)" "$log" | tee -a "$W/redroid-status.txt" || true
     if [ "$guest_result" = 1 ]; then
-      # Wait for the local endpoint to observe all three client connections.
+      # Wait for the endpoint to observe all seven client connections.
       for ((n=0;n<10;n++)); do
-        grep -qE 'LOCAL_TLS_HANDSHAKE_OK 2 |LOCAL_TLS_HANDSHAKE_OR_IO_FAILED 2 ' "$server_log" && break
+        grep -qE 'LOCAL_TLS_HANDSHAKE_OK 6 |LOCAL_TLS_HANDSHAKE_OR_IO_FAILED 6 ' "$server_log" && break
         sleep 1
       done
       if [ "${PLAYER_REFERENCE_TLS_PATCH:-0}" = 1 ]; then
         python3 tests/player_runtime_probe/check_guest_tls_evidence.py "$log" "$player_pid" "$server_log" | tee -a "$W/redroid-status.txt" || guest_result=0
       else
-        # Without CI policy observations, preserve the stronger external-alert
-        # requirement; do not infer hostname validation from a generic error.
-        grep -q 'LOCAL_TLS_EXCHANGE_OK 0' "$server_log" || guest_result=0
-        grep -Eq 'LOCAL_TLS_HANDSHAKE_OR_IO_FAILED 1 SSLError .*ALERT_(BAD_CERTIFICATE|CERTIFICATE_UNKNOWN|UNKNOWN_CA)' "$server_log" || guest_result=0
-        grep -Eq 'LOCAL_TLS_HANDSHAKE_OR_IO_FAILED 2 SSLError .*ALERT_(BAD_CERTIFICATE|CERTIFICATE_UNKNOWN|UNKNOWN_CA)' "$server_log" || guest_result=0
+        echo 'GUEST_TLS_NO_INSTRUMENTED_POLICY_EVIDENCE'
+        guest_result=0
       fi
     fi
     if [ "$guest_result" = 1 ]; then

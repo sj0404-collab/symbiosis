@@ -6,6 +6,7 @@ import sys
 
 cert, key = sys.argv[1:3]
 port = int(sys.argv[3]) if len(sys.argv) > 3 else 19443
+count = int(sys.argv[4]) if len(sys.argv) > 4 else 7
 context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
 context.load_cert_chain(cert, key)
 with socket.socket() as listener:
@@ -14,7 +15,7 @@ with socket.socket() as listener:
     listener.listen(4)
     listener.settimeout(180)
     print(f'LOCAL_TLS_SERVER_READY port={listener.getsockname()[1]}', flush=True)
-    for i in range(3):
+    for i in range(count):
         try:
             client, address = listener.accept()
             client.settimeout(20)

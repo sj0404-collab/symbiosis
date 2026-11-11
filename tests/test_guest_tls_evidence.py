@@ -7,17 +7,25 @@ import unittest
 
 CHECKER = Path(__file__).parent / 'player_runtime_probe/check_guest_tls_evidence.py'
 MARKERS = [
- 'GUEST_TLS_INVALID_CERT_REJECTED', 'GUEST_TLS_CA_IMPORT_RETURNED',
- 'GUEST_TLS_VERIFY_DISABLE_REJECTED',
- 'CI_ONLY_TLS_POLICY imported_groups=1 errors=RemoteCertificateChainErrors',
- 'GUEST_TLS_VERIFIED_EXCHANGE_OK', 'GUEST_TLS_VERIFY_DISABLE_REJECTED',
+ 'GUEST_TLS_INVALID_CERT_REJECTED', 'GUEST_TLS_LEAF_AS_CA_REJECTED',
+ 'GUEST_TLS_VERIFY_DISABLE_REJECTED', 'CI_ONLY_TLS_POLICY imported_groups=0 errors=RemoteCertificateChainErrors',
+ 'GUEST_TLS_NEGATIVE_HANDSHAKE_FAILED case=no_import', 'GUEST_TLS_STAGE import_wrong_ca rc=0x00000000',
+ 'GUEST_TLS_VERIFY_DISABLE_REJECTED', 'CI_ONLY_TLS_POLICY imported_groups=1 errors=RemoteCertificateChainErrors',
+ 'GUEST_TLS_NEGATIVE_HANDSHAKE_FAILED case=wrong_ca', 'GUEST_TLS_STAGE remove_wrong_ca rc=0x00000000',
+ 'GUEST_TLS_CA_IMPORT_RETURNED', 'GUEST_TLS_VERIFY_DISABLE_REJECTED',
+ 'CI_ONLY_TLS_POLICY imported_groups=1 errors=RemoteCertificateChainErrors', 'GUEST_TLS_VERIFIED_EXCHANGE_OK',
+ 'GUEST_TLS_VERIFY_DISABLE_REJECTED', 'CI_ONLY_TLS_POLICY imported_groups=0 errors=RemoteCertificateChainErrors',
+ 'GUEST_TLS_NEGATIVE_HANDSHAKE_FAILED case=other_context', 'GUEST_TLS_VERIFY_DISABLE_REJECTED',
  'CI_ONLY_TLS_POLICY imported_groups=1 errors=RemoteCertificateNameMismatch, RemoteCertificateChainErrors',
- 'GUEST_TLS_NEGATIVE_HANDSHAKE_FAILED case=wrong_host',
- 'GUEST_TLS_STAGE remove_test_ca rc=0x00000000', 'GUEST_TLS_VERIFY_DISABLE_REJECTED',
+ 'GUEST_TLS_NEGATIVE_HANDSHAKE_FAILED case=wrong_host', 'GUEST_TLS_STAGE remove_test_ca rc=0x00000000',
+ 'GUEST_TLS_REMOVED_ID_REJECTED', 'GUEST_TLS_VERIFY_DISABLE_REJECTED',
  'CI_ONLY_TLS_POLICY imported_groups=0 errors=RemoteCertificateChainErrors',
- 'GUEST_TLS_NEGATIVE_HANDSHAKE_FAILED case=untrusted_after_remove', 'GUEST_TLS_COMPLETE',
+ 'GUEST_TLS_NEGATIVE_HANDSHAKE_FAILED case=untrusted_after_remove', 'GUEST_TLS_DER_CA_IMPORT_RETURNED',
+ 'GUEST_TLS_VERIFY_DISABLE_REJECTED', 'CI_ONLY_TLS_POLICY imported_groups=1 errors=RemoteCertificateChainErrors',
+ 'GUEST_TLS_VERIFIED_EXCHANGE_OK', 'GUEST_TLS_COMPLETE',
 ]
-SERVER = 'LOCAL_TLS_EXCHANGE_OK 0\nLOCAL_TLS_HANDSHAKE_OK 1 TLSv1.3\nLOCAL_TLS_HANDSHAKE_OK 2 TLSv1.3\n'
+SERVER = ''.join(f'LOCAL_TLS_HANDSHAKE_OK {n} TLSv1.3\n' for n in range(7)) + 'LOCAL_TLS_EXCHANGE_OK 2\nLOCAL_TLS_EXCHANGE_OK 6\n'
+
 
 class EvidenceTest(unittest.TestCase):
  def check(self, markers=MARKERS, server=SERVER, pid='123'):
@@ -31,6 +39,7 @@ class EvidenceTest(unittest.TestCase):
  def test_wrong_order_not_accepted(self): self.assertNotEqual(self.check(MARKERS[:5]+list(reversed(MARKERS[5:]))).returncode,0)
  def test_wrong_pid_not_accepted(self): self.assertNotEqual(self.check(pid='1234').returncode,0)
  def test_server_missing_and_guest_error_rejected(self):
-  self.assertNotEqual(self.check(server='LOCAL_TLS_EXCHANGE_OK 0\n').returncode,0)
+  self.assertNotEqual(self.check(server='LOCAL_TLS_EXCHANGE_OK 2\n').returncode,0)
   self.assertNotEqual(self.check(MARKERS+['GUEST_TLS_ERROR stage=anything']).returncode,0)
+  self.assertNotEqual(self.check(server=SERVER+'LOCAL_TLS_EXCHANGE_OK 3\n').returncode,0)
 if __name__ == '__main__': unittest.main()
