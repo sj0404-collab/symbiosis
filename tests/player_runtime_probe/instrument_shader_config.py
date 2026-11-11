@@ -12,4 +12,14 @@ new = '''        android.util.Log.i("PlayerRuntimeCI", "CI_ONLY_RESOLVED_SHADER_
             resScale = cfg.resScale,'''
 if s.count(old) != 1:
     raise SystemExit('unexpected source layout; refusing diagnostic instrumentation')
-p.write_text(s.replace(old, new, 1))
+s = s.replace(old, new, 1)
+old_device = '''        val err = runCatching {
+            nativeDeviceInit(
+                memoryManagerMode = cfg.memoryManagerMode,'''
+new_device = '''        val err = runCatching {
+            android.util.Log.i("PlayerRuntimeCI", "CI_ONLY_RESOLVED_INTERNET value=${cfg.enableInternetAccess}")
+            nativeDeviceInit(
+                memoryManagerMode = cfg.memoryManagerMode,'''
+if s.count(old_device) != 1:
+    raise SystemExit('unexpected device configuration layout; refusing diagnostic instrumentation')
+p.write_text(s.replace(old_device, new_device, 1))

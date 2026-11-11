@@ -8,6 +8,7 @@ docker run --rm --network none --cap-drop ALL --security-opt no-new-privileges \
   --mount "type=bind,src=$PWD/tests/swkbd_android_probe,dst=/input,readonly" \
   --mount "type=bind,src=$PWD/tests/sdl_android_surface,dst=/graphics,readonly" \
   --mount "type=bind,src=$PWD/tests/guest_tls_probe,dst=/tls,readonly" \
+  --mount "type=bind,src=$PWD/tests/guest_network_probe,dst=/network,readonly" \
   --mount "type=bind,src=$PLAY_WORK,dst=/output" --entrypoint /bin/bash "$IMAGE" -euc '
     /opt/devkitpro/devkitA64/bin/aarch64-none-elf-gcc \
       -specs=/opt/devkitpro/libnx/switch.specs -march=armv8-a+crc+crypto \
@@ -27,6 +28,15 @@ docker run --rm --network none --cap-drop ALL --security-opt no-new-privileges \
     elf2nro /output/guest-tls.elf /output/guest-tls.nro \
       --nacp=/output/guest-tls.nacp --icon=/opt/devkitpro/libnx/default_icon.jpg
     sha256sum /output/guest-tls.nro
+    /opt/devkitpro/devkitA64/bin/aarch64-none-elf-gcc \
+      -specs=/opt/devkitpro/libnx/switch.specs -march=armv8-a+crc+crypto \
+      -mtune=cortex-a57 -mtp=soft -fPIE -O2 -Wall -Wextra \
+      -I/opt/devkitpro/libnx/include /network/main.c \
+      -L/opt/devkitpro/libnx/lib -lnx -o /output/guest-network.elf
+    nacptool --create "CI network probe" "Symbiosis CI" "1.0.0" /output/guest-network.nacp
+    elf2nro /output/guest-network.elf /output/guest-network.nro \
+      --nacp=/output/guest-network.nacp --icon=/opt/devkitpro/libnx/default_icon.jpg
+    sha256sum /output/guest-network.nro
     SDL_CONFIG=/opt/devkitpro/portlibs/switch/bin/sdl2-config
     /opt/devkitpro/devkitA64/bin/aarch64-none-elf-gcc \
       -specs=/opt/devkitpro/libnx/switch.specs -march=armv8-a+crc+crypto \

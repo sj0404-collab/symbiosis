@@ -104,6 +104,9 @@ adb push "$W/shader.nro" /data/local/tmp/player-shader.nro >/dev/null
 if [ "${PLAYER_GUEST_TLS:-0}" = 1 ]; then
   adb push "$W/guest-tls.nro" /data/local/tmp/player-guest-tls.nro >/dev/null
 fi
+if [ "${PLAYER_GUEST_NETWORK:-0}" = 1 ]; then
+  adb push "$W/guest-network.nro" /data/local/tmp/player-guest-network.nro >/dev/null
+fi
 adb shell run-as "$package" mkdir -p files/engines
 adb shell run-as "$package" cp /data/local/tmp/player-core.so files/engines/libkenji.so
 adb shell run-as "$package" chmod 400 files/engines/libkenji.so
@@ -127,6 +130,10 @@ adb shell run-as "$package" cp /data/local/tmp/player-graphics.nro files/graphic
 adb shell run-as "$package" cp /data/local/tmp/player-shader.nro files/shader-probe.nro
 if [ "${PLAYER_GUEST_TLS:-0}" = 1 ]; then
   adb shell run-as "$package" cp /data/local/tmp/player-guest-tls.nro files/guest-tls-probe.nro
+fi
+if [ "${PLAYER_GUEST_NETWORK:-0}" = 1 ]; then
+  adb shell run-as "$package" cp /data/local/tmp/player-guest-network.nro files/guest-network-probe.nro
+  adb shell run-as "$package" mkdir -p files/kenji/sdcard
 fi
 # Generate a disposable local test certificate/key on this isolated runner.
 # Neither is included in the APK or uploaded in test artifacts.
@@ -292,6 +299,103 @@ for mode in 2 0 1; do
   [ "$parent_after" = "$main_pid" ] || { echo "PLAYER_MAIN_PROCESS_CHANGED mode=$mode"; exit 1; }
   echo "PLAYER_REAL_UI_AND_EXIT_OK mode=$mode" | tee -a "$W/redroid-status.txt"
 done
+
+# Orthogonal guest BSD socket matrix: no TLS, remote IP is loopback only.
+# All combinations are attempted even after a guest exception; no failure is
+# turned into a green result and each attempt runs in a fresh :kenji process.
+if [ "${PLAYER_GUEST_NETWORK:-0}" = 1 ]; then
+  net_failure=0
+  adb reverse tcp:19444 tcp:19444
+  for net_core in sym space; do
+    if [ "$net_core" = space ]; then
+      [ "${PLAYER_COMPARE_SPACE:-0}" = 1 ] || break
+      [ -z "$(adb shell pidof "$package:kenji" | tr -d '\r' || true)" ] || { echo 'NETWORK_CORE_SWAP_WHILE_RUNNING'; exit 1; }
+      adb shell run-as "$package" rm files/engines/libkenji.so
+      adb shell run-as "$package" cp /data/local/tmp/player-space.so files/engines/libkenji.so
+      adb shell run-as "$package" chmod 400 files/engines/libkenji.so
+      hash=$(adb exec-out run-as "$package" cat files/engines/libkenji.so | sha256sum | cut -d' ' -f1)
+      [ "$hash" = d781048671e4cef1cde2ec15db8fe29b949df9949d83569ceaf776ad12901590 ] || { echo 'NETWORK_SPACE_HASH_MISMATCH'; exit 1; }
+      net_label=space
+    else net_label=$primary_core; fi
+    for internet in false true; do
+      for bind_mode in auto bound; do
+        name="$net_core-$internet-$bind_mode"
+        printf '%s\n' "$bind_mode" > "$W/guest-network-mode.txt"
+        adb push "$W/guest-network-mode.txt" /data/local/tmp/player-net-mode.txt >/dev/null
+        adb shell chmod 644 /data/local/tmp/player-net-mode.txt
+        adb shell run-as "$package" cp /data/local/tmp/player-net-mode.txt files/kenji/sdcard/ci-net-mode.txt
+        adb shell rm /data/local/tmp/player-net-mode.txt
+        server_log="$W/guest-network-server-$name.txt"
+        python3 tests/guest_network_probe/server.py 19444 > "$server_log" 2>&1 &
+        guest_server_pid=$!
+        for ((n=0;n<15;n++)); do
+          grep -q 'LOCAL_NET_READY' "$server_log" && break
+          kill -0 "$guest_server_pid" 2>/dev/null || { echo 'GUEST_NET_SERVER_NOT_RUNNING'; exit 1; }
+          sleep 1
+        done
+        grep -q 'LOCAL_NET_READY' "$server_log" || { echo 'GUEST_NET_SERVER_NOT_READY'; exit 1; }
+        echo "PLAYER_GUEST_NET_ATTEMPT core=$net_label internet=$internet bind=$bind_mode" | tee -a "$W/redroid-status.txt"
+        adb shell am start -W -n "$package/dev.symbiosis.playerruntime.DiagnosticLauncher" \
+          --es test_config "internet=$internet" --es test_kind network > "$W/guest-network-launch-$name.txt"
+        player_pid=''
+        for ((n=0;n<15;n++)); do
+          player_pid=$(adb shell pidof "$package:kenji" | tr -d '\r' || true)
+          [ -n "$player_pid" ] && break
+          sleep 1
+        done
+        outcome=timeout
+        if [ -n "$player_pid" ]; then
+          for ((n=0;n<45;n++)); do
+            if grep -qE "^[0-9-]+ +[0-9:.]+ +$player_pid +[0-9]+ .*GUEST_NET_EXCHANGE_OK" "$log"; then outcome=guest_exchange; break; fi
+            if grep -qE "^[0-9-]+ +[0-9:.]+ +$player_pid +[0-9]+ .*Unhandled exception in guest thread" "$log" || app_crashed; then outcome=crash; break; fi
+            if grep -qE "^[0-9-]+ +[0-9:.]+ +$player_pid +[0-9]+ .*GUEST_NET_ERROR" "$log"; then outcome=guest_error; break; fi
+            sleep 1
+          done
+          grep -E "^[0-9-]+ +[0-9:.]+ +$player_pid +[0-9]+ .*(GUEST_NET_|CI_ONLY_RESOLVED_INTERNET|Unhandled exception in guest thread|EnsureNetworkInterfaceBound)" "$log" > "$W/guest-network-guest-$name.txt" || true
+          cat "$W/guest-network-guest-$name.txt" >> "$W/redroid-status.txt"
+        else outcome=process_missing; fi
+        if [ "$outcome" = guest_exchange ]; then
+          for ((n=0;n<10;n++)); do grep -q '^LOCAL_NET_EXCHANGE_OK$' "$server_log" && break; sleep 1; done
+          if python3 tests/player_runtime_probe/check_guest_network_evidence.py "$log" "$player_pid" "$bind_mode" "$internet" "$server_log" >> "$W/guest-network-guest-$name.txt" 2>&1; then
+            outcome=verified_exchange
+          else outcome=evidence_mismatch; fi
+        fi
+        echo "PLAYER_GUEST_NET_RESULT core=$net_label internet=$internet bind=$bind_mode outcome=$outcome" | tee -a "$W/redroid-status.txt"
+        # Disabled Internet may legitimately reject the request, but this
+        # diagnostic's green outcome requires independent exchange evidence.
+        # An expected policy rejection stays recorded as a non-pass observation.
+        [ "$outcome" = verified_exchange ] || net_failure=1
+        kill "$guest_server_pid" 2>/dev/null || true
+        wait "$guest_server_pid" 2>/dev/null || true
+        guest_server_pid=''
+        click_text 'Выйти' || true
+        pid=''
+        for ((n=0;n<30;n++)); do
+          pid=$(adb shell pidof "$package:kenji" | tr -d '\r' || true)
+          [ -z "$pid" ] && break; sleep 1
+        done
+        if [ -n "$pid" ]; then
+          echo "GUEST_NET_FORCE_STOP core=$net_label internet=$internet bind=$bind_mode (not a clean exit)" | tee -a "$W/redroid-status.txt"
+          net_failure=1
+          adb shell am force-stop "$package"
+          adb shell monkey -p "$package" -c android.intent.category.LAUNCHER 1 >/dev/null || true
+          sleep 5
+          main_pid=$(adb shell pidof "$package" | tr -d '\r' || true)
+        fi
+      done
+    done
+  done
+  adb reverse --remove tcp:19444
+  if [ "${PLAYER_COMPARE_SPACE:-0}" = 1 ]; then
+    adb shell run-as "$package" rm files/engines/libkenji.so
+    adb shell run-as "$package" cp /data/local/tmp/player-core.so files/engines/libkenji.so
+    adb shell run-as "$package" chmod 400 files/engines/libkenji.so
+    hash=$(adb exec-out run-as "$package" cat files/engines/libkenji.so | sha256sum | cut -d' ' -f1)
+    [ "$hash" = 969431b3962408dd02ce38bd2cd4b2a954d11e5212ddef3f65c80a0b419918b8 ] || { echo 'NETWORK_SYM_RESTORE_HASH_MISMATCH'; exit 1; }
+  fi
+  [ "$net_failure" = 0 ] || { echo 'GUEST_NET_MATRIX_HAS_FAILURES' | tee -a "$W/redroid-status.txt"; exit 1; }
+  echo 'GUEST_NET_MATRIX_COMPLETED_WITHOUT_UNEXPECTED_FAILURE' | tee -a "$W/redroid-status.txt"
+fi
 
 # Run both pinned cores, including after a guest exception. Explicit bind is
 # a diagnostic-only guest operation; it does not repair general interface

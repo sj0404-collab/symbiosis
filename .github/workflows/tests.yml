@@ -34,6 +34,10 @@ on:
         description: "Build and run disposable actual player on ARM Android (not release)"
         type: boolean
         default: false
+      run_player_guest_network:
+        description: "Test loopback socket binding matrix in disposable player"
+        type: boolean
+        default: false
       run_player_guest_tls:
         description: "Try guest SSL service with local test server (not release)"
         type: boolean
@@ -166,6 +170,7 @@ jobs:
           python3 fork/tests/test_player_stop_observer.py
           python3 fork/tests/test_guest_tls_harness.py
           python3 fork/tests/test_guest_tls_evidence.py
+          python3 fork/tests/test_guest_network_harness.py
           python3 fork/tests/test_standalone_gpt.py
           python3 fork/tests/test_standalone_log_capture.py
           python3 fork/tests/test_standalone_property_init.py
@@ -341,6 +346,7 @@ jobs:
       tls_candidate: ${{ inputs.run_player_tls_candidate == true }}
       compare_space: ${{ inputs.run_player_compare_space == true }}
       guest_tls: ${{ inputs.run_player_guest_tls == true }}
+      guest_network: ${{ inputs.run_player_guest_network == true }}
       reference_core: ${{ inputs.run_player_reference_core == true }}
       reference_tls_patch: ${{ inputs.run_player_reference_tls_patch == true }}
 
