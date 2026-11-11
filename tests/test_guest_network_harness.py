@@ -10,6 +10,16 @@ ROOT = Path(__file__).resolve().parents[1]
 CHECKER = ROOT / 'tests/player_runtime_probe/check_guest_network_evidence.py'
 
 class GuestNetworkHarnessTest(unittest.TestCase):
+    def test_research_patch_is_opt_in_and_fails_closed_for_missing_interface(self):
+        patch = (ROOT / 'tests/source_core_probe/network-research.patch').read_text()
+        workflow = (ROOT / '.github/workflows/kenji-player-runtime.yml').read_text()
+        self.assertIn('!string.IsNullOrEmpty(_lanInterfaceId)', patch)
+        self.assertIn('_lanInterfaceId != "0"', patch)
+        self.assertIn('SocketError.AddressNotAvailable', patch)
+        self.assertIn('inputs.reference_network_patch', workflow)
+        self.assertIn('git -C /tmp/reference-kenji apply --check', workflow)
+        self.assertNotIn('network-research.patch', (ROOT / '.github/workflows/build.yml').read_text())
+
     def test_loopback_server_real_exchange(self):
         server = subprocess.Popen([sys.executable, str(ROOT / 'tests/guest_network_probe/server.py'), '0'],
                                   stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)

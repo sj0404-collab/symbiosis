@@ -115,11 +115,9 @@ if [ "${PLAYER_REFERENCE_CORE:-0}" = 1 ]; then
   [ "${PLAYER_COMPARE_SPACE:-0}" != 1 ] || { echo 'REFERENCE_AND_SPACE_COMPARISON_UNSUPPORTED'; exit 1; }
   source_hash=$(cat "$W/source-core-sha256.txt")
   [[ "$source_hash" =~ ^[0-9a-f]{64}$ ]] && [ "$primary_hash" = "$source_hash" ] || { echo 'SOURCE_CORE_HASH_MISMATCH'; exit 1; }
-  if [ "${PLAYER_REFERENCE_TLS_PATCH:-0}" = 1 ]; then
-    primary_core=source-research-ssl-patch
-  else
-    primary_core=source-research
-  fi
+  primary_core=source-research
+  if [ "${PLAYER_REFERENCE_TLS_PATCH:-0}" = 1 ]; then primary_core="$primary_core-ssl-patch"; fi
+  if [ "${PLAYER_REFERENCE_NETWORK_PATCH:-0}" = 1 ]; then primary_core="$primary_core-network-patch"; fi
 else
   [ "$primary_hash" = 969431b3962408dd02ce38bd2cd4b2a954d11e5212ddef3f65c80a0b419918b8 ] || { echo 'SYM_CORE_HASH_MISMATCH'; exit 1; }
   primary_core=sym

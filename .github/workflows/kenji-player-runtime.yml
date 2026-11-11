@@ -20,6 +20,9 @@ on:
       reference_tls_patch:
         type: boolean
         default: false
+      reference_network_patch:
+        type: boolean
+        default: false
 permissions:
   contents: read
 jobs:
@@ -48,9 +51,9 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install -y -qq glslang-tools ccache
       - name: Reject incompatible research options
-        if: inputs.reference_tls_patch && !inputs.reference_core
+        if: (inputs.reference_tls_patch || inputs.reference_network_patch) && !inputs.reference_core
         run: |
-          echo 'SSL_RESEARCH_PATCH_REQUIRES_REFERENCE_CORE'
+          echo 'RESEARCH_PATCH_REQUIRES_REFERENCE_CORE'
           exit 1
       - uses: actions/setup-dotnet@v4
         if: inputs.reference_core
@@ -72,6 +75,12 @@ jobs:
             git -C /tmp/reference-kenji apply "$GITHUB_WORKSPACE/fork/tests/source_core_probe/ssl-research.patch"
             sha256sum "$GITHUB_WORKSPACE/fork/tests/source_core_probe/ssl-research.patch"
             echo 'EXPERIMENTAL_SSL_PATCH_APPLIED_NOT_RELEASE'
+          fi
+          if [ "${{ inputs.reference_network_patch }}" = true ]; then
+            git -C /tmp/reference-kenji apply --check "$GITHUB_WORKSPACE/fork/tests/source_core_probe/network-research.patch"
+            git -C /tmp/reference-kenji apply "$GITHUB_WORKSPACE/fork/tests/source_core_probe/network-research.patch"
+            sha256sum "$GITHUB_WORKSPACE/fork/tests/source_core_probe/network-research.patch"
+            echo 'EXPERIMENTAL_NETWORK_PATCH_APPLIED_NOT_RELEASE'
           fi
           mkdir -p "$PLAY_WORK/source-output"
           export PATH="$ANDROID_HOME/ndk/28.2.13676358/toolchains/llvm/prebuilt/linux-x86_64/bin:$PATH"
@@ -227,6 +236,7 @@ jobs:
       PLAYER_GUEST_NETWORK: ${{ inputs.guest_network && '1' || '0' }}
       PLAYER_REFERENCE_CORE: ${{ inputs.reference_core && '1' || '0' }}
       PLAYER_REFERENCE_TLS_PATCH: ${{ inputs.reference_tls_patch && '1' || '0' }}
+      PLAYER_REFERENCE_NETWORK_PATCH: ${{ inputs.reference_network_patch && '1' || '0' }}
     steps:
       - uses: actions/checkout@v4
         with:
