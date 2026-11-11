@@ -10,7 +10,7 @@ index e23621d0..d0ac56f8 100644
      }
  }
 diff --git a/src/Ryujinx.HLE/HOS/Services/Ssl/SslService/ISslConnection.cs b/src/Ryujinx.HLE/HOS/Services/Ssl/SslService/ISslConnection.cs
-index 92e73f9f..1e8c8436 100644
+index 92e73f9f..08b580b7 100644
 --- a/src/Ryujinx.HLE/HOS/Services/Ssl/SslService/ISslConnection.cs
 +++ b/src/Ryujinx.HLE/HOS/Services/Ssl/SslService/ISslConnection.cs
 @@ -16,6 +16,7 @@ namespace Ryujinx.HLE.HOS.Services.Ssl.SslService
@@ -70,6 +70,51 @@ index 92e73f9f..1e8c8436 100644
              return ResultCode.Success;
          }
  
+@@ -319,7 +326,9 @@ namespace Ryujinx.HLE.HOS.Services.Ssl.SslService
+         // GetVerifyCertError()
+         public ResultCode GetVerifyCertError(ServiceCtx context)
+         {
+-            throw new ServiceNotImplementedException(this, context);
++            // Detailed certificate error mapping is not implemented. Never
++            // invent a successful result, and do not crash the guest service.
++            return ResultCode.InvalidOption;
+         }
+ 
+         [CommandCmif(16)]
+@@ -408,7 +417,7 @@ namespace Ryujinx.HLE.HOS.Services.Ssl.SslService
+         // GetVerifyCertErrors() -> (u32, u32, buffer<bytes, 6>)
+         public ResultCode GetVerifyCertErrors(ServiceCtx context)
+         {
+-            throw new ServiceNotImplementedException(this, context);
++            return ResultCode.InvalidOption;
+         }
+ 
+         [CommandCmif(25)] // 4.0.0+
+@@ -459,15 +468,21 @@ namespace Ryujinx.HLE.HOS.Services.Ssl.SslService
+                     break;
+ 
+                 case OptionType.GetServerCertChain:
+-                    _getServerCertChain = value;
++                    // Complete Switch certificate-chain output is not implemented.
++                    if (value) return ResultCode.InvalidOption;
++                    _getServerCertChain = false;
+                     break;
+ 
+                 case OptionType.SkipDefaultVerify:
+-                    _skipDefaultVerify = value;
++                    // This research build never disables certificate checks.
++                    if (value) return ResultCode.InvalidOption;
++                    _skipDefaultVerify = false;
+                     break;
+ 
+                 case OptionType.EnableAlpn:
+-                    _enableAlpn = value;
++                    // Do not claim ALPN negotiation until it is implemented.
++                    if (value) return ResultCode.InvalidOption;
++                    _enableAlpn = false;
+                     break;
+ 
+                 default:
 diff --git a/src/Ryujinx.HLE/HOS/Services/Ssl/SslService/ISslContext.cs b/src/Ryujinx.HLE/HOS/Services/Ssl/SslService/ISslContext.cs
 index 7b371d29..053c6dc2 100644
 --- a/src/Ryujinx.HLE/HOS/Services/Ssl/SslService/ISslContext.cs

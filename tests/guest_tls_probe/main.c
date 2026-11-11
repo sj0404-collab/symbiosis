@@ -26,6 +26,14 @@ static int connection(SslContext* ctx, const char* host, const char* negative) {
     int fd = -1, transferred = -1, status = 0;
     Result rc;
     if (!check("connection_create", sslContextCreateConnection(ctx, &conn))) return 0;
+    Result skip = sslConnectionSetOption(&conn, SslOptionType_SkipDefaultVerify, true);
+    Result alpn = sslConnectionSetOption(&conn, SslOptionType_EnableAlpn, true);
+    Result chain = sslConnectionSetOption(&conn, SslOptionType_GetServerCertChain, true);
+    if (R_SUCCEEDED(skip) || R_SUCCEEDED(alpn) || R_SUCCEEDED(chain)) {
+        say("GUEST_TLS_ERROR stage=unsupported_option_accepted skip=0x%08x alpn=0x%08x chain=0x%08x", skip, alpn, chain);
+        goto done;
+    }
+    say("GUEST_TLS_UNSUPPORTED_OPTIONS_REJECTED skip=0x%08x alpn=0x%08x chain=0x%08x", skip, alpn, chain);
     rc = sslConnectionSetVerifyOption(&conn, 0);
     if (R_SUCCEEDED(rc)) { say("GUEST_TLS_ERROR stage=verification_disabled"); goto done; }
     say("GUEST_TLS_VERIFY_DISABLE_REJECTED rc=0x%08x", rc);
@@ -73,6 +81,14 @@ static int connection(SslContext* ctx, const char* host, const char* negative) {
                 goto done;
             }
             say("GUEST_TLS_FAILED_HANDSHAKE_IO_REJECTED case=%s rd=0x%08x wr=0x%08x", negative, rd, wr);
+            Result error = sslConnectionGetVerifyCertError(&conn);
+            u32 out0 = 0, out1 = 0; Result errors[4] = {0};
+            Result errors_rc = sslConnectionGetVerifyCertErrors(&conn, &out0, &out1, errors, 4);
+            if (R_SUCCEEDED(error) || R_SUCCEEDED(errors_rc)) {
+                say("GUEST_TLS_ERROR stage=unsupported_error_detail_succeeded case=%s", negative);
+                goto done;
+            }
+            say("GUEST_TLS_VERIFY_DETAILS_UNSUPPORTED case=%s single=0x%08x list=0x%08x", negative, error, errors_rc);
             status = 1;
         } else say("GUEST_TLS_ERROR stage=negative_accepted case=%s", negative);
         goto done;
