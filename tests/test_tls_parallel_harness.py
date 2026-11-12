@@ -36,16 +36,36 @@ class ParallelFixture(unittest.TestCase):
             finally:
                 if proc.poll() is None: proc.kill(); proc.communicate()
     def test_checker_rejects_wrong_context_and_no_barrier(self):
-        def row(tid, text): return f'11-12 08:00:00.000  123  {tid} I RyujinxLog: {text}\n'
-        lines=[row(100,'TLS_PARALLEL_TEST_BEGIN'),row(101,'TLS_PARALLEL_READY role=trusted'),row(102,'TLS_PARALLEL_READY role=wrong_ca'),row(101,'TLS_PARALLEL_BEGIN role=trusted'),row(102,'TLS_PARALLEL_BEGIN role=wrong_ca'),row(101,'CI_ONLY_TLS_CUSTOM_CHAIN valid=True statuses='),row(102,'CI_ONLY_TLS_CUSTOM_CHAIN valid=False statuses=PartialChain'),row(101,'TLS_PARALLEL_EXCHANGE role=trusted'),row(102,'TLS_PARALLEL_REJECTED role=wrong_ca rc=0x123 rd=0x123 wr=0x123'),row(100,'TLS_PARALLEL_COMPLETE')]
+        good, wrong = 'a'*64, 'b'*64
+        def row(text): return f'11-12 08:00:00.000  123  100 I RyujinxLog: {text}\n'
+        lines=[row('HLE.GuestThread.28 TLS_PARALLEL_TEST_BEGIN'),
+               row(f'CI_TLS_STORE_IMPORT store=1 sha256={good}'), row(f'CI_TLS_STORE_IMPORT store=2 sha256={wrong}'),
+               row('HLE.GuestThread.30 TLS_PARALLEL_READY role=trusted'), row('HLE.GuestThread.31 TLS_PARALLEL_READY role=wrong_ca'),
+               row('HLE.GuestThread.30 TLS_PARALLEL_BEGIN role=trusted'), row('HLE.GuestThread.31 TLS_PARALLEL_BEGIN role=wrong_ca'),
+               row('CI_TLS_STORE_VALIDATION store=1 valid=True'), row('CI_TLS_STORE_VALIDATION store=2 valid=False'),
+               row('HLE.GuestThread.30 TLS_PARALLEL_EXCHANGE role=trusted'),
+               row('HLE.GuestThread.31 TLS_PARALLEL_REJECTED role=wrong_ca rc=0x123 rd=0x123 wr=0x123'),
+               row('HLE.GuestThread.28 TLS_PARALLEL_COMPLETE')]
         server='PARALLEL_SERVER_BOTH_ACCEPTED\nPARALLEL_SERVER_EXCHANGE index=0\nPARALLEL_SERVER_DONE exchanges=1\n'
         with tempfile.TemporaryDirectory() as d:
             p,s=Path(d)/'log',Path(d)/'server'; s.write_text(server)
-            def check(lines):
-                p.write_text(''.join(lines)); return subprocess.run([sys.executable,str(CHECKER),str(p),'123',str(s)],capture_output=True,text=True).returncode
+            def check(lines, fingerprints=(good,wrong)):
+                p.write_text(''.join(lines)); return subprocess.run([sys.executable,str(CHECKER),str(p),'123',str(s),*fingerprints],capture_output=True,text=True).returncode
             self.assertEqual(check(lines),0)
             self.assertNotEqual(check([x.replace('valid=False','valid=True') for x in lines]),0)
-            bad=lines.copy(); bad[4],bad[7]=bad[7],bad[4]; self.assertNotEqual(check(bad),0)
-            self.assertNotEqual(check([x.replace('  102 ', '  101 ') for x in lines]),0)
+            bad=lines.copy(); bad[6],bad[9]=bad[9],bad[6]; self.assertNotEqual(check(bad),0)
+            self.assertNotEqual(check([x.replace('GuestThread.31', 'GuestThread.30') for x in lines]),0)
+            self.assertNotEqual(check(lines,(wrong,good)),0)
+            self.assertNotEqual(check(lines,(good,good)),0)
             s.write_text(server.replace('exchanges=1','exchanges=2')); self.assertNotEqual(check(lines),0)
+
+    def test_instrumentation_is_research_only_and_checks_input(self):
+        script = ROOT/'tests/player_runtime_probe/instrument_tls_parallel_store.py'
+        with tempfile.TemporaryDirectory() as d:
+            p = Path(d)/'ServerTrustStore.cs'
+            p.write_text('        private readonly object _sync = new();\n                    _imports.Add(id, certificates);\n                bool valid = chain.Build(leaf);\n')
+            subprocess.run([sys.executable,str(script),str(p)],check=True)
+            instrumented=p.read_text()
+            self.assertIn('CI_TLS_STORE_IMPORT',instrumented); self.assertIn('CI_TLS_STORE_VALIDATION',instrumented)
+            self.assertNotEqual(subprocess.run([sys.executable,str(script),str(p)],capture_output=True).returncode,0)
 if __name__ == '__main__': unittest.main()

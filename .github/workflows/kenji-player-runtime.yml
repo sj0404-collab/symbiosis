@@ -109,6 +109,10 @@ jobs:
             sha256sum "$GITHUB_WORKSPACE/fork/tests/source_core_probe/ssl-research.patch"
             echo 'EXPERIMENTAL_SSL_PATCH_APPLIED_NOT_RELEASE'
           fi
+          if [ "${{ inputs.tls_parallel }}" = true ]; then
+            python3 "$GITHUB_WORKSPACE/fork/tests/player_runtime_probe/instrument_tls_parallel_store.py" /tmp/reference-kenji/src/Ryujinx.HLE/HOS/Services/Ssl/SslService/ServerTrustStore.cs
+            echo 'TLS_PARALLEL_STORE_INSTRUMENTATION_NOT_RELEASE'
+          fi
           if [ "${{ inputs.reference_network_patch }}" = true ]; then
             git -C /tmp/reference-kenji apply --check "$GITHUB_WORKSPACE/fork/tests/source_core_probe/network-research.patch"
             git -C /tmp/reference-kenji apply "$GITHUB_WORKSPACE/fork/tests/source_core_probe/network-research.patch"

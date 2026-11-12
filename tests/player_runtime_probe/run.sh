@@ -605,11 +605,13 @@ if [ "${PLAYER_TLS_PARALLEL:-0}" = 1 ]; then
     if grep -qE "^[0-9-]+ +[0-9:.]+ +$player_pid +[0-9]+ .*(TLS_PARALLEL_ERROR|Unhandled exception in guest thread)" "$log" || app_crashed; then outcome=guest_error; break; fi
     sleep 1
   done
-  grep -E "^[0-9-]+ +[0-9:.]+ +$player_pid +[0-9]+ .*(TLS_PARALLEL_|CI_ONLY_TLS_(POLICY|CUSTOM_CHAIN)|Unhandled exception in guest thread)" "$log" > "$W/tls-parallel-guest.txt" || true
+  grep -E "^[0-9-]+ +[0-9:.]+ +$player_pid +[0-9]+ .*(TLS_PARALLEL_|CI_TLS_STORE_|CI_ONLY_TLS_(POLICY|CUSTOM_CHAIN)|Unhandled exception in guest thread)" "$log" > "$W/tls-parallel-guest.txt" || true
   cat "$W/tls-parallel-guest.txt" >> "$W/redroid-status.txt"
   if [ "$outcome" = complete ]; then
     for ((n=0;n<10;n++)); do grep -q 'PARALLEL_SERVER_DONE' "$server_log" && break; sleep 1; done
-    if python3 tests/player_runtime_probe/check_tls_parallel_evidence.py "$log" "$player_pid" "$server_log" >> "$W/tls-parallel-guest.txt" 2>&1; then outcome=verified; else outcome=evidence_mismatch; fi
+    good_sha=$(openssl x509 -in "$W/ci-test-cert.pem" -outform DER | sha256sum | cut -d' ' -f1)
+    wrong_sha=$(openssl x509 -in "$W/ci-wrong-ca.pem" -outform DER | sha256sum | cut -d' ' -f1)
+    if python3 tests/player_runtime_probe/check_tls_parallel_evidence.py "$log" "$player_pid" "$server_log" "$good_sha" "$wrong_sha" >> "$W/tls-parallel-guest.txt" 2>&1; then outcome=verified; else outcome=evidence_mismatch; fi
   fi
   echo "PLAYER_TLS_PARALLEL_RESULT core=$primary_core outcome=$outcome" | tee -a "$W/redroid-status.txt"
   kill "$guest_server_pid" 2>/dev/null || true
