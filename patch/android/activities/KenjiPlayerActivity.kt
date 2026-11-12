@@ -881,6 +881,8 @@ class KenjiPlayerActivity : Activity(), SurfaceHolder.Callback {
         val next = if (remember) "Запомнил: эта игра теперь запускается на Eden."
         else "Запустите её на Eden — выбор ядра на вкладке «Инструменты»."
         val hint = KenjiCrash.panicResultHint(fresh).let { if (it.isEmpty()) "" else "\n\n" + it }
+        val observations = KenjiCrash.diagnosticSummary(fresh)
+        runCatching { KenjiBridge.crashReportFile(appContext).appendText("\n$observations\n") }
         val parameters = operations.filter { line ->
             line.contains("Stubbed", ignoreCase = true) &&
                 (line.contains("SetSupportedNpadIdType", ignoreCase = true) ||
@@ -892,7 +894,7 @@ class KenjiPlayerActivity : Activity(), SurfaceHolder.Callback {
             "\n\nПоследние разные вызовы HID (контекст, не доказательство причины):\n" +
                 operations.takeLast(10).joinToString("\n")
         runOnUiThread {
-            fail("второе ядро остановилось. " + panic + hint + tail + paramText + hidTail + "\n\n" + next)
+            fail("второе ядро остановилось. " + panic + hint + "\n\n" + observations + tail + paramText + hidTail + "\n\n" + next)
         }
     }
 

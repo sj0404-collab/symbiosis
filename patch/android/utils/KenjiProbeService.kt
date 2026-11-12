@@ -187,6 +187,21 @@ class KenjiProbeService : Service() {
                 )
             )
 
+            // The core log may outlive a launch; do not present its contents as
+            // proven current-session facts. Read a bounded tail, never a full log.
+            val diagnosticLog = runCatching {
+                KenjiBridge.coreLogFile(context)?.takeIf { it.isFile }?.let {
+                    KernelLogFormat.tailOf(it, KernelLogFormat.TAIL_BYTES)
+                }
+            }.getOrNull().orEmpty()
+            body.append("\n\nРазбор доступного журнала ядра (время сеанса не подтверждено):\n")
+                .append(KenjiCrash.diagnosticSummary(diagnosticLog))
+            val configLine = text.lineSequence().lastOrNull { it.startsWith("symbiosis_effective_config=") }
+                ?.substringAfter('=')
+            if (configLine != null) {
+                body.append("\n\n").append(EngineHybrid.configurationReport(configLine))
+            }
+
             // Необработанное исключение Java из процесса ядра.
             //
             // Отчёт моста пишет только нативный обработчик сигналов: обычное

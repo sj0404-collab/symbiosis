@@ -796,6 +796,34 @@ fun main() {
     val early = KenjiCrash.format(null)
     check("падение до загрузки — «во время запуска»", early.contains("во время запуска"), early)
 
+    val emptyDiagnosis = KenjiCrash.diagnosticSummary("")
+    check("пустой журнал не объявлен исправным", emptyDiagnosis.contains("Причина неизвестна"), emptyDiagnosis)
+    val unknownDiagnosis = KenjiCrash.diagnosticSummary("ordinary log without failures")
+    check("нет совпадений не значит нет проблем", unknownDiagnosis.contains("не означает отсутствия проблемы"), unknownDiagnosis)
+    val diagnosis = KenjiCrash.diagnosticSummary("""
+        ServiceSsl Stubbed: ImportServerPki
+        IHidServer Stubbed: SetSupportedNpadIdType
+        SetTerminateResult: 2202-0710
+        Connected Controller 1
+        SvcBreak reason=0
+    """.trimIndent())
+    listOf("SSL-службы", "HID, помеченный", "2202-0710", "контроллера", "первопричина неизвестна").forEach {
+        check("распознано наблюдение $it", diagnosis.contains(it), diagnosis)
+    }
+    check("не объявлена доказанная причина", diagnosis.contains("не доказывает"), diagnosis)
+    check("отключённый контроллер не объявляется подключённым",
+        !KenjiCrash.diagnosticSummary("Disconnected Controller 1").contains("записало подключение"))
+    check("не допущено ложное сопоставление по разным строкам",
+        !KenjiCrash.diagnosticSummary("ServiceSsl normal\nIHidServer Stubbed").contains("SSL-службы"))
+    check("код без строки результата не считается доказанным",
+        !KenjiCrash.diagnosticSummary("2202-0710").contains("Игра записала код"))
+    check("шифрование: недоверенный корень назван",
+        KenjiCrash.diagnosticSummary("AuthenticationException: UntrustedRoot").contains("недоверенном"))
+    check("обычное упоминание шейдера — не ошибка",
+        !KenjiCrash.diagnosticSummary("shader compiled successfully").contains("ошибке, связанное с шейдером"))
+    check("пути и неизвестные строки не копируются в диагноз",
+        !KenjiCrash.diagnosticSummary("secret /storage/private/prod.keys").contains("prod.keys"))
+
     println()
     println("passed=$passed failed=${failures.size}")
     failures.forEach { println("FAIL  $it") }

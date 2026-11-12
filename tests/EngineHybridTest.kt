@@ -250,6 +250,13 @@ fun main() {
     eq("пустой путь — пустой ключ", EngineHybrid.gameKeyByName(""), "")
     check("ключ короткий и устойчивый", k1.length == 16 && k1.all { it in "0123456789abcdef" })
 
+    val configReport = EngineHybrid.configurationReport(EngineHybrid.encode(EngineHybrid.effective(EngineHybrid.KenjiConfig())))
+    check("отчёт называет подготовленные настройки", configReport.contains("подготовленные"), configReport)
+    check("отчёт не утверждает применение", configReport.contains("не подтверждение"), configReport)
+    check("отчёт содержит масштаб", configReport.contains("Масштаб"), configReport)
+    check("произвольная строка не попадает в отчёт", !EngineHybrid.configurationReport("scale=secret;unknown=secret").contains("secret"))
+    check("пустые настройки честно недоступны", EngineHybrid.configurationReport("").contains("не удалось"))
+
     println()
     println("passed=$passed failed=$failed")
     if (failed > 0) {

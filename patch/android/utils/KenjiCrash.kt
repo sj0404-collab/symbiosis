@@ -981,6 +981,47 @@ object KenjiCrash {
         return picked.map { it.trim().take(160) }.filter { it.isNotEmpty() }
     }
 
+    /** Human-readable observations, not a claim to have exhausted all causes.
+     * The caller must supply the current process log or explicitly label an
+     * older / unverified source. We never echo arbitrary lines or paths here. */
+    fun diagnosticSummary(text: String): String {
+        if (text.isBlank()) return "Журнал для разбора недоступен или пуст. Причина неизвестна."
+        val lines = text.lineSequence().toList()
+        fun has(vararg terms: String): Boolean = lines.any { line ->
+            terms.all { line.contains(it, ignoreCase = true) }
+        }
+        val observations = mutableListOf<String>()
+        if (has("SetTerminateResult", "2202-0710"))
+            observations += "Игра записала код 2202-0710 (HID): какой ресурс или запрос привёл к нему, пока неизвестно."
+        if (has("ServiceSsl", "Stubbed"))
+            observations += "В журнале есть вызов SSL-службы, помеченный ядром как заглушка. Это не доказывает, что он вызвал остановку."
+        if (has("IHidServer", "Stubbed") || has("IHidSystemServer", "Stubbed"))
+            observations += "В журнале есть вызов HID, помеченный ядром как Stubbed; одна эта метка не подтверждает отказ или причину остановки."
+        if (has("UntrustedRoot"))
+            observations += "Проверка TLS сообщила о недоверенном корневом сертификате; сертификат не следует принимать без проверки."
+        if (has("NameMismatch"))
+            observations += "Проверка TLS сообщила о несовпадении имени сервера с сертификатом."
+        if (has("NotTimeValid"))
+            observations += "Проверка TLS сообщила, что срок сертификата не подходит."
+        if (has("EnsureNetworkInterfaceBound", "NullReferenceException") ||
+            (has("EnsureNetworkInterfaceBound") && has("Unhandled exception", "NullReferenceException")))
+            observations += "Журнал показывает исключение ядра рядом с привязкой сетевого интерфейса; это не доказывает связь с ошибкой игры."
+        if (has("ServiceNotImplementedException"))
+            observations += "Ядро сообщило, что вызов службы не реализован. Какая именно операция и её влияние требуют проверки журнала."
+        if (has("No matching controllers found"))
+            observations += "В журнале есть сообщение, что подходящий контроллер не найден; момент и контекст следует сверить с остальными записями."
+        if (lines.any { it.contains("Connected Controller", ignoreCase = true) &&
+                !it.contains("Disconnected Controller", ignoreCase = true) })
+            observations += "Ядро записало подключение контроллера; это не гарантирует, что позже все запросы HID прошли успешно."
+        if (has("shader", "error") || has("shader", "failed"))
+            observations += "В журнале есть сообщение об ошибке, связанное с шейдером; сама строка не устанавливает первопричину."
+        if (has("SvcBreak"))
+            observations += "Гостевая программа запросила остановку; по одной этой записи первопричина неизвестна."
+        if (observations.isEmpty()) observations += "Из проверяемых признаков в доступном фрагменте ничего не распознано. Это не означает отсутствия проблемы."
+        return "Наблюдения по доступному фрагменту журнала (не полный список причин):\n" +
+            observations.joinToString("\n") { "• $it" }
+    }
+
     /** Известное значение, фактически записанное в SetTerminateResult. */
     fun panicResultHint(text: String): String {
         val evidence = panicEvidence(text)

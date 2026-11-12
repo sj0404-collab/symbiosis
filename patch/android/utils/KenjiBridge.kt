@@ -754,6 +754,13 @@ object KenjiBridge {
             EngineStore.configWith(context, EngineHybrid.decode(effective))
         }
         pendingCfg = cfg
+        // Record the actual prepared values, not secret paths or key material.
+        // The marker describes intent; it does not claim the core accepted them.
+        runCatching {
+            crashReportFile(context).appendText(
+                "symbiosis_effective_config=" + EngineHybrid.encode(EngineHybrid.effective(cfg)) + "\n"
+            )
+        }
 
         nativeGraphicsInit(
             resScale = cfg.resScale,

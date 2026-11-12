@@ -361,6 +361,21 @@ object EngineHybrid {
     fun effective(cfg: KenjiConfig): Map<String, String> =
         FIELDS.associate { it.id to raw(cfg, it.id) }
 
+    /** Render only recognised settings from the configuration actually prepared.
+     * Values describe the request, not proof the core used them. */
+    fun configurationReport(encoded: String): String {
+        val values = decode(encoded)
+        val rows = FIELDS.mapNotNull { field ->
+            val value = values[field.id] ?: return@mapNotNull null
+            val shown = field.choices.firstOrNull { it.value == value }?.label
+                ?: value.takeIf { it.length <= 20 && it.matches(Regex("[0-9.+-]+")) }
+                ?: return@mapNotNull null
+            "• ${field.label}: $shown"
+        }
+        if (rows.isEmpty()) return "Настройки для этого запуска не удалось прочитать."
+        return "Настройки, подготовленные для второго ядра (не подтверждение их применения):\n" + rows.joinToString("\n")
+    }
+
     const val PREFIX = "kenji."
 
     /** Одно редактируемое поле второго ядра. */
