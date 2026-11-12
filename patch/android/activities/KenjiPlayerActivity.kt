@@ -805,7 +805,8 @@ class KenjiPlayerActivity : Activity(), SurfaceHolder.Callback {
             return
         }
 
-        val why = KenjiCrash.guestFailure(fresh)
+        val guestBlock = KenjiCrash.guestExceptionBlock(fresh)
+        val why = KenjiCrash.guestFailure(guestBlock)
         // Строки ДО исключения — единственное место, где ядро могло назвать
         // номер процесса, который оно не нашло. Без них следующий отчёт
         // опять будет «что-то внутри ядра».
@@ -818,21 +819,15 @@ class KenjiPlayerActivity : Activity(), SurfaceHolder.Callback {
         around.forEach { line ->
             if (line.isNotBlank()) runCatching { KenjiReport.watch(appContext, line.trim().take(150)) }
         }
-        val service = KenjiCrash.guestService(fresh)
         runCatching { CoreFallback.note(appContext, gamePath, why) }
         runCatching { KenjiReport.watch(appContext, "ядро: " + why.take(160)) }
         // Остановка может блокироваться в ядре: не задерживаем экран.
         requestStop()
+        val fallbackText = "После возврата приложение может попробовать выбрать Eden. " +
+            "Чтобы повторить запуск на Kenji, удерживайте плитку игры и выберите Kenji-NX."
+        val observations = KenjiCrash.diagnosticSummary(fresh)
         runOnUiThread {
-            // Короткая строка на экран: полное объяснение — в отчёте, а здесь
-            // человек читает его, стоя с телефоном в руках.
-            val short = if (service.isEmpty()) {
-                "игра остановилась внутри второго ядра"
-            } else {
-                "игра остановилась внутри второго ядра на вызове сервиса «$service»"
-            }
-            fail(short + ".\n\nЭто ошибка самого ядра, а не файла игры. " +
-                "Запомнил: эта игра будет запускаться на Eden.")
+            fail(why + "\n\n" + observations + "\n\n" + fallbackText)
         }
     }
 
@@ -1206,6 +1201,11 @@ class KenjiPlayerActivity : Activity(), SurfaceHolder.Callback {
         val scroll = ScrollView(this).apply { addView(details) }
         screen.addView(heading)
         screen.addView(scroll, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
+        screen.addView(darkButton("Скопировать описание") {
+            val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+            clipboard.setPrimaryClip(android.content.ClipData.newPlainText("Описание остановки", msg))
+            Toast.makeText(this, "Описание скопировано", Toast.LENGTH_SHORT).show()
+        }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(52)))
         screen.addView(darkButton("Вернуться в библиотеку") { leave() },
             LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(52)).apply { topMargin = dp(12) })
         setContentView(screen)

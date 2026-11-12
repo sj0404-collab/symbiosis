@@ -761,11 +761,22 @@ fun main() {
     """.trimIndent()
     val guestSaid = KenjiCrash.guestFailure(guest)
     check("гостевое исключение объяснено", guestSaid.isNotEmpty(), guestSaid)
-    check("гостевое исключение: назван сервис",
-        guestSaid.contains("IAccountServiceForApplication"), guestSaid)
-    check("гостевое исключение: названо внутренней ошибкой ядра",
-        guestSaid.contains("самого ядра"), guestSaid)
-    check("гостевое исключение: предложен обход", guestSaid.contains("Eden"), guestSaid)
+    check("гостевое исключение: служба описана понятным языком",
+        guestSaid.contains("служба учётной записи"), guestSaid)
+    check("операция отображается", guestSaid.contains("переключения учётной записи"), guestSaid)
+    check("пустая ссылка названа, но причина не придумана",
+        guestSaid.contains("пустая ссылка") && guestSaid.contains("нельзя установить первопричину"), guestSaid)
+    check("исключение не объявляет игру исправной или виновной", !guestSaid.contains("не файла игры"), guestSaid)
+    val newException = "Unhandled exception in guest thread:\nException without service"
+    val twoExceptions = guest + "\n00:00:20.000 |E| " + newException
+    check("старый сервис не приписывается другому исключению",
+        !KenjiCrash.guestFailure(twoExceptions).contains("служба учётной записи"))
+    check("метод клиента называется только в наличии соответствующего стека",
+        KenjiCrash.guestFailure(guest + "\n at Ryujinx.HLE.HOS.ServiceCtx.get_ClientProcessId()")
+            .contains("получение номера процесса клиента"))
+    check("чужая строка после следующей записи не становится причиной",
+        !KenjiCrash.guestFailure(guest + "\n00:00:17.000 |I| get_ClientProcessId")
+            .contains("получение номера процесса клиента"))
     check("обычная строка — не гостевое исключение",
         KenjiCrash.guestFailure("step=deviceInitialize").isEmpty())
 

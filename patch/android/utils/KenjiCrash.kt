@@ -820,40 +820,47 @@ object KenjiCrash {
      *
      * Возвращает пустую строку, если исключения гостевого потока нет.
      */
+    /** Extract the last guest exception rather than mixing it with unrelated
+     * earlier events. A missing stack is a missing observation, not a guess. */
+    fun guestExceptionBlock(text: String): String {
+        val marker = "Unhandled exception in guest thread"
+        val at = text.lastIndexOf(marker, ignoreCase = true)
+        if (at < 0) return ""
+        val lines = text.substring(at).lineSequence().take(32).toList()
+        val nextLog = Regex("""^\s*(?:\d{2}:\d{2}:\d{2}\.\d+|\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2})""")
+        return lines.takeWhileIndexed { index, line -> index == 0 || !nextLog.containsMatchIn(line) }
+            .joinToString("\n").take(8192)
+    }
+
+    private inline fun <T> List<T>.takeWhileIndexed(predicate: (Int, T) -> Boolean): List<T> {
+        val out = mutableListOf<T>()
+        forEachIndexed { index, item -> if (!predicate(index, item)) return out else out.add(item) }
+        return out
+    }
+
     fun guestFailure(text: String): String {
-        if (!text.contains("guest thread", ignoreCase = true)) return ""
-        // Строка стека выглядит как «at <Тип>.<Метод>(…)». Метод пишется
-        // с маленькой буквы, тип — с большой: по этому признаку и берётся имя
-        // сервиса, а не имя метода. В прошлой попытке в фразу попал метод
-        // (IsUserAccountSwitchLocked), и это ничего не говорило о сервисе.
-        // В стеке .NET тип и метод пишутся одинаково — с большой буквы,
-        // поэтому имя типа ищется по признаку интерфейса сервиса: «I» и
-        // большая буква после. Общий разбор — [guestService].
-        val service = guestService(text).ifEmpty { null }
-        val nullRef = text.contains("NullReferenceException")
-        // 05.11 удалось увидеть строку выше исключения: падает не выбор
-        // процесса игры из таблицы, а получение номера клиентского процесса
-        // (`ServiceCtx.get_ClientProcessId`). Там два возможных пустых
-        // значения — сам запрос и процесс-владелец сервиса; оба ведёт ядро,
-        // и оба недоступны снаружи. Поэтому формулировка должна быть про
-        // ядро, а не про «не нашло процесс игры».
-        val lostOwner = text.contains("get_ClientProcessId")
+        val block = guestExceptionBlock(text)
+        if (block.isEmpty()) return ""
+        val service = guestService(block)
         return buildString {
-            append("Игра остановилась на вызове сервиса эмулятора")
-            if (service != null) append(" «").append(service).append("»")
-            append(": ")
-            append(
-                when {
-                    lostOwner && nullRef ->
-                        "ядро потеряло сведения о процессе, от которого пришёл запрос, " +
-                            "и не смогло ответить."
-                    nullRef -> "ядро не смогло ответить на обычный запрос и вернуло пустоту."
-                    else -> "внутри обработчика возникло исключение."
-                }
-            )
-            append(" Это внутренняя ошибка самого ядра (не моста и не файла игры): ")
-            append("на этом вызове игра встаёт, кадры перестают идти. ")
-            append("Обойти можно выбором Eden для этой игры долгим нажатием на плитке.")
+            append("Ядро сообщило об исключении при обработке запроса игры.")
+            if (service == "IAccountServiceForApplication") {
+                append(" В стеке указана служба учётной записи.")
+            } else if (service.isNotEmpty()) {
+                append(" В стеке указана служба «").append(service).append("».")
+            } else {
+                append(" Служба в доступном фрагменте не определена.")
+            }
+            if (block.contains("IsUserAccountSwitchLocked", ignoreCase = true)) {
+                append(" Указанная операция: проверка запрета переключения учётной записи.")
+            }
+            if (block.contains("NullReferenceException", ignoreCase = true)) {
+                append(" Вид ошибки: пустая ссылка внутри обработчика ядра.")
+            }
+            if (block.contains("get_ClientProcessId", ignoreCase = true)) {
+                append(" В стеке также есть получение номера процесса клиента; причина отсутствия данных не установлена.")
+            }
+            append(" По этой записи нельзя установить первопричину или сделать вывод о файле игры.")
         }
     }
 
