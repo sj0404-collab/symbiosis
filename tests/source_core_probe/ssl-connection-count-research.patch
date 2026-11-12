@@ -1,0 +1,111 @@
+--- a/src/Ryujinx.HLE/HOS/Services/Ssl/SslService/ISslContext.cs
++++ b/src/Ryujinx.HLE/HOS/Services/Ssl/SslService/ISslContext.cs
+@@ -1,11 +1,11 @@
+-using Ryujinx.Common.Logging;
+ using Ryujinx.HLE.HOS.Services.Ssl.Types;
++using System.Threading;
+ 
+ namespace Ryujinx.HLE.HOS.Services.Ssl.SslService
+ {
+     class ISslContext : IpcService
+     {
+-        private uint _connectionCount;
++        private int _connectionCount;
+ 
+         private readonly ulong _processId;
+         private readonly SslVersion _sslVersion;
+@@ -21,9 +21,19 @@
+         // CreateConnection() -> object<nn::ssl::sf::ISslConnection>
+         public ResultCode CreateConnection(ServiceCtx context)
+         {
+-            MakeObject(context, new ISslConnection(_processId, _sslVersion, _serverTrust));
+-
+-            _connectionCount++;
++            ISslConnection connection = new(_processId, _sslVersion, _serverTrust, OnConnectionDisposed);
++            // Increment before publishing the IPC object. If publication fails,
++            // Dispose rolls it back; concurrent Close can only decrement once.
++            Interlocked.Increment(ref _connectionCount);
++            try
++            {
++                MakeObject(context, connection);
++            }
++            catch
++            {
++                connection.Dispose();
++                throw;
++            }
+ 
+             return ResultCode.Success;
+         }
+@@ -32,11 +42,13 @@
+         // GetConnectionCount() -> u32 count
+         public ResultCode GetConnectionCount(ServiceCtx context)
+         {
+-            context.ResponseData.Write(_connectionCount);
++            context.ResponseData.Write((uint)Volatile.Read(ref _connectionCount));
++            return ResultCode.Success;
++        }
+ 
+-            Logger.Stub?.PrintStub(LogClass.ServiceSsl, new { _connectionCount });
+-
+-            return ResultCode.Success;
++        private void OnConnectionDisposed()
++        {
++            Interlocked.Decrement(ref _connectionCount);
+         }
+ 
+         [CommandCmif(4)]
+--- a/src/Ryujinx.HLE/HOS/Services/Ssl/SslService/ISslConnection.cs
++++ b/src/Ryujinx.HLE/HOS/Services/Ssl/SslService/ISslConnection.cs
+@@ -5,6 +5,7 @@
+ using Ryujinx.Memory;
+ using System;
+ using System.Text;
++using System.Threading;
+ 
+ namespace Ryujinx.HLE.HOS.Services.Ssl.SslService
+ {
+@@ -17,6 +18,8 @@
+ 
+         private readonly SslVersion _sslVersion;
+         private readonly ServerTrustStore _serverTrust;
++        private readonly Action _onDisposed;
++        private int _disposed;
+         private IoMode _ioMode;
+         private VerifyOption _verifyOption;
+         private SessionCacheMode _sessionCacheMode;
+@@ -28,8 +31,9 @@
+ 
+         private byte[] _nextAplnProto;
+ 
+-        public ISslConnection(ulong processId, SslVersion sslVersion, ServerTrustStore serverTrust)
+-        {
++        public ISslConnection(ulong processId, SslVersion sslVersion, ServerTrustStore serverTrust, Action onDisposed)
++        {
++            _onDisposed = onDisposed ?? throw new ArgumentNullException(nameof(onDisposed));
+             _serverTrust = serverTrust;
+             _processId = processId;
+             _sslVersion = sslVersion;
+@@ -525,7 +529,21 @@
+ 
+         public void Dispose()
+         {
+-            _connection?.Dispose();
++            // Session and domain cleanup can overlap. Dispose resources and
++            // release the owning context count no more than once per object.
++            if (Interlocked.Exchange(ref _disposed, 1) != 0)
++            {
++                return;
++            }
++
++            try
++            {
++                _connection?.Dispose();
++            }
++            finally
++            {
++                _onDisposed();
++            }
+         }
+     }
+ }

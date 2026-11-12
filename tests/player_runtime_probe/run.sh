@@ -123,6 +123,7 @@ if [ "${PLAYER_REFERENCE_CORE:-0}" = 1 ]; then
   [[ "$source_hash" =~ ^[0-9a-f]{64}$ ]] && [ "$primary_hash" = "$source_hash" ] || { echo 'SOURCE_CORE_HASH_MISMATCH'; exit 1; }
   primary_core=source-research
   if [ "${PLAYER_REFERENCE_TLS_PATCH:-0}" = 1 ]; then primary_core="$primary_core-ssl-patch"; fi
+  if [ "${PLAYER_REFERENCE_SSL_COUNT_PATCH:-0}" = 1 ]; then primary_core="$primary_core-ssl-count-patch"; fi
   if [ "${PLAYER_REFERENCE_NETWORK_PATCH:-0}" = 1 ]; then primary_core="$primary_core-network-patch"; fi
   if [ "${PLAYER_REFERENCE_MISSING_INTERFACE:-0}" = 1 ]; then primary_core="$primary_core-missing-interface-fixture"; fi
   if [ "${PLAYER_REFERENCE_ZERO_INTERFACE:-0}" = 1 ]; then primary_core="$primary_core-zero-interface-fixture"; fi
@@ -498,6 +499,18 @@ if [ "${PLAYER_GUEST_TLS:-0}" = 1 ]; then
   adb shell chmod 644 /data/local/tmp/player-tls-mode.txt
   adb shell run-as "$package" cp /data/local/tmp/player-tls-mode.txt files/kenji/sdcard/ci-tls-mode.txt
   adb shell rm /data/local/tmp/player-tls-mode.txt
+  count_evidence=none
+  if [ "${PLAYER_SSL_COUNT:-0}" = 1 ]; then
+    [ "${PLAYER_REFERENCE_CORE:-0}:${PLAYER_REFERENCE_TLS_PATCH:-0}" = 1:1 ] || { echo 'SSL_COUNT_BAD_RESEARCH_CONFIGURATION'; exit 1; }
+    printf 'enabled\n' > "$W/guest-ssl-count-mode.txt"
+    adb push "$W/guest-ssl-count-mode.txt" /data/local/tmp/player-ssl-count-mode.txt >/dev/null
+    adb shell chmod 644 /data/local/tmp/player-ssl-count-mode.txt
+    adb shell run-as "$package" cp /data/local/tmp/player-ssl-count-mode.txt files/kenji/sdcard/ci-ssl-count.txt
+    adb shell rm /data/local/tmp/player-ssl-count-mode.txt
+    count_evidence=count
+  else
+    adb shell run-as "$package" rm -f files/kenji/sdcard/ci-ssl-count.txt
+  fi
   adb reverse tcp:19443 tcp:19443
   for guest_core in sym space; do
     if [ "$guest_core" = space ]; then
@@ -529,7 +542,7 @@ if [ "${PLAYER_GUEST_TLS:-0}" = 1 ]; then
       if grep -qE "^[0-9-]+ +[0-9:.]+ +$player_pid +[0-9]+ .*(GUEST_TLS_ERROR|Unhandled exception in guest thread)" "$log" || app_crashed; then break; fi
       sleep 1
     done
-    grep -E "^[0-9-]+ +[0-9:.]+ +$player_pid +[0-9]+ .*(GUEST_TLS_|ServiceSsl .*Stubbed|Unhandled exception in guest thread|System\.Security\.Authentication)" "$log" | tee -a "$W/redroid-status.txt" || true
+    grep -E "^[0-9-]+ +[0-9:.]+ +$player_pid +[0-9]+ .*(GUEST_TLS_|GUEST_SSL_COUNT|ServiceSsl .*Stubbed|Unhandled exception in guest thread|System\.Security\.Authentication)" "$log" | tee -a "$W/redroid-status.txt" || true
     if [ "$guest_result" = 1 ]; then
       # Wait for the endpoint to observe all thirteen client connections.
       for ((n=0;n<10;n++)); do
@@ -537,7 +550,7 @@ if [ "${PLAYER_GUEST_TLS:-0}" = 1 ]; then
         sleep 1
       done
       if [ "${PLAYER_REFERENCE_TLS_PATCH:-0}" = 1 ]; then
-        python3 tests/player_runtime_probe/check_guest_tls_evidence.py "$log" "$player_pid" "$server_log" "$tls_bind_mode" | tee -a "$W/redroid-status.txt" || guest_result=0
+        python3 tests/player_runtime_probe/check_guest_tls_evidence.py "$log" "$player_pid" "$server_log" "$tls_bind_mode" "$count_evidence" | tee -a "$W/redroid-status.txt" || guest_result=0
       else
         echo 'GUEST_TLS_NO_INSTRUMENTED_POLICY_EVIDENCE'
         guest_result=0

@@ -9,8 +9,8 @@ from pathlib import Path
 import re
 import sys
 
-if len(sys.argv) != 5 or not sys.argv[2].isdigit() or sys.argv[4] not in ('auto', 'bound'):
-    raise SystemExit('usage: check_guest_tls_evidence.py logcat PID server-log {auto|bound}')
+if len(sys.argv) != 6 or not sys.argv[2].isdigit() or sys.argv[4] not in ('auto', 'bound') or sys.argv[5] not in ('count', 'none'):
+    raise SystemExit('usage: check_guest_tls_evidence.py logcat PID server-log {auto|bound} {count|none}')
 log = Path(sys.argv[1]).read_text(errors='replace')
 pid = sys.argv[2]
 server = Path(sys.argv[3]).read_text(errors='replace')
@@ -139,6 +139,26 @@ for pattern in markers:
             break
     else:
         raise SystemExit('GUEST_TLS_EVIDENCE_MISSING_OR_OUT_OF_ORDER ' + pattern)
+count_rows = [row for row in rows if 'GUEST_SSL_COUNT' in row]
+if sys.argv[5] == 'count':
+    expected = [
+        ('initial', 'A', 0), ('initial', 'B', 0), ('one', 'A', 1), ('two', 'A', 2),
+        ('other_created', 'B', 1), ('other_created', 'A', 2), ('one_closed', 'A', 1), ('one_closed', 'B', 1),
+        ('other_closed', 'B', 0), ('other_closed', 'A', 1), ('all_closed', 'A', 0), ('all_closed', 'B', 0),
+    ]
+    expected_rows = [f'GUEST_SSL_COUNT phase={phase} context={ctx} count={n} rc=0x00000000' for phase, ctx, n in expected]
+    expected_rows += ['GUEST_SSL_COUNT_LIFECYCLE_OK', 'GUEST_SSL_COUNT phase=after_tls context=A count=0 rc=0x00000000',
+                      'GUEST_SSL_COUNT phase=after_tls context=B count=0 rc=0x00000000', 'GUEST_SSL_COUNT_AFTER_TLS_OK']
+    if len(count_rows) != len(expected_rows) or any(expected not in row for expected, row in zip(expected_rows, count_rows)):
+        raise SystemExit('GUEST_SSL_COUNT_EVIDENCE_MISMATCH')
+    first_tls = next((i for i, row in enumerate(rows) if 'GUEST_TLS_INVALID_CERT_REJECTED' in row), -1)
+    final_tls = next((i for i, row in enumerate(rows) if 'GUEST_TLS_COMPLETE' in row), -1)
+    life = next((i for i, row in enumerate(rows) if 'GUEST_SSL_COUNT_LIFECYCLE_OK' in row), -1)
+    after = next((i for i, row in enumerate(rows) if 'GUEST_SSL_COUNT_AFTER_TLS_OK' in row), -1)
+    if not 0 <= life < first_tls < after < final_tls:
+        raise SystemExit('GUEST_SSL_COUNT_EVIDENCE_ORDER')
+elif count_rows:
+    raise SystemExit('GUEST_SSL_COUNT_UNEXPECTED_FIXTURE')
 if any(re.search(r'GUEST_TLS_ERROR|Unhandled exception in guest thread|FATAL EXCEPTION|Fatal signal', row) for row in rows):
     raise SystemExit('GUEST_TLS_EVIDENCE_HAS_ERROR')
 for n in (2, 6, 7, 10):

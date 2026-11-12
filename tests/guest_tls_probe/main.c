@@ -5,6 +5,7 @@
 #include <sys/socket.h>
 #include <errno.h>
 #include <stdarg.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <string.h>
 #include <unistd.h>
@@ -18,6 +19,53 @@ static int check(const char *stage, Result rc) {
     say("GUEST_TLS_STAGE %s rc=0x%08x module=%u description=%u", stage, rc, R_MODULE(rc), R_DESCRIPTION(rc));
     if (R_FAILED(rc)) { say("GUEST_TLS_ERROR stage=%s rc=0x%08x", stage, rc); return 0; }
     return 1;
+}
+
+/* Optional source-only count test; omitted in ordinary pinned-core tests. */
+static int check_count(SslContext *ctx, const char *label, const char *context_name, u32 expected) {
+    u32 count = UINT32_MAX;
+    Result rc = sslContextGetConnectionCount(ctx, &count);
+    say("GUEST_SSL_COUNT phase=%s context=%s count=%u rc=0x%08x", label, context_name, count, rc);
+    if (R_FAILED(rc) || count != expected) {
+        say("GUEST_TLS_ERROR stage=connection_count phase=%s context=%s expected=%u actual=%u rc=0x%08x", label, context_name, expected, count, rc);
+        return 0;
+    }
+    return 1;
+}
+static int count_test_enabled(void) {
+    FILE *f = fopen("sdmc:/ci-ssl-count.txt", "r");
+    if (!f) return 0;
+    char mode[16] = {0};
+    int enabled = fgets(mode, sizeof(mode), f) && strcmp(mode, "enabled\n") == 0;
+    fclose(f);
+    return enabled ? 1 : -1;
+}
+static int check_count_lifecycle(SslContext *a, SslContext *b) {
+    SslConnection a1 = {0}, a2 = {0}, b1 = {0};
+    int a1_open = 0, a2_open = 0, b1_open = 0, ok = 0;
+    if (!check_count(a, "initial", "A", 0) || !check_count(b, "initial", "B", 0)) goto done;
+    if (!check("count_create_a1", sslContextCreateConnection(a, &a1))) goto done;
+    a1_open = 1;
+    if (!check_count(a, "one", "A", 1)) goto done;
+    if (!check("count_create_a2", sslContextCreateConnection(a, &a2))) goto done;
+    a2_open = 1;
+    if (!check_count(a, "two", "A", 2)) goto done;
+    if (!check("count_create_b1", sslContextCreateConnection(b, &b1))) goto done;
+    b1_open = 1;
+    if (!check_count(b, "other_created", "B", 1) || !check_count(a, "other_created", "A", 2)) goto done;
+    sslConnectionClose(&a1); a1_open = 0;
+    if (!check_count(a, "one_closed", "A", 1) || !check_count(b, "one_closed", "B", 1)) goto done;
+    sslConnectionClose(&b1); b1_open = 0;
+    if (!check_count(b, "other_closed", "B", 0) || !check_count(a, "other_closed", "A", 1)) goto done;
+    sslConnectionClose(&a2); a2_open = 0;
+    if (!check_count(a, "all_closed", "A", 0) || !check_count(b, "all_closed", "B", 0)) goto done;
+    say("GUEST_SSL_COUNT_LIFECYCLE_OK");
+    ok = 1;
+done:
+    if (a1_open) sslConnectionClose(&a1);
+    if (a2_open) sslConnectionClose(&a2);
+    if (b1_open) sslConnectionClose(&b1);
+    return ok;
 }
 
 /* The mode is configured on the disposable SD card; never assume it. */
@@ -147,6 +195,9 @@ int main(void) {
     if (!check("context", sslCreateContext(&ctx, SslVersion_Auto))) goto ssl_done;
     if (!check("other_context", sslCreateContext(&other, SslVersion_Auto))) goto ctx_done;
     other_open = 1;
+    int count_mode = count_test_enabled();
+    if (count_mode < 0) { say("GUEST_TLS_ERROR stage=count_mode"); goto ctx_done; }
+    if (count_mode && !check_count_lifecycle(&ctx, &other)) goto ctx_done;
     unsigned char cert[4096], wrong[4096], leaf[4096], der[4096];
     size_t len, wrong_len, leaf_len, der_len;
     if (!read_cert("sdmc:/ci-test-cert.pem", cert, sizeof(cert), &len) ||
@@ -202,6 +253,8 @@ int main(void) {
     if (!connection(&ctx, "localhost", "missing_intermediate")) goto ctx_done;
     say("GUEST_TLS_CHAIN_CASE not_yet_valid");
     if (!connection(&ctx, "localhost", "not_yet_valid")) goto ctx_done;
+    if (count_mode && (!check_count(&ctx, "after_tls", "A", 0) || !check_count(&other, "after_tls", "B", 0))) goto ctx_done;
+    if (count_mode) say("GUEST_SSL_COUNT_AFTER_TLS_OK");
     say("GUEST_TLS_COMPLETE");
 ctx_done:
     if (other_open) sslContextClose(&other);

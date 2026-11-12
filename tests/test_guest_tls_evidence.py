@@ -49,7 +49,7 @@ SERVER = ''.join(f'LOCAL_TLS_HANDSHAKE_OK {n} TLSv1.3\n' for n in range(13)) + '
 
 
 class EvidenceTest(unittest.TestCase):
- def check(self, markers=MARKERS, server=SERVER, pid='123', mode='bound', connection_markers=None):
+ def check(self, markers=MARKERS, server=SERVER, pid='123', mode='bound', connection_markers=None, count='none'):
   with tempfile.TemporaryDirectory() as d:
    log=Path(d)/'log'; srv=Path(d)/'server'
    if connection_markers is None:
@@ -57,10 +57,21 @@ class EvidenceTest(unittest.TestCase):
    fixture = [f'GUEST_TLS_MODE mode={mode}'] + connection_markers + list(markers)
    log.write_text(''.join('11-11 05:53:08.000  123  456 I RyujinxLog: '+x+'\n' for x in fixture))
    srv.write_text(server)
-   return subprocess.run([sys.executable,str(CHECKER),str(log),pid,str(srv),mode],capture_output=True,text=True)
+   return subprocess.run([sys.executable,str(CHECKER),str(log),pid,str(srv),mode,count],capture_output=True,text=True)
  def test_success(self):
   self.assertEqual(self.check().returncode,0)
   self.assertEqual(self.check(mode='auto').returncode,0)
+ def test_connection_count_evidence_required_and_ordered(self):
+  phases = [('initial','A',0),('initial','B',0),('one','A',1),('two','A',2),('other_created','B',1),('other_created','A',2),('one_closed','A',1),('one_closed','B',1),('other_closed','B',0),('other_closed','A',1),('all_closed','A',0),('all_closed','B',0)]
+  count = [f'GUEST_SSL_COUNT phase={p} context={c} count={n} rc=0x00000000' for p,c,n in phases] + ['GUEST_SSL_COUNT_LIFECYCLE_OK']
+  after = ['GUEST_SSL_COUNT phase=after_tls context=A count=0 rc=0x00000000','GUEST_SSL_COUNT phase=after_tls context=B count=0 rc=0x00000000','GUEST_SSL_COUNT_AFTER_TLS_OK']
+  sample = count + MARKERS[:-1] + after + MARKERS[-1:]
+  self.assertEqual(self.check(sample,count='count').returncode,0)
+  self.assertNotEqual(self.check(MARKERS,count='count').returncode,0)
+  self.assertNotEqual(self.check(sample,count='none').returncode,0)
+  self.assertNotEqual(self.check([m.replace('phase=one_closed context=A count=1','phase=one_closed context=A count=2') for m in sample],count='count').returncode,0)
+  self.assertNotEqual(self.check(sample[:-2],count='count').returncode,0)
+  self.assertNotEqual(self.check(MARKERS[:-1]+count+after+MARKERS[-1:],count='count').returncode,0)
  def test_bind_mode_and_order_fail_closed(self):
   auto = [y for _ in range(13) for y in ['GUEST_TLS_CONNECT_BEGIN mode=auto','GUEST_TLS_SOCKET_CONNECTED host=localhost']]
   self.assertNotEqual(self.check(mode='auto', connection_markers=auto+['GUEST_TLS_LOOPBACK_BOUND']).returncode,0)
