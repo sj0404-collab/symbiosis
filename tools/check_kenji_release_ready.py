@@ -105,19 +105,32 @@ def check_tls_alignment(directory: Path) -> list[str]:
     return problems
 
 
-def main() -> int:
+def main(experimental: bool = False) -> int:
     cpp = (ROOT / 'patch/symbiosis/kenji_bridge.cpp').read_text(encoding='utf-8')
     kotlin = (ROOT / 'patch/android/kenjinx/KenjinxNative.kt').read_text(encoding='utf-8')
     libs = ROOT / 'patch/libs/arm64-v8a'
-    problems = check_sources(cpp, kotlin) + check_tls_alignment(libs) + check_tls_provenance(libs) + list(UNRESOLVED_INTEGRATION)
+    # Experimental testing only waives the explicitly documented evidence
+    # blockers. It must still reject missing/empty bridge callbacks and altered
+    # or misaligned bundled TLS libraries. It is not a release certification.
+    hard_problems = check_sources(cpp, kotlin) + check_tls_alignment(libs) + check_tls_provenance(libs)
+    problems = hard_problems + ([] if experimental else list(UNRESOLVED_INTEGRATION))
     if problems:
-        print('Выпуск APK остановлен: интеграция второго ядра не завершена.', file=sys.stderr)
+        print('Сборка остановлена: обязательные проверки не пройдены.', file=sys.stderr)
         for problem in problems:
             print('• ' + problem, file=sys.stderr)
         return 1
-    print('Известные пустые callback не найдены; это не доказательство работы ядра.')
+    if experimental:
+        print('ТОЛЬКО ТЕСТ: выпуск не подтверждён, известны ограничения:', file=sys.stderr)
+        for problem in UNRESOLVED_INTEGRATION:
+            print('• ' + problem, file=sys.stderr)
+    else:
+        print('Известные пустые callback не найдены; это не доказательство работы ядра.')
     return 0
 
 
 if __name__ == '__main__':
-    raise SystemExit(main())
+    if len(sys.argv) == 1:
+        raise SystemExit(main())
+    if sys.argv[1:] == ['--experimental-test-only']:
+        raise SystemExit(main(experimental=True))
+    raise SystemExit('Неизвестный аргумент проверки выпуска')

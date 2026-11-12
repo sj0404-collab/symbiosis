@@ -38,6 +38,17 @@ class ReleaseGuardTest(unittest.TestCase):
         with patch.object(guard, 'check_sources', return_value=[]), patch('sys.stderr'):
             self.assertEqual(guard.main(), 1)
 
+    def test_explicit_experimental_only_waives_documented_blockers(self):
+        with patch('sys.stderr'):
+            self.assertEqual(guard.main(experimental=True), 0)
+            self.assertEqual(guard.main(), 1)
+            with patch.object(guard, 'check_sources', return_value=['missing callback']):
+                self.assertEqual(guard.main(experimental=True), 1)
+            with patch.object(guard, 'check_tls_provenance', return_value=['bad hash']):
+                self.assertEqual(guard.main(experimental=True), 1)
+            with patch.object(guard, 'check_tls_alignment', return_value=['bad alignment']):
+                self.assertEqual(guard.main(experimental=True), 1)
+
     def test_bundled_tls_is_exact_verified_candidate_but_release_is_blocked(self):
         libs = ROOT / 'patch/libs/arm64-v8a'
         self.assertEqual(guard.check_tls_alignment(libs), [])

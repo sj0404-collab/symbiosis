@@ -24,6 +24,10 @@ on:
         description: "Also upload the APK to gofile.io"
         type: boolean
         default: true
+      experimental_test_only:
+        description: "Known incomplete core: isolated debug prerelease only"
+        type: boolean
+        default: false
   push:
     branches: [main]
     paths:
@@ -39,6 +43,12 @@ jobs:
     timeout-minutes: 90
 
     steps:
+      - name: Restrict experimental mode to manually requested debug builds
+        if: inputs.experimental_test_only && (github.event_name != 'workflow_dispatch' || inputs.build_type != 'debug')
+        run: |
+          echo 'Experimental mode requires manual dispatch and debug; refusing.'
+          exit 1
+
       - name: Check out this fork
         uses: actions/checkout@v4
         with:
@@ -261,6 +271,7 @@ jobs:
           python3 fork/tests/test_kenji_ui_callback_wiring.py
           python3 fork/tests/test_kenji_player_ui_contract.py
           python3 fork/tests/test_kenji_release_guard.py
+          python3 fork/tests/test_experimental_build_policy.py
           python3 fork/tests/test_core_settings_screen.py
           python3 fork/tests/test_hid_remap_model.py
           curl -fsSL --retry 3 'https://raw.githubusercontent.com/thiagooo0/EHRyujinx2/1247747ed81ffb6df2d33153e0ba723ec4ffc32b/src/Ryujinx.HLE/HOS/Services/Hid/IHidServer.cs' -o /tmp/related-hid-server.cs
@@ -271,8 +282,20 @@ jobs:
           EDEN_OVERLAY_SOURCE=/tmp/original-eden-overlay.kt python3 fork/tests/test_eden_kenji_overlay.py
           bash fork/tools/run_tests.sh --eden "$GITHUB_WORKSPACE/eden" --max-skip 3
 
-      - name: Block release until known Kenji integration is verified
+      - name: Block normal release until known Kenji integration is verified
+        if: ${{ !inputs.experimental_test_only }}
         run: python3 fork/tools/check_kenji_release_ready.py
+
+      - name: Check experimental build and disclose known limitations
+        if: ${{ inputs.experimental_test_only }}
+        run: |
+          python3 fork/tools/check_kenji_release_ready.py --experimental-test-only
+          {
+            echo '## Только тест: известные ограничения'
+            echo 'В SSL-службе второго ядра есть известные заглушки; TLS игры не подтверждён.'
+            echo 'Остановка UI/потоков, графика и 16 КБ Android не полностью проверены.'
+            echo 'Ошибка 2202-0710 не исправлена и не воспроизведена в CI.'
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Check the Russian localisation
         run: |
@@ -362,7 +385,8 @@ jobs:
                        TorrentBencode TorrentMeta TorrentPlan TorrentWire \
                        TorrentTracker TorrentAnnounce TorrentDownload \
                        MagnetMeta FramePacing FrameMetricsText \
-                       PerformanceFragment RomSniff KenjiCrash QuickPanel UiGuard; do
+                       PerformanceFragment RomSniff KenjiCrash QuickPanel UiGuard \
+                       diagnosticSummary configurationReport symbiosis_effective_config; do
               if strings classes*.dex | grep -q "$sym"; then echo "  ok   $sym in dex"
               else echo "  MISSING $sym"; fail=1; fi
             done
@@ -547,10 +571,31 @@ jobs:
 
           exit $fail
 
+      - name: Audit actual APK TLS libraries and 16K packaging
+        run: |
+          set -euo pipefail
+          APK=$(find eden -name '*legacy-release.apk' -o -name '*legacy-debug.apk' | head -1)
+          python3 fork/tests/player_runtime_probe/audit_apk_16k.py "$APK"
+          python3 - "$APK" <<'PYAPK'
+          import hashlib, sys, zipfile
+          expected = {
+              'libcrypto.so': '31dc1e131571302b5001893aeabd974b8a607eace72ab86ef61beba5a768cbf1',
+              'libssl.so': '5e1b3583b7eb30d7792432f063d4fbbf0f4196fdd89e22e89bb8f8dac7507c9a',
+          }
+          with zipfile.ZipFile(sys.argv[1]) as apk:
+              for name, wanted in expected.items():
+                  actual = hashlib.sha256(apk.read('lib/arm64-v8a/' + name)).hexdigest()
+                  print('APK_TLS_SHA256', name, actual)
+                  if actual != wanted: raise SystemExit('APK bundled TLS does not match verified library')
+              for name in ('openssl-3.5.9-license.txt', 'openssl-3.5.9-notice.txt'):
+                  if 'assets/' + name not in apk.namelist(): raise SystemExit('APK missing OpenSSL license or notice')
+          PYAPK
+          "$ANDROID_HOME/build-tools/35.0.0/zipalign" -c -P 16 4 "$APK"
+
       - name: Upload the APK as an artefact
         uses: actions/upload-artifact@v4
         with:
-          name: Eden-Symbiosis-Legacy-debug
+          name: ${{ inputs.experimental_test_only && 'Symbiosis-EXPERIMENTAL-debug-known-SSL-stubs' || 'Eden-Symbiosis-Legacy-debug' }}
           path: eden/src/android/app/build/outputs/apk/**/*.apk
           retention-days: 30
 
@@ -595,7 +640,7 @@ jobs:
         # подошла.
         # Публикуем только с рабочей ветки: прогон из pull request не должен
         # подменять релиз.
-        if: success() && (github.ref_name == 'main' || github.ref_name == 'fix/library-sees-all-games')
+        if: success() && !inputs.experimental_test_only && (github.ref_name == 'main' || github.ref_name == 'fix/library-sees-all-games')
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           # Без этого gh ищет локальный git-репозиторий в рабочем каталоге и
@@ -639,3 +684,30 @@ jobs:
           echo "### Релиз обновлён" >> "$GITHUB_STEP_SUMMARY"
           echo "https://github.com/$GITHUB_REPOSITORY/releases/latest/download/Symbiosis.apk" >> "$GITHUB_STEP_SUMMARY"
           echo "(MD5 $MD5, $MB МБ)" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Publish isolated experimental prerelease
+        if: success() && github.event_name == 'workflow_dispatch' && inputs.experimental_test_only && inputs.build_type == 'debug' && github.ref_name == 'fix/library-sees-all-games'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          APK=$(find eden -name '*legacy-debug.apk' -type f | head -1)
+          test -n "$APK"
+          NAME="Symbiosis-TEST-${GITHUB_RUN_NUMBER}-${GITHUB_SHA:0:8}.apk"
+          cp "$APK" "$NAME"
+          SHA=$(sha256sum "$NAME" | cut -d' ' -f1)
+          TAG="symbiosis-test-${GITHUB_RUN_NUMBER}"
+          {
+            echo 'ТОЛЬКО ДЛЯ ТЕСТА. В SSL-службе закреплённых ядер известны заглушки.'
+            echo 'Ошибка 2202-0710 не исправлена и не воспроизведена в CI.'
+            echo 'Графика, остановка потоков и Android с страницами 16 КБ не подтверждены полностью.'
+            echo "SHA-256: $SHA"
+            echo "Исходный коммит: $GITHUB_SHA"
+            echo "Проверки и сборка: https://github.com/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+          } > /tmp/experimental-notes.txt
+          gh release create "$TAG" "$NAME" --target "$GITHUB_SHA" --prerelease --latest=false \
+            --title "Symbiosis TEST ${GITHUB_RUN_NUMBER} — известны SSL-заглушки" \
+            --notes-file /tmp/experimental-notes.txt
+          echo "### Только тест: https://github.com/$GITHUB_REPOSITORY/releases/download/$TAG/$NAME" >> "$GITHUB_STEP_SUMMARY"
+          echo "SHA-256: $SHA" >> "$GITHUB_STEP_SUMMARY"
