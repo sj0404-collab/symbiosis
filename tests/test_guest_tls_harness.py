@@ -62,14 +62,14 @@ class GuestTlsFixtureTest(unittest.TestCase):
             subprocess.run(['bash', str(ROOT / 'tests/guest_tls_probe/generate_chain_fixture.sh'),
                             str(pki), str(cert), str(key)], check=True, capture_output=True)
             server = subprocess.Popen([sys.executable, str(ROOT / 'tests/guest_tls_probe/server.py'),
-                                       str(cert), str(key), '0', '5', str(pki), '7'],
+                                       str(cert), str(key), '0', '6', str(pki), '7'],
                                       stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
             try:
                 ready = server.stdout.readline().strip()
                 self.assertTrue(ready.startswith('LOCAL_TLS_SERVER_READY port='), ready)
                 port = int(ready.split('=', 1)[1])
                 context = ssl.create_default_context(cafile=str(cert))
-                for index, expected in ((7, None), (8, 10), (9, 26), (10, None), (11, 20)):
+                for index, expected in ((7, None), (8, 10), (9, 26), (10, None), (11, 20), (12, 9)):
                     with socket.create_connection(('127.0.0.1', port), timeout=10) as raw:
                         try:
                             with context.wrap_socket(raw, server_hostname='localhost') as tls:
@@ -80,11 +80,11 @@ class GuestTlsFixtureTest(unittest.TestCase):
                             self.assertEqual(exc.verify_code, expected, f'case {index}: {exc}')
                 output, _ = server.communicate(timeout=15)
                 self.assertEqual(server.returncode, 0, output)
-                for index, profile in ((7, 'server'), (8, 'expired'), (9, 'client'), (10, 'intermediate_chain'), (11, 'missing_intermediate')):
+                for index, profile in ((7, 'server'), (8, 'expired'), (9, 'client'), (10, 'intermediate_chain'), (11, 'missing_intermediate'), (12, 'future')):
                     self.assertIn(f'LOCAL_TLS_CERT_PROFILE {index} {profile}', output)
                 self.assertIn('LOCAL_TLS_EXCHANGE_OK 7', output)
                 self.assertIn('LOCAL_TLS_EXCHANGE_OK 10', output)
-                for index in (8, 9, 11):
+                for index in (8, 9, 11, 12):
                     self.assertNotIn(f'LOCAL_TLS_EXCHANGE_OK {index}', output)
             finally:
                 if server.poll() is None:

@@ -39,9 +39,13 @@ MARKERS = [
  'GUEST_TLS_CHAIN_CASE missing_intermediate', 'GUEST_TLS_UNSUPPORTED_OPTIONS_REJECTED', 'GUEST_TLS_VERIFY_DISABLE_REJECTED',
  'CI_ONLY_TLS_POLICY imported_groups=1 errors=RemoteCertificateChainErrors', 'CI_ONLY_TLS_CUSTOM_CHAIN valid=False statuses=PartialChain',
  'GUEST_TLS_NEGATIVE_HANDSHAKE_FAILED case=missing_intermediate', 'GUEST_TLS_FAILED_HANDSHAKE_IO_REJECTED case=missing_intermediate',
- 'GUEST_TLS_VERIFY_DETAILS_UNSUPPORTED case=missing_intermediate', 'GUEST_TLS_COMPLETE',
+ 'GUEST_TLS_VERIFY_DETAILS_UNSUPPORTED case=missing_intermediate',
+ 'GUEST_TLS_CHAIN_CASE not_yet_valid', 'GUEST_TLS_UNSUPPORTED_OPTIONS_REJECTED', 'GUEST_TLS_VERIFY_DISABLE_REJECTED',
+ 'CI_ONLY_TLS_POLICY imported_groups=1 errors=RemoteCertificateChainErrors', 'CI_ONLY_TLS_CUSTOM_CHAIN valid=False statuses=NotTimeValid',
+ 'GUEST_TLS_NEGATIVE_HANDSHAKE_FAILED case=not_yet_valid', 'GUEST_TLS_FAILED_HANDSHAKE_IO_REJECTED case=not_yet_valid',
+ 'GUEST_TLS_VERIFY_DETAILS_UNSUPPORTED case=not_yet_valid', 'GUEST_TLS_COMPLETE',
 ]
-SERVER = ''.join(f'LOCAL_TLS_HANDSHAKE_OK {n} TLSv1.3\n' for n in range(12)) + 'LOCAL_TLS_EXCHANGE_OK 2\nLOCAL_TLS_EXCHANGE_OK 6\nLOCAL_TLS_EXCHANGE_OK 7\nLOCAL_TLS_EXCHANGE_OK 10\nLOCAL_TLS_CERT_PROFILE 7 server\nLOCAL_TLS_CERT_PROFILE 8 expired\nLOCAL_TLS_CERT_PROFILE 9 client\nLOCAL_TLS_CERT_PROFILE 10 intermediate_chain\nLOCAL_TLS_CERT_PROFILE 11 missing_intermediate\n'
+SERVER = ''.join(f'LOCAL_TLS_HANDSHAKE_OK {n} TLSv1.3\n' for n in range(13)) + 'LOCAL_TLS_EXCHANGE_OK 2\nLOCAL_TLS_EXCHANGE_OK 6\nLOCAL_TLS_EXCHANGE_OK 7\nLOCAL_TLS_EXCHANGE_OK 10\nLOCAL_TLS_CERT_PROFILE 7 server\nLOCAL_TLS_CERT_PROFILE 8 expired\nLOCAL_TLS_CERT_PROFILE 9 client\nLOCAL_TLS_CERT_PROFILE 10 intermediate_chain\nLOCAL_TLS_CERT_PROFILE 11 missing_intermediate\nLOCAL_TLS_CERT_PROFILE 12 future\n'
 
 
 class EvidenceTest(unittest.TestCase):
@@ -49,7 +53,7 @@ class EvidenceTest(unittest.TestCase):
   with tempfile.TemporaryDirectory() as d:
    log=Path(d)/'log'; srv=Path(d)/'server'
    if connection_markers is None:
-    connection_markers = [y for _ in range(12) for y in ((['GUEST_TLS_LOOPBACK_BOUND'] if mode == 'bound' else []) + [f'GUEST_TLS_CONNECT_BEGIN mode={mode}', 'GUEST_TLS_SOCKET_CONNECTED host=localhost'])]
+    connection_markers = [y for _ in range(13) for y in ((['GUEST_TLS_LOOPBACK_BOUND'] if mode == 'bound' else []) + [f'GUEST_TLS_CONNECT_BEGIN mode={mode}', 'GUEST_TLS_SOCKET_CONNECTED host=localhost'])]
    fixture = [f'GUEST_TLS_MODE mode={mode}'] + connection_markers + list(markers)
    log.write_text(''.join('11-11 05:53:08.000  123  456 I RyujinxLog: '+x+'\n' for x in fixture))
    srv.write_text(server)
@@ -58,7 +62,7 @@ class EvidenceTest(unittest.TestCase):
   self.assertEqual(self.check().returncode,0)
   self.assertEqual(self.check(mode='auto').returncode,0)
  def test_bind_mode_and_order_fail_closed(self):
-  auto = [y for _ in range(12) for y in ['GUEST_TLS_CONNECT_BEGIN mode=auto','GUEST_TLS_SOCKET_CONNECTED host=localhost']]
+  auto = [y for _ in range(13) for y in ['GUEST_TLS_CONNECT_BEGIN mode=auto','GUEST_TLS_SOCKET_CONNECTED host=localhost']]
   self.assertNotEqual(self.check(mode='auto', connection_markers=auto+['GUEST_TLS_LOOPBACK_BOUND']).returncode,0)
   self.assertNotEqual(self.check(mode='auto', connection_markers=auto[:-1]).returncode,0)
   self.assertNotEqual(self.check(mode='auto', connection_markers=list(reversed(auto))).returncode,0)

@@ -40,10 +40,11 @@ extendedKeyUsage = clientAuth
 subjectAltName = DNS:localhost
 EOF_CONFIG
 openssl req -new -newkey rsa:2048 -nodes -keyout "$D/server-key.pem" -out "$D/server.csr" -subj '/CN=localhost' >/dev/null 2>&1
-for variant in server expired client; do
+for variant in server expired client future; do
   ext=server_ext
   date_options=()
   if [ "$variant" = expired ]; then date_options=(-startdate 200101000000Z -enddate 200201000000Z); fi
+  if [ "$variant" = future ]; then date_options=(-startdate "$(date -u -d '+6 hours' +%Y%m%d%H%M%SZ)" -enddate "$(date -u -d '+12 hours' +%Y%m%d%H%M%SZ)"); fi
   if [ "$variant" = client ]; then ext=client_ext; fi
   openssl ca -batch -notext -config "$D/ca.cnf" -extensions "$ext" "${date_options[@]}" \
     -in "$D/server.csr" -out "$D/$variant.pem" >/dev/null 2>&1
@@ -62,6 +63,10 @@ if openssl verify -purpose sslserver -CAfile "$ROOT_CERT" "$D/expired.pem" > "$D
   echo FIXTURE_EXPIRED_ACCEPTED >&2; exit 1
 fi
 grep -qi 'certificate has expired' "$D/verify-expired.txt" || { cat "$D/verify-expired.txt" >&2; exit 1; }
+if openssl verify -purpose sslserver -CAfile "$ROOT_CERT" "$D/future.pem" > "$D/verify-future.txt" 2>&1; then
+  echo FIXTURE_FUTURE_ACCEPTED >&2; exit 1
+fi
+grep -qi 'certificate is not yet valid' "$D/verify-future.txt" || { cat "$D/verify-future.txt" >&2; exit 1; }
 if openssl verify -purpose sslserver -CAfile "$ROOT_CERT" "$D/client.pem" > "$D/verify-client.txt" 2>&1; then
   echo FIXTURE_CLIENT_EKU_ACCEPTED >&2; exit 1
 fi
@@ -71,4 +76,4 @@ if openssl verify -purpose sslserver -CAfile "$ROOT_CERT" "$D/intermediate-leaf.
   echo FIXTURE_MISSING_INTERMEDIATE_ACCEPTED >&2; exit 1
 fi
 grep -qi 'unable to get local issuer certificate' "$D/verify-no-intermediate.txt" || { cat "$D/verify-no-intermediate.txt" >&2; exit 1; }
-echo 'TLS_CHAIN_FIXTURE_OK valid expired client_only intermediate missing_intermediate'
+echo 'TLS_CHAIN_FIXTURE_OK valid expired future client_only intermediate missing_intermediate'

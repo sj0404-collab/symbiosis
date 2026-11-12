@@ -200,6 +200,8 @@ int main(void) {
     if (!connection(&ctx, "localhost", NULL)) goto ctx_done;
     say("GUEST_TLS_CHAIN_CASE missing_intermediate");
     if (!connection(&ctx, "localhost", "missing_intermediate")) goto ctx_done;
+    say("GUEST_TLS_CHAIN_CASE not_yet_valid");
+    if (!connection(&ctx, "localhost", "not_yet_valid")) goto ctx_done;
     say("GUEST_TLS_COMPLETE");
 ctx_done:
     if (other_open) sslContextClose(&other);

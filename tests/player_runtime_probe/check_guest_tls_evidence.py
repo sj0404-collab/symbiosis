@@ -3,7 +3,7 @@
 
 The server can finish its side of TLS 1.3 before the client rejects its cert;
 require actual client validation-policy observations and guest IPC results in
-order, plus twelve local server connections and encrypted payload exchanges.
+order, plus thirteen local server connections and encrypted payload exchanges.
 """
 from pathlib import Path
 import re
@@ -25,14 +25,14 @@ connections = [row for row in rows if 'GUEST_TLS_SOCKET_CONNECTED host=' in row]
 binds = [row for row in rows if 'GUEST_TLS_LOOPBACK_BOUND' in row]
 if len(mode_rows) != 1 or f'GUEST_TLS_MODE mode={mode}' not in mode_rows[0]:
     raise SystemExit('GUEST_TLS_EVIDENCE_MODE_MISMATCH')
-if len(begins) != 12 or len(connections) != 12 or any(f'GUEST_TLS_CONNECT_BEGIN mode={mode}' not in row for row in begins):
+if len(begins) != 13 or len(connections) != 13 or any(f'GUEST_TLS_CONNECT_BEGIN mode={mode}' not in row for row in begins):
     raise SystemExit('GUEST_TLS_EVIDENCE_CONNECT_COUNT_OR_MODE_MISMATCH')
-if len(binds) != (12 if mode == 'bound' else 0):
+if len(binds) != (13 if mode == 'bound' else 0):
     raise SystemExit('GUEST_TLS_EVIDENCE_BIND_COUNT_MISMATCH')
 # Require each marker from the same PID and ordered within its own connection.
 stream = [row for row in rows if any(tag in row for tag in ('GUEST_TLS_LOOPBACK_BOUND', 'GUEST_TLS_CONNECT_BEGIN mode=', 'GUEST_TLS_SOCKET_CONNECTED host='))]
 expected = ([('GUEST_TLS_LOOPBACK_BOUND',) if mode == 'bound' else (), ('GUEST_TLS_CONNECT_BEGIN mode=',), ('GUEST_TLS_SOCKET_CONNECTED host=',)])
-sequence = [tag for group in expected for tag in group] * 12
+sequence = [tag for group in expected for tag in group] * 13
 if len(stream) != len(sequence) or any(tag not in row for tag, row in zip(sequence, stream)):
     raise SystemExit('GUEST_TLS_EVIDENCE_CONNECTION_ORDER_MISMATCH')
 markers = [
@@ -121,6 +121,14 @@ markers = [
     r'GUEST_TLS_NEGATIVE_HANDSHAKE_FAILED case=missing_intermediate',
     r'GUEST_TLS_FAILED_HANDSHAKE_IO_REJECTED case=missing_intermediate',
     r'GUEST_TLS_VERIFY_DETAILS_UNSUPPORTED case=missing_intermediate',
+    r'GUEST_TLS_CHAIN_CASE not_yet_valid',
+    r'GUEST_TLS_UNSUPPORTED_OPTIONS_REJECTED',
+    r'GUEST_TLS_VERIFY_DISABLE_REJECTED',
+    r'CI_ONLY_TLS_POLICY imported_groups=1 errors=.*RemoteCertificateChainErrors',
+    r'CI_ONLY_TLS_CUSTOM_CHAIN valid=False statuses=.*NotTimeValid',
+    r'GUEST_TLS_NEGATIVE_HANDSHAKE_FAILED case=not_yet_valid',
+    r'GUEST_TLS_FAILED_HANDSHAKE_IO_REJECTED case=not_yet_valid',
+    r'GUEST_TLS_VERIFY_DETAILS_UNSUPPORTED case=not_yet_valid',
     r'GUEST_TLS_COMPLETE',
 ]
 position = 0
@@ -136,7 +144,7 @@ if any(re.search(r'GUEST_TLS_ERROR|Unhandled exception in guest thread|FATAL EXC
 for n in (2, 6, 7, 10):
     if not re.search(rf'^LOCAL_TLS_EXCHANGE_OK {n}$', server, re.M):
         raise SystemExit('GUEST_TLS_EVIDENCE_SERVER_EXCHANGE_MISSING ' + str(n))
-for n in (0, 1, 3, 4, 5, 8, 9, 11):
+for n in (0, 1, 3, 4, 5, 8, 9, 11, 12):
     # In TLS 1.3 the server can complete before client verification. Require
     # the ordered client policy result separately; server marker is not proof.
     ok = re.search(rf'^LOCAL_TLS_HANDSHAKE_OK {n} TLSv', server, re.M)
@@ -145,7 +153,7 @@ for n in (0, 1, 3, 4, 5, 8, 9, 11):
         raise SystemExit('GUEST_TLS_EVIDENCE_SERVER_NEGATIVE_CONNECTION_MISSING ' + str(n))
     if re.search(rf'^LOCAL_TLS_EXCHANGE_OK {n}$', server, re.M):
         raise SystemExit('GUEST_TLS_EVIDENCE_UNEXPECTED_EXCHANGE ' + str(n))
-for n, profile in ((7, 'server'), (8, 'expired'), (9, 'client'), (10, 'intermediate_chain'), (11, 'missing_intermediate')):
+for n, profile in ((7, 'server'), (8, 'expired'), (9, 'client'), (10, 'intermediate_chain'), (11, 'missing_intermediate'), (12, 'future')):
     if not re.search(rf'^LOCAL_TLS_CERT_PROFILE {n} {profile}$', server, re.M):
         raise SystemExit('GUEST_TLS_EVIDENCE_SERVER_CERT_PROFILE_MISSING ' + str(n))
 print('GUEST_TLS_RESEARCH_EVIDENCE_OK ordered_client_policy_and_server_exchange')
