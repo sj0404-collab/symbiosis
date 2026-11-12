@@ -150,6 +150,7 @@ if command -v kotlinc >/dev/null 2>&1; then
       # which stays its own. Plain Kotlin, so it compiles against the real file.
       EngineHybridTest) echo "$HERE/patch/android/utils/EngineHybrid.kt" ;;
       SignedCoreManifestTest) echo "$HERE/patch/android/utils/SignedCoreManifest.kt" ;;
+      CoreUpdateStoreTest) echo "$HERE/patch/android/utils/CoreUpdateStore.kt $HERE/patch/android/utils/SignedCoreManifest.kt $HERE/patch/android/utils/GameSessionLock.kt" ;;
       # Палитра: цвет игры, читаемость текста, монограммы. Чистые функции —
       # поэтому проверяются без Android.
       SymbiosisThemeTest) echo "$HERE/patch/android/utils/SymbiosisTheme.kt" ;;

@@ -27,6 +27,8 @@ def main():
         parser.error('sequence must be a positive signed 64-bit integer')
     if not args.core.is_file() or not args.private_key.is_file():
         parser.error('core and private key must be existing files')
+    if args.output.resolve() in (args.core.resolve(), args.private_key.resolve()):
+        parser.error('output must not overwrite the core or signing key')
     digest = hashlib.sha256()
     size = 0
     with args.core.open('rb') as f:
