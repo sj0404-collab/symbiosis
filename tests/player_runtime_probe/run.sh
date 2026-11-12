@@ -107,6 +107,9 @@ fi
 if [ "${PLAYER_GUEST_NETWORK:-0}" = 1 ]; then
   adb push "$W/guest-network.nro" /data/local/tmp/player-guest-network.nro >/dev/null
 fi
+if [ "${PLAYER_HID_LONG:-0}" = 1 ]; then
+  adb push "$W/hid-long.nro" /data/local/tmp/player-hid-long.nro >/dev/null
+fi
 adb shell run-as "$package" mkdir -p files/engines
 adb shell run-as "$package" cp /data/local/tmp/player-core.so files/engines/libkenji.so
 adb shell run-as "$package" chmod 400 files/engines/libkenji.so
@@ -135,6 +138,9 @@ fi
 if [ "${PLAYER_GUEST_NETWORK:-0}" = 1 ]; then
   adb shell run-as "$package" cp /data/local/tmp/player-guest-network.nro files/guest-network-probe.nro
   adb shell run-as "$package" mkdir -p files/kenji/sdcard
+fi
+if [ "${PLAYER_HID_LONG:-0}" = 1 ]; then
+  adb shell run-as "$package" cp /data/local/tmp/player-hid-long.nro files/hid-long-probe.nro
 fi
 # Generate a disposable local test certificate/key on this isolated runner.
 # Neither is included in the APK or uploaded in test artifacts.
@@ -300,6 +306,62 @@ for mode in 2 0 1; do
   [ "$parent_after" = "$main_pid" ] || { echo "PLAYER_MAIN_PROCESS_CHANGED mode=$mode"; exit 1; }
   echo "PLAYER_REAL_UI_AND_EXIT_OK mode=$mode" | tee -a "$W/redroid-status.txt"
 done
+
+# Long-lived HID observations are synthetic and never represent a real game.
+if [ "${PLAYER_HID_LONG:-0}" = 1 ]; then
+  hid_failed=0
+  for hid_core in sym space; do
+    if [ "$hid_core" = space ]; then
+      [ "${PLAYER_COMPARE_SPACE:-0}" = 1 ] || break
+      [ -z "$(adb shell pidof "$package:kenji" | tr -d '\r' || true)" ] || { echo 'HID_CORE_SWAP_WHILE_RUNNING'; exit 1; }
+      adb shell run-as "$package" rm files/engines/libkenji.so
+      adb shell run-as "$package" cp /data/local/tmp/player-space.so files/engines/libkenji.so
+      adb shell run-as "$package" chmod 400 files/engines/libkenji.so
+      hash=$(adb exec-out run-as "$package" cat files/engines/libkenji.so | sha256sum | cut -d' ' -f1)
+      [ "$hash" = d781048671e4cef1cde2ec15db8fe29b949df9949d83569ceaf776ad12901590 ] || { echo 'HID_SPACE_HASH_MISMATCH'; exit 1; }
+      hid_label=space
+    else hid_label=$primary_core; fi
+    echo "PLAYER_HID_LONG_ATTEMPT core=$hid_label" | tee -a "$W/redroid-status.txt"
+    adb shell am start -W -n "$package/dev.symbiosis.playerruntime.DiagnosticLauncher" \
+      --es test_config 'memory=2' --es test_kind hid-long > "$W/hid-long-launch-$hid_core.txt"
+    player_pid=$(adb shell pidof "$package:kenji" | tr -d '\r' || true)
+    [ -n "$player_pid" ] || { echo 'HID_LONG_PLAYER_NOT_RUNNING'; exit 1; }
+    outcome=timeout
+    for ((n=0;n<90;n++)); do
+      if grep -qE "^[0-9-]+ +[0-9:.]+ +$player_pid +[0-9]+ .*HID_LONG_COMPLETE" "$log"; then outcome=complete; break; fi
+      if grep -qE "^[0-9-]+ +[0-9:.]+ +$player_pid +[0-9]+ .*(Unhandled exception in guest thread|HID_LONG_ERROR)" "$log" || app_crashed; then outcome=crash; break; fi
+      sleep 1
+    done
+    grep -E "^[0-9-]+ +[0-9:.]+ +$player_pid +[0-9]+ .*(HID_LONG_|Unhandled exception in guest thread)" "$log" > "$W/hid-long-guest-$hid_core.txt" || true
+    cat "$W/hid-long-guest-$hid_core.txt" >> "$W/redroid-status.txt"
+    if [ "$outcome" = complete ] && python3 tests/player_runtime_probe/check_hid_long_evidence.py "$log" "$player_pid" >> "$W/hid-long-guest-$hid_core.txt" 2>&1; then
+      outcome=verified
+    else
+      [ "$outcome" != complete ] || outcome=evidence_mismatch
+      hid_failed=1
+    fi
+    echo "PLAYER_HID_LONG_RESULT core=$hid_label outcome=$outcome" | tee -a "$W/redroid-status.txt"
+    click_text 'Выйти' || true
+    for ((n=0;n<30;n++)); do
+      pid=$(adb shell pidof "$package:kenji" | tr -d '\r' || true)
+      [ -z "$pid" ] && break; sleep 1
+    done
+    if [ -n "${pid:-}" ]; then
+      echo "HID_LONG_FORCE_STOP core=$hid_label" | tee -a "$W/redroid-status.txt"
+      hid_failed=1; adb shell am force-stop "$package"
+      adb shell monkey -p "$package" -c android.intent.category.LAUNCHER 1 >/dev/null || true
+      sleep 5; main_pid=$(adb shell pidof "$package" | tr -d '\r' || true)
+    fi
+  done
+  if [ "${PLAYER_COMPARE_SPACE:-0}" = 1 ]; then
+    adb shell run-as "$package" rm files/engines/libkenji.so
+    adb shell run-as "$package" cp /data/local/tmp/player-core.so files/engines/libkenji.so
+    adb shell run-as "$package" chmod 400 files/engines/libkenji.so
+    hash=$(adb exec-out run-as "$package" cat files/engines/libkenji.so | sha256sum | cut -d' ' -f1)
+    [ "$hash" = 969431b3962408dd02ce38bd2cd4b2a954d11e5212ddef3f65c80a0b419918b8 ] || { echo 'HID_SYM_RESTORE_HASH_MISMATCH'; exit 1; }
+  fi
+  [ "$hid_failed" = 0 ] || { echo 'HID_LONG_ONE_OR_MORE_CORES_NOT_VERIFIED'; exit 1; }
+fi
 
 # Orthogonal guest BSD socket matrix: no TLS, remote IP is loopback only.
 # All combinations are attempted even after a guest exception; no failure is

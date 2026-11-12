@@ -38,6 +38,10 @@ on:
         description: "Test loopback socket binding matrix in disposable player"
         type: boolean
         default: false
+      run_player_hid_long:
+        description: "Observe HID over 22 seconds in the disposable player"
+        type: boolean
+        default: false
       run_player_guest_tls:
         description: "Try guest SSL service with local test server (not release)"
         type: boolean
@@ -191,6 +195,7 @@ jobs:
           python3 fork/tests/test_guest_tls_harness.py
           python3 fork/tests/test_guest_tls_evidence.py
           python3 fork/tests/test_guest_network_harness.py
+          python3 fork/tests/test_hid_long_evidence.py
           python3 fork/tests/test_standalone_gpt.py
           python3 fork/tests/test_standalone_log_capture.py
           python3 fork/tests/test_standalone_property_init.py
@@ -368,6 +373,7 @@ jobs:
       guest_tls: ${{ inputs.run_player_guest_tls == true }}
       guest_tls_auto_bind: ${{ inputs.run_player_guest_tls_auto_bind == true }}
       guest_network: ${{ inputs.run_player_guest_network == true }}
+      hid_long: ${{ inputs.run_player_hid_long == true }}
       reference_core: ${{ inputs.run_player_reference_core == true }}
       reference_tls_patch: ${{ inputs.run_player_reference_tls_patch == true }}
       reference_network_patch: ${{ inputs.run_player_reference_network_patch == true }}

@@ -18,6 +18,7 @@ class DiagnosticLauncher : Activity() {
                 "shader" -> "shader-probe.nro"
                 "tls" -> "guest-tls-probe.nro"
                 "network" -> "guest-network-probe.nro"
+                "hid-long" -> "hid-long-probe.nro"
                 else -> "swkbd-probe.nro"
             }
             val game = File(filesDir, filename)

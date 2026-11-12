@@ -17,6 +17,9 @@ on:
       guest_network:
         type: boolean
         default: false
+      hid_long:
+        type: boolean
+        default: false
       reference_core:
         type: boolean
         default: false
@@ -265,6 +268,7 @@ jobs:
             /tmp/player-runtime/shader.nro
             /tmp/player-runtime/guest-tls.nro
             /tmp/player-runtime/guest-network.nro
+            /tmp/player-runtime/hid-long.nro
             /tmp/player-runtime/apk-16k-audit.txt
             /tmp/player-runtime/zipalign-16k.txt
           if-no-files-found: error
@@ -282,6 +286,7 @@ jobs:
       PLAYER_GUEST_TLS: ${{ inputs.guest_tls && '1' || '0' }}
       PLAYER_GUEST_TLS_AUTO_BIND: ${{ inputs.guest_tls_auto_bind && '1' || '0' }}
       PLAYER_GUEST_NETWORK: ${{ inputs.guest_network && '1' || '0' }}
+      PLAYER_HID_LONG: ${{ inputs.hid_long && '1' || '0' }}
       PLAYER_REFERENCE_CORE: ${{ inputs.reference_core && '1' || '0' }}
       PLAYER_REFERENCE_TLS_PATCH: ${{ inputs.reference_tls_patch && '1' || '0' }}
       PLAYER_REFERENCE_NETWORK_PATCH: ${{ inputs.reference_network_patch && '1' || '0' }}
@@ -318,5 +323,6 @@ jobs:
             /tmp/player-runtime/zipalign-16k.txt
             /tmp/player-runtime/guest-tls-server-*.txt
             /tmp/player-runtime/guest-network-*.txt
+            /tmp/player-runtime/hid-long-*.txt
           if-no-files-found: warn
           retention-days: 3

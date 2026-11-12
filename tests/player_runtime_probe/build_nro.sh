@@ -9,6 +9,7 @@ docker run --rm --network none --cap-drop ALL --security-opt no-new-privileges \
   --mount "type=bind,src=$PWD/tests/sdl_android_surface,dst=/graphics,readonly" \
   --mount "type=bind,src=$PWD/tests/guest_tls_probe,dst=/tls,readonly" \
   --mount "type=bind,src=$PWD/tests/guest_network_probe,dst=/network,readonly" \
+  --mount "type=bind,src=$PWD/tests/hid_long_probe,dst=/hid-long,readonly" \
   --mount "type=bind,src=$PLAY_WORK,dst=/output" --entrypoint /bin/bash "$IMAGE" -euc '
     /opt/devkitpro/devkitA64/bin/aarch64-none-elf-gcc \
       -specs=/opt/devkitpro/libnx/switch.specs -march=armv8-a+crc+crypto \
@@ -37,6 +38,15 @@ docker run --rm --network none --cap-drop ALL --security-opt no-new-privileges \
     elf2nro /output/guest-network.elf /output/guest-network.nro \
       --nacp=/output/guest-network.nacp --icon=/opt/devkitpro/libnx/default_icon.jpg
     sha256sum /output/guest-network.nro
+    /opt/devkitpro/devkitA64/bin/aarch64-none-elf-gcc \
+      -specs=/opt/devkitpro/libnx/switch.specs -march=armv8-a+crc+crypto \
+      -mtune=cortex-a57 -mtp=soft -fPIE -O2 -Wall -Wextra \
+      -I/opt/devkitpro/libnx/include /hid-long/main.c \
+      -L/opt/devkitpro/libnx/lib -lnx -o /output/hid-long.elf
+    nacptool --create "CI HID long probe" "Symbiosis CI" "1.0.0" /output/hid-long.nacp
+    elf2nro /output/hid-long.elf /output/hid-long.nro \
+      --nacp=/output/hid-long.nacp --icon=/opt/devkitpro/libnx/default_icon.jpg
+    sha256sum /output/hid-long.nro
     SDL_CONFIG=/opt/devkitpro/portlibs/switch/bin/sdl2-config
     /opt/devkitpro/devkitA64/bin/aarch64-none-elf-gcc \
       -specs=/opt/devkitpro/libnx/switch.specs -march=armv8-a+crc+crypto \
