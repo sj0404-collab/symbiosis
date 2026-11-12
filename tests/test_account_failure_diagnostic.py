@@ -11,6 +11,12 @@ class AccountFailureDiagnosticTest(unittest.TestCase):
         self.assertIn('fail(why +', block)
         self.assertNotIn('Запомнил: эта игра будет запускаться на Eden.', block)
         self.assertNotIn('Это ошибка самого ядра, а не файла игры.', block)
+    def test_apk_audit_checks_current_text_not_removed_claim(self):
+        workflow = (ROOT / '.github/workflows/build.yml').read_text()
+        self.assertIn('"Скопировать описание"', workflow)
+        self.assertIn('"В стеке указана служба учётной записи"', workflow)
+        self.assertIn('"причина отсутствия данных не установлена"', workflow)
+        self.assertNotIn('"от которого пришёл запрос"', workflow)
     def test_failure_can_be_copied_without_raw_stack(self):
         fail = ACTIVITY.split('private fun fail(msg: String)',1)[1].split('private fun openRom',1)[0]
         self.assertIn('Скопировать описание', fail)
