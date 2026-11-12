@@ -19,6 +19,7 @@ class DiagnosticLauncher : Activity() {
                 "tls" -> "guest-tls-probe.nro"
                 "network" -> "guest-network-probe.nro"
                 "hid-long" -> "hid-long-probe.nro"
+                "tls-parallel" -> "tls-parallel-probe.nro"
                 else -> "swkbd-probe.nro"
             }
             val game = File(filesDir, filename)

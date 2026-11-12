@@ -110,6 +110,9 @@ fi
 if [ "${PLAYER_HID_LONG:-0}" = 1 ]; then
   adb push "$W/hid-long.nro" /data/local/tmp/player-hid-long.nro >/dev/null
 fi
+if [ "${PLAYER_TLS_PARALLEL:-0}" = 1 ]; then
+  adb push "$W/tls-parallel.nro" /data/local/tmp/player-tls-parallel.nro >/dev/null
+fi
 adb shell run-as "$package" mkdir -p files/engines
 adb shell run-as "$package" cp /data/local/tmp/player-core.so files/engines/libkenji.so
 adb shell run-as "$package" chmod 400 files/engines/libkenji.so
@@ -141,6 +144,9 @@ if [ "${PLAYER_GUEST_NETWORK:-0}" = 1 ]; then
 fi
 if [ "${PLAYER_HID_LONG:-0}" = 1 ]; then
   adb shell run-as "$package" cp /data/local/tmp/player-hid-long.nro files/hid-long-probe.nro
+fi
+if [ "${PLAYER_TLS_PARALLEL:-0}" = 1 ]; then
+  adb shell run-as "$package" cp /data/local/tmp/player-tls-parallel.nro files/tls-parallel-probe.nro
 fi
 # Generate a disposable local test certificate/key on this isolated runner.
 # Neither is included in the APK or uploaded in test artifacts.
@@ -571,6 +577,52 @@ if [ "${PLAYER_GUEST_TLS:-0}" = 1 ]; then
     [ "$hash" = 969431b3962408dd02ce38bd2cd4b2a954d11e5212ddef3f65c80a0b419918b8 ] || { echo 'GUEST_TLS_SYM_RESTORE_HASH_MISMATCH'; exit 1; }
   fi
   [ "$guest_failed" = 0 ] || { echo 'GUEST_TLS_ONE_OR_MORE_CORES_NOT_VERIFIED'; exit 1; }
+fi
+
+# Two separate guest contexts with different trust stores. Both TCP sockets
+# connect and both guests reach a barrier before either TLS attempt begins.
+# This does not test concurrent mutation/removal or close during a handshake.
+if [ "${PLAYER_TLS_PARALLEL:-0}" = 1 ]; then
+  [ "${PLAYER_GUEST_TLS:-0}:${PLAYER_REFERENCE_CORE:-0}:${PLAYER_REFERENCE_TLS_PATCH:-0}:${PLAYER_REFERENCE_NETWORK_PATCH:-0}" = 1:1:1:1 ] || { echo 'PARALLEL_TLS_BAD_RESEARCH_CONFIGURATION'; exit 1; }
+  adb reverse tcp:19445 tcp:19445
+  server_log="$W/tls-parallel-server.txt"
+  python3 tests/guest_tls_parallel_probe/server.py "$W/ci-test-cert.pem" "$W/ci-test-key.pem" 19445 > "$server_log" 2>&1 &
+  guest_server_pid=$!
+  for ((n=0;n<20;n++)); do
+    grep -q 'PARALLEL_SERVER_READY' "$server_log" && break
+    kill -0 "$guest_server_pid" 2>/dev/null || { echo 'PARALLEL_SERVER_NOT_RUNNING'; exit 1; }
+    sleep 1
+  done
+  grep -q 'PARALLEL_SERVER_READY' "$server_log" || { echo 'PARALLEL_SERVER_NOT_READY'; exit 1; }
+  echo "PLAYER_TLS_PARALLEL_ATTEMPT core=$primary_core" | tee -a "$W/redroid-status.txt"
+  adb shell am start -W -n "$package/dev.symbiosis.playerruntime.DiagnosticLauncher" \
+    --es test_config 'internet=true' --es test_kind tls-parallel > "$W/tls-parallel-launch.txt"
+  player_pid=$(adb shell pidof "$package:kenji" | tr -d '\r' || true)
+  [ -n "$player_pid" ] || { echo 'PARALLEL_PLAYER_NOT_RUNNING'; exit 1; }
+  outcome=timeout
+  for ((n=0;n<90;n++)); do
+    if grep -qE "^[0-9-]+ +[0-9:.]+ +$player_pid +[0-9]+ .*TLS_PARALLEL_COMPLETE" "$log"; then outcome=complete; break; fi
+    if grep -qE "^[0-9-]+ +[0-9:.]+ +$player_pid +[0-9]+ .*(TLS_PARALLEL_ERROR|Unhandled exception in guest thread)" "$log" || app_crashed; then outcome=guest_error; break; fi
+    sleep 1
+  done
+  grep -E "^[0-9-]+ +[0-9:.]+ +$player_pid +[0-9]+ .*(TLS_PARALLEL_|CI_ONLY_TLS_(POLICY|CUSTOM_CHAIN)|Unhandled exception in guest thread)" "$log" > "$W/tls-parallel-guest.txt" || true
+  cat "$W/tls-parallel-guest.txt" >> "$W/redroid-status.txt"
+  if [ "$outcome" = complete ]; then
+    for ((n=0;n<10;n++)); do grep -q 'PARALLEL_SERVER_DONE' "$server_log" && break; sleep 1; done
+    if python3 tests/player_runtime_probe/check_tls_parallel_evidence.py "$log" "$player_pid" "$server_log" >> "$W/tls-parallel-guest.txt" 2>&1; then outcome=verified; else outcome=evidence_mismatch; fi
+  fi
+  echo "PLAYER_TLS_PARALLEL_RESULT core=$primary_core outcome=$outcome" | tee -a "$W/redroid-status.txt"
+  kill "$guest_server_pid" 2>/dev/null || true
+  wait "$guest_server_pid" 2>/dev/null || true
+  guest_server_pid=''
+  adb reverse --remove tcp:19445
+  click_text 'Выйти' || true
+  for ((n=0;n<30;n++)); do
+    pid=$(adb shell pidof "$package:kenji" | tr -d '\r' || true)
+    [ -z "$pid" ] && break; sleep 1
+  done
+  [ -z "${pid:-}" ] || { echo 'PARALLEL_PROCESS_DID_NOT_EXIT'; exit 1; }
+  [ "$outcome" = verified ] || { echo 'PARALLEL_TLS_NOT_VERIFIED'; exit 1; }
 fi
 
 # The genuine Activity receives a CI-only broadcast to call its real leave()

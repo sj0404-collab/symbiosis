@@ -14,6 +14,9 @@ on:
       guest_tls_auto_bind:
         type: boolean
         default: false
+      tls_parallel:
+        type: boolean
+        default: false
       guest_network:
         type: boolean
         default: false
@@ -79,6 +82,11 @@ jobs:
         if: inputs.guest_tls_auto_bind && (!inputs.guest_tls || !inputs.reference_core || !inputs.reference_tls_patch)
         run: |
           echo 'AUTO_TLS_FIXTURE_REQUIRES_INSTRUMENTED_SOURCE_TLS_PROBE'
+          exit 1
+      - name: Restrict parallel TLS to research source and fixtures
+        if: inputs.tls_parallel && (!inputs.guest_tls || !inputs.reference_core || !inputs.reference_tls_patch || !inputs.reference_network_patch || inputs.compare_space)
+        run: |
+          echo 'PARALLEL_TLS_REQUIRES_RESEARCH_PATCHES_AND_TLS_FIXTURE'
           exit 1
       - uses: actions/setup-dotnet@v4
         if: inputs.reference_core
@@ -269,6 +277,7 @@ jobs:
             /tmp/player-runtime/guest-tls.nro
             /tmp/player-runtime/guest-network.nro
             /tmp/player-runtime/hid-long.nro
+            /tmp/player-runtime/tls-parallel.nro
             /tmp/player-runtime/apk-16k-audit.txt
             /tmp/player-runtime/zipalign-16k.txt
           if-no-files-found: error
@@ -285,6 +294,7 @@ jobs:
       PLAYER_COMPARE_SPACE: ${{ inputs.compare_space && '1' || '0' }}
       PLAYER_GUEST_TLS: ${{ inputs.guest_tls && '1' || '0' }}
       PLAYER_GUEST_TLS_AUTO_BIND: ${{ inputs.guest_tls_auto_bind && '1' || '0' }}
+      PLAYER_TLS_PARALLEL: ${{ inputs.tls_parallel && '1' || '0' }}
       PLAYER_GUEST_NETWORK: ${{ inputs.guest_network && '1' || '0' }}
       PLAYER_HID_LONG: ${{ inputs.hid_long && '1' || '0' }}
       PLAYER_REFERENCE_CORE: ${{ inputs.reference_core && '1' || '0' }}
@@ -324,5 +334,6 @@ jobs:
             /tmp/player-runtime/guest-tls-server-*.txt
             /tmp/player-runtime/guest-network-*.txt
             /tmp/player-runtime/hid-long-*.txt
+            /tmp/player-runtime/tls-parallel-*.txt
           if-no-files-found: warn
           retention-days: 3

@@ -10,6 +10,7 @@ docker run --rm --network none --cap-drop ALL --security-opt no-new-privileges \
   --mount "type=bind,src=$PWD/tests/guest_tls_probe,dst=/tls,readonly" \
   --mount "type=bind,src=$PWD/tests/guest_network_probe,dst=/network,readonly" \
   --mount "type=bind,src=$PWD/tests/hid_long_probe,dst=/hid-long,readonly" \
+  --mount "type=bind,src=$PWD/tests/guest_tls_parallel_probe,dst=/tls-parallel,readonly" \
   --mount "type=bind,src=$PLAY_WORK,dst=/output" --entrypoint /bin/bash "$IMAGE" -euc '
     /opt/devkitpro/devkitA64/bin/aarch64-none-elf-gcc \
       -specs=/opt/devkitpro/libnx/switch.specs -march=armv8-a+crc+crypto \
@@ -47,6 +48,15 @@ docker run --rm --network none --cap-drop ALL --security-opt no-new-privileges \
     elf2nro /output/hid-long.elf /output/hid-long.nro \
       --nacp=/output/hid-long.nacp --icon=/opt/devkitpro/libnx/default_icon.jpg
     sha256sum /output/hid-long.nro
+    /opt/devkitpro/devkitA64/bin/aarch64-none-elf-gcc \
+      -specs=/opt/devkitpro/libnx/switch.specs -march=armv8-a+crc+crypto \
+      -mtune=cortex-a57 -mtp=soft -fPIE -O2 -Wall -Wextra \
+      -I/opt/devkitpro/libnx/include /tls-parallel/main.c \
+      -L/opt/devkitpro/libnx/lib -lnx -o /output/tls-parallel.elf
+    nacptool --create "CI parallel TLS probe" "Symbiosis CI" "1.0.0" /output/tls-parallel.nacp
+    elf2nro /output/tls-parallel.elf /output/tls-parallel.nro \
+      --nacp=/output/tls-parallel.nacp --icon=/opt/devkitpro/libnx/default_icon.jpg
+    sha256sum /output/tls-parallel.nro
     SDL_CONFIG=/opt/devkitpro/portlibs/switch/bin/sdl2-config
     /opt/devkitpro/devkitA64/bin/aarch64-none-elf-gcc \
       -specs=/opt/devkitpro/libnx/switch.specs -march=armv8-a+crc+crypto \
