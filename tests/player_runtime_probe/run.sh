@@ -662,6 +662,11 @@ for delay in false true; do
     | tee "$W/player-stop-launch-$delay.txt"
   player_pid=$(adb shell pidof "$package:kenji" | tr -d '\r' || true)
   [ -n "$player_pid" ] || { echo 'STOP_PLAYER_NOT_RUNNING'; exit 1; }
+  if [ "${PLAYER_EXPECT_TLS_CANDIDATE:-0}" = 1 ]; then
+    wait_log 'CI_ONLY_TLS_OPENSSL_VERSION=0x3050009[0-9a-f] .*libcrypto.so' || { echo "PLAYER_TLS_VERSION_MISSING core=$core_label"; exit 1; }
+    wait_log 'CI_ONLY_TLS_IN_PROCESS good=0 verify=0 wrong_host=5 wrong_verify=62' || { echo "PLAYER_TLS_IN_PROCESS_MISSING core=$core_label"; exit 1; }
+    echo "PLAYER_TLS_3_5_PROCESS_OK core=$core_label" | tee -a "$W/redroid-status.txt"
+  fi
   wait_log 'CI_STOP_RECEIVER_READY' || { echo 'STOP_RECEIVER_MISSING'; exit 1; }
   wait_log 'SWKBD_SHOW_BEGIN' || { echo 'STOP_NO_GUEST_KEYBOARD'; exit 1; }
   wait_log 'CI_UI_PRESENTED type=2' || { echo 'STOP_UI_NOT_PRESENTED'; exit 1; }

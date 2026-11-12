@@ -32,16 +32,28 @@ class ReleaseGuardTest(unittest.TestCase):
         self.assertEqual(guard.check_sources(cpp, kotlin), [])
         self.assertTrue(any('UI ядра' in problem for problem in guard.UNRESOLVED_INTEGRATION))
         self.assertTrue(any('графические callback' in problem for problem in guard.UNRESOLVED_INTEGRATION))
-        self.assertTrue(any('OpenSSL 1.1.1l' in problem for problem in guard.UNRESOLVED_INTEGRATION))
+        self.assertTrue(any('OpenSSL 3.5.9' in problem for problem in guard.UNRESOLVED_INTEGRATION))
         self.assertTrue(any('SSL-служба обоих' in problem and 'заглушка' in problem for problem in guard.UNRESOLVED_INTEGRATION))
         # Even if all shallow empty-body checks pass, main must fail closed.
         with patch.object(guard, 'check_sources', return_value=[]), patch('sys.stderr'):
             self.assertEqual(guard.main(), 1)
 
-    def test_bundled_real_tls_has_4k_segments_and_is_blocked(self):
-        errors = guard.check_tls_alignment(ROOT / 'patch/libs/arm64-v8a')
-        self.assertEqual(len(errors), 2)
-        self.assertTrue(all('16 КБ' in error for error in errors))
+    def test_bundled_tls_is_exact_verified_candidate_but_release_is_blocked(self):
+        libs = ROOT / 'patch/libs/arm64-v8a'
+        self.assertEqual(guard.check_tls_alignment(libs), [])
+        self.assertEqual(guard.check_tls_provenance(libs), [])
+        self.assertIn(b'OpenSSL 3.5.9', (libs / 'libcrypto.so').read_bytes())
+        self.assertTrue((ROOT / 'patch/android/assets/openssl-3.5.9-license.txt').is_file())
+        self.assertTrue((ROOT / 'patch/android/assets/openssl-3.5.9-notice.txt').is_file())
+        with tempfile.TemporaryDirectory() as tmp:
+            d = Path(tmp)
+            for name in guard.EXPECTED_OPENSSL_SHA256:
+                (d / name).write_bytes((libs / name).read_bytes())
+            self.assertEqual(guard.check_tls_provenance(d), [])
+            (d / 'libssl.so').write_bytes((d / 'libssl.so').read_bytes() + b'x')
+            self.assertEqual(len(guard.check_tls_provenance(d)), 1)
+            (d / 'libcrypto.so').unlink()
+            self.assertEqual(len(guard.check_tls_provenance(d)), 2)
 
     def test_elf_alignment_requires_real_16k_arm64_load_segments(self):
         def elf(alignment, offset=0, address=0, kind=1):

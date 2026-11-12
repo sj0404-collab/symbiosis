@@ -5,6 +5,9 @@ on:
       tls_candidate:
         type: boolean
         default: false
+      bundled_tls_probe:
+        type: boolean
+        default: false
       compare_space:
         type: boolean
         default: false
@@ -68,6 +71,11 @@ jobs:
           sdkmanager --install 'ndk;28.2.13676358' 'cmake;3.31.6' 'build-tools;35.0.0' 'platforms;android-36'
           sudo apt-get update -qq
           sudo apt-get install -y -qq glslang-tools ccache
+      - name: Reject replacement during bundled TLS verification
+        if: inputs.tls_candidate && inputs.bundled_tls_probe
+        run: |
+          echo 'BUNDLED_TLS_PROBE_MUST_NOT_REPLACE_LIBRARIES'
+          exit 1
       - name: Reject incompatible research options
         if: (inputs.reference_tls_patch || inputs.reference_network_patch) && !inputs.reference_core
         run: |
@@ -199,7 +207,7 @@ jobs:
           bash fork/tools/apply_patch.sh --patch "$GITHUB_WORKSPACE/fork/patch" --eden "$GITHUB_WORKSPACE/eden"
           # Observe real graphics callback calls in the disposable debug tree only.
           python3 fork/tests/player_runtime_probe/instrument_graphics.py eden/src/android/app/src/main/jni/symbiosis_kenji_bridge.cpp
-          if [ "${{ inputs.tls_candidate }}" = true ]; then
+          if [ "${{ inputs.tls_candidate }}" = true ] || [ "${{ inputs.bundled_tls_probe }}" = true ]; then
             python3 fork/tests/player_runtime_probe/instrument_tls.py eden/src/android/app/src/main/jni/symbiosis_kenji_bridge.cpp
           fi
           python3 fork/tests/player_runtime_probe/instrument_stop_race.py eden/src/android/app/src/main/java/org/yuzu/yuzu_emu/activities/KenjiPlayerActivity.kt
@@ -216,7 +224,7 @@ jobs:
           cp fork/tests/player_runtime_probe/AndroidManifest.xml eden/src/android/app/src/debug/AndroidManifest.xml
           cp fork/tests/player_runtime_probe/DiagnosticLauncher.kt fork/tests/player_runtime_probe/LockProbeReceiver.kt eden/src/android/app/src/debug/java/dev/symbiosis/playerruntime/
       - name: Build in-process TLS test library in disposable tree
-        if: inputs.tls_candidate
+        if: inputs.tls_candidate || inputs.bundled_tls_probe
         run: |
           set -euo pipefail
           CXX="$ANDROID_HOME/ndk/28.2.13676358/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android29-clang++"
@@ -260,12 +268,30 @@ jobs:
           fi
           bash tests/player_runtime_probe/build_nro.sh
       - name: Audit actual debug APK ELF and ZIP alignment
-        if: inputs.tls_candidate
+        if: inputs.tls_candidate || inputs.bundled_tls_probe
         working-directory: fork
         run: |
           set -euo pipefail
           python3 tests/player_runtime_probe/audit_apk_16k.py "$PLAY_WORK/player-debug.apk" | tee "$PLAY_WORK/apk-16k-audit.txt"
           "$ANDROID_HOME/build-tools/35.0.0/zipalign" -c -P 16 -v 4 "$PLAY_WORK/player-debug.apk" > "$PLAY_WORK/zipalign-16k.txt" 2>&1 || echo 'APK_ZIPALIGN_16K_NOT_VERIFIED (see audit)'
+      - name: Verify bundled libraries and license in the actual diagnostic APK
+        if: inputs.bundled_tls_probe
+        working-directory: fork
+        run: |
+          python3 - "$PLAY_WORK/player-debug.apk" <<'PYAPK'
+          import hashlib, importlib.util, sys, zipfile
+          spec = importlib.util.spec_from_file_location('guard', 'tools/check_kenji_release_ready.py')
+          guard = importlib.util.module_from_spec(spec); spec.loader.exec_module(guard)
+          with zipfile.ZipFile(sys.argv[1]) as z:
+              for name, expected in guard.EXPECTED_OPENSSL_SHA256.items():
+                  actual = hashlib.sha256(z.read('lib/arm64-v8a/' + name)).hexdigest()
+                  if actual != expected: raise SystemExit('APK_BUNDLED_TLS_HASH_MISMATCH ' + name)
+                  print('APK_BUNDLED_TLS_HASH_OK', name, actual)
+              for name in ('openssl-3.5.9-license.txt', 'openssl-3.5.9-notice.txt'):
+                  data = z.read('assets/' + name)
+                  if not data: raise SystemExit('APK_OPENSSL_LICENSE_MISSING ' + name)
+                  print('APK_OPENSSL_LICENSE_PRESENT', name)
+          PYAPK
       - uses: actions/upload-artifact@v4
         with:
           name: disposable-player-runtime-not-release
@@ -294,7 +320,7 @@ jobs:
     env:
       PLAY_WORK: /tmp/player-runtime
       ANDROID_SERIAL: 127.0.0.1:5558
-      PLAYER_EXPECT_TLS_CANDIDATE: ${{ inputs.tls_candidate && '1' || '0' }}
+      PLAYER_EXPECT_TLS_CANDIDATE: ${{ (inputs.tls_candidate || inputs.bundled_tls_probe) && '1' || '0' }}
       PLAYER_COMPARE_SPACE: ${{ inputs.compare_space && '1' || '0' }}
       PLAYER_GUEST_TLS: ${{ inputs.guest_tls && '1' || '0' }}
       PLAYER_GUEST_TLS_AUTO_BIND: ${{ inputs.guest_tls_auto_bind && '1' || '0' }}

@@ -62,6 +62,10 @@ on:
         description: "Use test-only OpenSSL 3.5 in disposable player (not a release)"
         type: boolean
         default: false
+      run_player_bundled_tls:
+        description: "Verify actual bundled OpenSSL in disposable player"
+        type: boolean
+        default: false
       run_reference_core_compile:
         description: "Build pinned public Kenji source for research only, not release"
         type: boolean
@@ -374,6 +378,7 @@ jobs:
     uses: ./.github/workflows/kenji-player-runtime.yml
     with:
       tls_candidate: ${{ inputs.run_player_tls_candidate == true }}
+      bundled_tls_probe: ${{ inputs.run_player_bundled_tls == true }}
       compare_space: ${{ inputs.run_player_compare_space == true }}
       guest_tls: ${{ inputs.run_player_guest_tls == true }}
       guest_tls_auto_bind: ${{ inputs.run_player_guest_tls_auto_bind == true }}

@@ -1,0 +1,7 @@
+OpenSSL 3.5.9
+Copyright (c) 1998-2026 The OpenSSL Project Authors
+Copyright (c) 1995-1998 Eric A. Young, Tim J. Hudson
+Licensed under the Apache License 2.0. See openssl-3.5.9-license.txt.
+Source: https://github.com/openssl/openssl/tree/openssl-3.5.9
+The Android ARM64 libraries were built from the official source release using
+Android NDK 28.2.13676358. See docs/VERIFICATION.md for provenance and limits.

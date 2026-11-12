@@ -8,6 +8,7 @@ This still cannot prove the absence of other stubs or core compatibility.
 It does not run or ship mock code.
 """
 from pathlib import Path
+import hashlib
 import re
 import struct
 import sys
@@ -20,7 +21,7 @@ ROOT = Path(__file__).resolve().parents[1]
 UNRESOLVED_INTEGRATION = (
     'UI ядра: базовый ввод проверен на Android; остановка гостевых потоков и поздние callback не доказаны',
     'графические callback ядра: контракт и интеграция не проверены',
-    'поставляемый OpenSSL 1.1.1l не получает публичные исправления безопасности; замена ещё не проверена',
+    'OpenSSL 3.5.9: полная совместимость ядер и работа на реальном Android с страницами 16 КБ не доказаны',
     'SSL-служба обоих закреплённых ядер: импорт доверенного сертификата помечен как заглушка, гостевой TLS не прошёл',
 )
 
@@ -52,6 +53,26 @@ def check_sources(cpp: str, kotlin: str) -> list[str]:
     return problems
 
 
+# Exact libraries extracted from the audited disposable Android runner build;
+# updating either library requires a reviewed source provenance and new hashes.
+EXPECTED_OPENSSL_SHA256 = {
+    'libcrypto.so': '31dc1e131571302b5001893aeabd974b8a607eace72ab86ef61beba5a768cbf1',
+    'libssl.so': '5e1b3583b7eb30d7792432f063d4fbbf0f4196fdd89e22e89bb8f8dac7507c9a',
+}
+
+
+def check_tls_provenance(directory: Path) -> list[str]:
+    problems = []
+    for name, expected in EXPECTED_OPENSSL_SHA256.items():
+        try:
+            actual = hashlib.sha256((directory / name).read_bytes()).hexdigest()
+            if actual != expected:
+                problems.append(f'{name}: SHA-256 не соответствует проверенной версии')
+        except OSError:
+            problems.append(f'{name}: библиотека недоступна для проверки SHA-256')
+    return problems
+
+
 def check_tls_alignment(directory: Path) -> list[str]:
     """Fail closed on malformed or non-16K-compatible bundled ARM64 TLS ELF.
 
@@ -70,8 +91,10 @@ def check_tls_alignment(directory: Path) -> list[str]:
                 raise ValueError('неверный ARM64 ELF или таблица сегментов')
             loads = []
             for index in range(count):
-                kind, _, offset, vaddr, _, _, _, align = struct.unpack_from('<IIQQQQQQ', data, phoff + index * entsize)
+                kind, _, offset, vaddr, _, filesz, _, align = struct.unpack_from('<IIQQQQQQ', data, phoff + index * entsize)
                 if kind == 1:
+                    if offset + filesz > len(data):
+                        raise ValueError('сегмент PT_LOAD выходит за пределы файла')
                     loads.append((offset, vaddr, align))
             if not loads:
                 raise ValueError('нет PT_LOAD')
@@ -85,7 +108,8 @@ def check_tls_alignment(directory: Path) -> list[str]:
 def main() -> int:
     cpp = (ROOT / 'patch/symbiosis/kenji_bridge.cpp').read_text(encoding='utf-8')
     kotlin = (ROOT / 'patch/android/kenjinx/KenjinxNative.kt').read_text(encoding='utf-8')
-    problems = check_sources(cpp, kotlin) + check_tls_alignment(ROOT / 'patch/libs/arm64-v8a') + list(UNRESOLVED_INTEGRATION)
+    libs = ROOT / 'patch/libs/arm64-v8a'
+    problems = check_sources(cpp, kotlin) + check_tls_alignment(libs) + check_tls_provenance(libs) + list(UNRESOLVED_INTEGRATION)
     if problems:
         print('Выпуск APK остановлен: интеграция второго ядра не завершена.', file=sys.stderr)
         for problem in problems:
