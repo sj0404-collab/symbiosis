@@ -10,6 +10,7 @@ docker run --rm --network none --cap-drop ALL --security-opt no-new-privileges \
   --mount "type=bind,src=$PWD/tests/guest_tls_probe,dst=/tls,readonly" \
   --mount "type=bind,src=$PWD/tests/guest_network_probe,dst=/network,readonly" \
   --mount "type=bind,src=$PWD/tests/hid_long_probe,dst=/hid-long,readonly" \
+  --mount "type=bind,src=$PWD/tests/guest_account_probe,dst=/account,readonly" \
   --mount "type=bind,src=$PWD/tests/guest_tls_parallel_probe,dst=/tls-parallel,readonly" \
   --mount "type=bind,src=$PLAY_WORK,dst=/output" --entrypoint /bin/bash "$IMAGE" -euc '
     /opt/devkitpro/devkitA64/bin/aarch64-none-elf-gcc \
@@ -57,6 +58,15 @@ docker run --rm --network none --cap-drop ALL --security-opt no-new-privileges \
     elf2nro /output/tls-parallel.elf /output/tls-parallel.nro \
       --nacp=/output/tls-parallel.nacp --icon=/opt/devkitpro/libnx/default_icon.jpg
     sha256sum /output/tls-parallel.nro
+    /opt/devkitpro/devkitA64/bin/aarch64-none-elf-gcc \
+      -specs=/opt/devkitpro/libnx/switch.specs -march=armv8-a+crc+crypto \
+      -mtune=cortex-a57 -mtp=soft -fPIE -O2 -Wall -Wextra \
+      -I/opt/devkitpro/libnx/include /account/main.c \
+      -L/opt/devkitpro/libnx/lib -lnx -o /output/guest-account.elf
+    nacptool --create "CI account probe" "Symbiosis CI" "1.0.0" /output/guest-account.nacp
+    elf2nro /output/guest-account.elf /output/guest-account.nro \
+      --nacp=/output/guest-account.nacp --icon=/opt/devkitpro/libnx/default_icon.jpg
+    sha256sum /output/guest-account.nro
     SDL_CONFIG=/opt/devkitpro/portlibs/switch/bin/sdl2-config
     /opt/devkitpro/devkitA64/bin/aarch64-none-elf-gcc \
       -specs=/opt/devkitpro/libnx/switch.specs -march=armv8-a+crc+crypto \

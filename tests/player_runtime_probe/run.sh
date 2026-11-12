@@ -110,6 +110,9 @@ fi
 if [ "${PLAYER_HID_LONG:-0}" = 1 ]; then
   adb push "$W/hid-long.nro" /data/local/tmp/player-hid-long.nro >/dev/null
 fi
+if [ "${PLAYER_GUEST_ACCOUNT:-0}" = 1 ]; then
+  adb push "$W/guest-account.nro" /data/local/tmp/player-guest-account.nro >/dev/null
+fi
 if [ "${PLAYER_TLS_PARALLEL:-0}" = 1 ]; then
   adb push "$W/tls-parallel.nro" /data/local/tmp/player-tls-parallel.nro >/dev/null
 fi
@@ -145,6 +148,10 @@ if [ "${PLAYER_GUEST_NETWORK:-0}" = 1 ]; then
 fi
 if [ "${PLAYER_HID_LONG:-0}" = 1 ]; then
   adb shell run-as "$package" cp /data/local/tmp/player-hid-long.nro files/hid-long-probe.nro
+fi
+if [ "${PLAYER_GUEST_ACCOUNT:-0}" = 1 ]; then
+  adb shell run-as "$package" cp /data/local/tmp/player-guest-account.nro files/guest-account-probe.nro
+  adb shell run-as "$package" mkdir -p files/kenji/sdcard
 fi
 if [ "${PLAYER_TLS_PARALLEL:-0}" = 1 ]; then
   adb shell run-as "$package" cp /data/local/tmp/player-tls-parallel.nro files/tls-parallel-probe.nro
@@ -368,6 +375,76 @@ if [ "${PLAYER_HID_LONG:-0}" = 1 ]; then
     [ "$hash" = 969431b3962408dd02ce38bd2cd4b2a954d11e5212ddef3f65c80a0b419918b8 ] || { echo 'HID_SYM_RESTORE_HASH_MISMATCH'; exit 1; }
   fi
   [ "$hid_failed" = 0 ] || { echo 'HID_LONG_ONE_OR_MORE_CORES_NOT_VERIFIED'; exit 1; }
+fi
+
+# Synthetic account IPC, two modes in independent processes, not user game.
+if [ "${PLAYER_GUEST_ACCOUNT:-0}" = 1 ]; then
+  account_failed=0
+  for account_core in sym space; do
+    if [ "$account_core" = space ]; then
+      [ "${PLAYER_COMPARE_SPACE:-0}" = 1 ] || break
+      [ -z "$(adb shell pidof "$package:kenji" | tr -d '\r' || true)" ] || { echo 'ACCOUNT_CORE_SWAP_WHILE_RUNNING'; exit 1; }
+      adb shell run-as "$package" rm files/engines/libkenji.so
+      adb shell run-as "$package" cp /data/local/tmp/player-space.so files/engines/libkenji.so
+      adb shell run-as "$package" chmod 400 files/engines/libkenji.so
+      hash=$(adb exec-out run-as "$package" cat files/engines/libkenji.so | sha256sum | cut -d' ' -f1)
+      [ "$hash" = d781048671e4cef1cde2ec15db8fe29b949df9949d83569ceaf776ad12901590 ] || { echo 'ACCOUNT_SPACE_HASH_MISMATCH'; exit 1; }
+      account_label=space
+    else account_label=$primary_core; fi
+    for mode in normal pid; do
+      name="$account_core-$mode"
+      printf '%s\n' "$mode" > "$W/guest-account-mode.txt"
+      adb push "$W/guest-account-mode.txt" /data/local/tmp/player-account-mode.txt >/dev/null
+      adb shell chmod 644 /data/local/tmp/player-account-mode.txt
+      adb shell run-as "$package" cp /data/local/tmp/player-account-mode.txt files/kenji/sdcard/ci-account-mode.txt
+      adb shell rm /data/local/tmp/player-account-mode.txt
+      echo "PLAYER_ACCOUNT_ATTEMPT core=$account_label mode=$mode" | tee -a "$W/redroid-status.txt"
+      adb shell am start -W -n "$package/dev.symbiosis.playerruntime.DiagnosticLauncher" \
+        --es test_config 'memory=2' --es test_kind account > "$W/guest-account-launch-$name.txt"
+      player_pid=''
+      for ((n=0;n<15;n++)); do
+        player_pid=$(adb shell pidof "$package:kenji" | tr -d '\r' || true)
+        [ -n "$player_pid" ] && break
+        sleep 1
+      done
+      outcome=timeout
+      if [ -n "$player_pid" ]; then
+        for ((n=0;n<65;n++)); do
+          if grep -qE "^[0-9-]+ +[0-9:.]+ +$player_pid +[0-9]+ .*ACCOUNT_PROBE_COMPLETE mode=$mode" "$log"; then outcome=complete; break; fi
+          if grep -qE "^[0-9-]+ +[0-9:.]+ +$player_pid +[0-9]+ .*Unhandled exception in guest thread" "$log" || app_crashed; then outcome=crash; break; fi
+          if grep -qE "^[0-9-]+ +[0-9:.]+ +$player_pid +[0-9]+ .*ACCOUNT_PROBE_ERROR" "$log"; then outcome=guest_error; break; fi
+          sleep 1
+        done
+        grep -E "^[0-9-]+ +[0-9:.]+ +$player_pid +[0-9]+ .*(ACCOUNT_PROBE_|Unhandled exception in guest thread|ServiceAcc.*Stubbed)" "$log" > "$W/guest-account-guest-$name.txt" || true
+        cat "$W/guest-account-guest-$name.txt" >> "$W/redroid-status.txt"
+      else outcome=process_missing; fi
+      if [ "$outcome" = complete ]; then
+        if python3 tests/player_runtime_probe/check_guest_account_evidence.py "$log" "$player_pid" "$mode" >> "$W/guest-account-guest-$name.txt" 2>&1; then outcome=verified; else outcome=evidence_mismatch; fi
+      fi
+      echo "PLAYER_ACCOUNT_RESULT core=$account_label mode=$mode outcome=$outcome" | tee -a "$W/redroid-status.txt"
+      [ "$outcome" = verified ] || account_failed=1
+      click_text 'Выйти' || true
+      pid=''
+      for ((n=0;n<30;n++)); do
+        pid=$(adb shell pidof "$package:kenji" | tr -d '\r' || true)
+        [ -z "$pid" ] && break; sleep 1
+      done
+      if [ -n "$pid" ]; then
+        echo "ACCOUNT_FORCE_STOP core=$account_label mode=$mode" | tee -a "$W/redroid-status.txt"
+        account_failed=1; adb shell am force-stop "$package"
+        adb shell monkey -p "$package" -c android.intent.category.LAUNCHER 1 >/dev/null || true
+        sleep 5; main_pid=$(adb shell pidof "$package" | tr -d '\r' || true)
+      fi
+    done
+  done
+  if [ "${PLAYER_COMPARE_SPACE:-0}" = 1 ]; then
+    adb shell run-as "$package" rm files/engines/libkenji.so
+    adb shell run-as "$package" cp /data/local/tmp/player-core.so files/engines/libkenji.so
+    adb shell run-as "$package" chmod 400 files/engines/libkenji.so
+    hash=$(adb exec-out run-as "$package" cat files/engines/libkenji.so | sha256sum | cut -d' ' -f1)
+    [ "$hash" = 969431b3962408dd02ce38bd2cd4b2a954d11e5212ddef3f65c80a0b419918b8 ] || { echo 'ACCOUNT_SYM_RESTORE_HASH_MISMATCH'; exit 1; }
+  fi
+  [ "$account_failed" = 0 ] || { echo 'ACCOUNT_ONE_OR_MORE_CASES_NOT_VERIFIED'; exit 1; }
 fi
 
 # Orthogonal guest BSD socket matrix: no TLS, remote IP is loopback only.

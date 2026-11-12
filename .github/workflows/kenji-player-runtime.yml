@@ -29,6 +29,9 @@ on:
       guest_network:
         type: boolean
         default: false
+      guest_account:
+        type: boolean
+        default: false
       hid_long:
         type: boolean
         default: false
@@ -323,6 +326,7 @@ jobs:
             /tmp/player-runtime/shader.nro
             /tmp/player-runtime/guest-tls.nro
             /tmp/player-runtime/guest-network.nro
+            /tmp/player-runtime/guest-account.nro
             /tmp/player-runtime/hid-long.nro
             /tmp/player-runtime/tls-parallel.nro
             /tmp/player-runtime/apk-16k-audit.txt
@@ -345,6 +349,7 @@ jobs:
       PLAYER_REFERENCE_SSL_COUNT_PATCH: ${{ inputs.reference_ssl_count_patch && '1' || '0' }}
       PLAYER_TLS_PARALLEL: ${{ inputs.tls_parallel && '1' || '0' }}
       PLAYER_GUEST_NETWORK: ${{ inputs.guest_network && '1' || '0' }}
+      PLAYER_GUEST_ACCOUNT: ${{ inputs.guest_account && '1' || '0' }}
       PLAYER_HID_LONG: ${{ inputs.hid_long && '1' || '0' }}
       PLAYER_REFERENCE_CORE: ${{ inputs.reference_core && '1' || '0' }}
       PLAYER_REFERENCE_TLS_PATCH: ${{ inputs.reference_tls_patch && '1' || '0' }}
@@ -382,6 +387,7 @@ jobs:
             /tmp/player-runtime/zipalign-16k.txt
             /tmp/player-runtime/guest-tls-server-*.txt
             /tmp/player-runtime/guest-network-*.txt
+            /tmp/player-runtime/guest-account-*.txt
             /tmp/player-runtime/hid-long-*.txt
             /tmp/player-runtime/tls-parallel-*.txt
           if-no-files-found: warn

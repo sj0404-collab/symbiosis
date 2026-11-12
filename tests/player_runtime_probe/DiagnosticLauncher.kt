@@ -18,6 +18,7 @@ class DiagnosticLauncher : Activity() {
                 "shader" -> "shader-probe.nro"
                 "tls" -> "guest-tls-probe.nro"
                 "network" -> "guest-network-probe.nro"
+                "account" -> "guest-account-probe.nro"
                 "hid-long" -> "hid-long-probe.nro"
                 "tls-parallel" -> "tls-parallel-probe.nro"
                 else -> "swkbd-probe.nro"

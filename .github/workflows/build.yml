@@ -272,6 +272,7 @@ jobs:
           python3 fork/tests/test_kenji_player_ui_contract.py
           python3 fork/tests/test_kenji_release_guard.py
           python3 fork/tests/test_account_failure_diagnostic.py
+          python3 fork/tests/test_guest_account_evidence.py
           python3 fork/tests/test_experimental_build_policy.py
           python3 fork/tests/test_core_settings_screen.py
           python3 fork/tests/test_hid_remap_model.py
