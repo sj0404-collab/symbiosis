@@ -9,8 +9,8 @@ from pathlib import Path
 import re
 import sys
 
-if len(sys.argv) != 4 or not sys.argv[2].isdigit():
-    raise SystemExit('usage: check_guest_tls_evidence.py logcat PID server-log')
+if len(sys.argv) != 5 or not sys.argv[2].isdigit() or sys.argv[4] not in ('auto', 'bound'):
+    raise SystemExit('usage: check_guest_tls_evidence.py logcat PID server-log {auto|bound}')
 log = Path(sys.argv[1]).read_text(errors='replace')
 pid = sys.argv[2]
 server = Path(sys.argv[3]).read_text(errors='replace')
@@ -18,6 +18,23 @@ line = re.compile(rf'^[0-9-]+ +[0-9:.]+ +{pid} +[0-9]+ .*$', re.M)
 rows = line.findall(log)
 if not rows:
     raise SystemExit('GUEST_TLS_EVIDENCE_NO_PID_LOG')
+mode = sys.argv[4]
+mode_rows = [row for row in rows if 'GUEST_TLS_MODE mode=' in row]
+begins = [row for row in rows if 'GUEST_TLS_CONNECT_BEGIN mode=' in row]
+connections = [row for row in rows if 'GUEST_TLS_SOCKET_CONNECTED host=' in row]
+binds = [row for row in rows if 'GUEST_TLS_LOOPBACK_BOUND' in row]
+if len(mode_rows) != 1 or f'GUEST_TLS_MODE mode={mode}' not in mode_rows[0]:
+    raise SystemExit('GUEST_TLS_EVIDENCE_MODE_MISMATCH')
+if len(begins) != 12 or len(connections) != 12 or any(f'GUEST_TLS_CONNECT_BEGIN mode={mode}' not in row for row in begins):
+    raise SystemExit('GUEST_TLS_EVIDENCE_CONNECT_COUNT_OR_MODE_MISMATCH')
+if len(binds) != (12 if mode == 'bound' else 0):
+    raise SystemExit('GUEST_TLS_EVIDENCE_BIND_COUNT_MISMATCH')
+# Require each marker from the same PID and ordered within its own connection.
+stream = [row for row in rows if any(tag in row for tag in ('GUEST_TLS_LOOPBACK_BOUND', 'GUEST_TLS_CONNECT_BEGIN mode=', 'GUEST_TLS_SOCKET_CONNECTED host='))]
+expected = ([('GUEST_TLS_LOOPBACK_BOUND',) if mode == 'bound' else (), ('GUEST_TLS_CONNECT_BEGIN mode=',), ('GUEST_TLS_SOCKET_CONNECTED host=',)])
+sequence = [tag for group in expected for tag in group] * 12
+if len(stream) != len(sequence) or any(tag not in row for tag, row in zip(sequence, stream)):
+    raise SystemExit('GUEST_TLS_EVIDENCE_CONNECTION_ORDER_MISMATCH')
 markers = [
     r'GUEST_TLS_INVALID_CERT_REJECTED',
     r'GUEST_TLS_CLIENT_PKI_REJECTED',

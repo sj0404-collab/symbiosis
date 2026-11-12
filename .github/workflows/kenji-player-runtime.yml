@@ -11,6 +11,9 @@ on:
       guest_tls:
         type: boolean
         default: false
+      guest_tls_auto_bind:
+        type: boolean
+        default: false
       guest_network:
         type: boolean
         default: false
@@ -68,6 +71,11 @@ jobs:
         if: (inputs.reference_missing_interface || inputs.reference_zero_interface || inputs.reference_valid_interface) && (!inputs.reference_core || !inputs.reference_network_patch || !inputs.guest_network || (inputs.reference_missing_interface && (inputs.reference_zero_interface || inputs.reference_valid_interface)) || (inputs.reference_zero_interface && inputs.reference_valid_interface))
         run: |
           echo 'MISSING_INTERFACE_FIXTURE_REQUIRES_SOURCE_PATCH_AND_NETWORK_PROBE'
+          exit 1
+      - name: Require guest TLS probe for automatic-bind fixture
+        if: inputs.guest_tls_auto_bind && (!inputs.guest_tls || !inputs.reference_core || !inputs.reference_tls_patch)
+        run: |
+          echo 'AUTO_TLS_FIXTURE_REQUIRES_INSTRUMENTED_SOURCE_TLS_PROBE'
           exit 1
       - uses: actions/setup-dotnet@v4
         if: inputs.reference_core
@@ -272,6 +280,7 @@ jobs:
       PLAYER_EXPECT_TLS_CANDIDATE: ${{ inputs.tls_candidate && '1' || '0' }}
       PLAYER_COMPARE_SPACE: ${{ inputs.compare_space && '1' || '0' }}
       PLAYER_GUEST_TLS: ${{ inputs.guest_tls && '1' || '0' }}
+      PLAYER_GUEST_TLS_AUTO_BIND: ${{ inputs.guest_tls_auto_bind && '1' || '0' }}
       PLAYER_GUEST_NETWORK: ${{ inputs.guest_network && '1' || '0' }}
       PLAYER_REFERENCE_CORE: ${{ inputs.reference_core && '1' || '0' }}
       PLAYER_REFERENCE_TLS_PATCH: ${{ inputs.reference_tls_patch && '1' || '0' }}

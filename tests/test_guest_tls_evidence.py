@@ -45,13 +45,24 @@ SERVER = ''.join(f'LOCAL_TLS_HANDSHAKE_OK {n} TLSv1.3\n' for n in range(12)) + '
 
 
 class EvidenceTest(unittest.TestCase):
- def check(self, markers=MARKERS, server=SERVER, pid='123'):
+ def check(self, markers=MARKERS, server=SERVER, pid='123', mode='bound', connection_markers=None):
   with tempfile.TemporaryDirectory() as d:
    log=Path(d)/'log'; srv=Path(d)/'server'
-   log.write_text(''.join('11-11 05:53:08.000  123  456 I RyujinxLog: '+x+'\n' for x in markers))
+   if connection_markers is None:
+    connection_markers = [y for _ in range(12) for y in ((['GUEST_TLS_LOOPBACK_BOUND'] if mode == 'bound' else []) + [f'GUEST_TLS_CONNECT_BEGIN mode={mode}', 'GUEST_TLS_SOCKET_CONNECTED host=localhost'])]
+   fixture = [f'GUEST_TLS_MODE mode={mode}'] + connection_markers + list(markers)
+   log.write_text(''.join('11-11 05:53:08.000  123  456 I RyujinxLog: '+x+'\n' for x in fixture))
    srv.write_text(server)
-   return subprocess.run([sys.executable,str(CHECKER),str(log),pid,str(srv)],capture_output=True,text=True)
- def test_success(self): self.assertEqual(self.check().returncode,0)
+   return subprocess.run([sys.executable,str(CHECKER),str(log),pid,str(srv),mode],capture_output=True,text=True)
+ def test_success(self):
+  self.assertEqual(self.check().returncode,0)
+  self.assertEqual(self.check(mode='auto').returncode,0)
+ def test_bind_mode_and_order_fail_closed(self):
+  auto = [y for _ in range(12) for y in ['GUEST_TLS_CONNECT_BEGIN mode=auto','GUEST_TLS_SOCKET_CONNECTED host=localhost']]
+  self.assertNotEqual(self.check(mode='auto', connection_markers=auto+['GUEST_TLS_LOOPBACK_BOUND']).returncode,0)
+  self.assertNotEqual(self.check(mode='auto', connection_markers=auto[:-1]).returncode,0)
+  self.assertNotEqual(self.check(mode='auto', connection_markers=list(reversed(auto))).returncode,0)
+  self.assertNotEqual(self.check(mode='bound', connection_markers=auto).returncode,0)
  def test_missing_policy_not_accepted(self): self.assertNotEqual(self.check([m for m in MARKERS if 'NameMismatch' not in m]).returncode,0)
  def test_missing_expiry_or_purpose_not_accepted(self):
   for status in ('NotTimeValid', 'NotValidForUsage', 'PartialChain'):

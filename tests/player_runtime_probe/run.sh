@@ -423,6 +423,13 @@ fi
 # selection. Forced cleanup after a failed case is reported, never a pass.
 if [ "${PLAYER_GUEST_TLS:-0}" = 1 ]; then
   guest_failed=0
+  tls_bind_mode=bound
+  if [ "${PLAYER_GUEST_TLS_AUTO_BIND:-0}" = 1 ]; then tls_bind_mode=auto; fi
+  printf '%s\n' "$tls_bind_mode" > "$W/guest-tls-mode.txt"
+  adb push "$W/guest-tls-mode.txt" /data/local/tmp/player-tls-mode.txt >/dev/null
+  adb shell chmod 644 /data/local/tmp/player-tls-mode.txt
+  adb shell run-as "$package" cp /data/local/tmp/player-tls-mode.txt files/kenji/sdcard/ci-tls-mode.txt
+  adb shell rm /data/local/tmp/player-tls-mode.txt
   adb reverse tcp:19443 tcp:19443
   for guest_core in sym space; do
     if [ "$guest_core" = space ]; then
@@ -443,7 +450,7 @@ if [ "${PLAYER_GUEST_TLS:-0}" = 1 ]; then
     done
     grep -q 'LOCAL_TLS_SERVER_READY' "$server_log" || { echo 'GUEST_TLS_SERVER_NOT_READY'; exit 1; }
     if [ "$guest_core" = sym ]; then guest_label=$primary_core; else guest_label=$guest_core; fi
-    echo "PLAYER_GUEST_TLS_ATTEMPT core=$guest_label internet=true bind=loopback" | tee -a "$W/redroid-status.txt"
+    echo "PLAYER_GUEST_TLS_ATTEMPT core=$guest_label internet=true bind=$tls_bind_mode" | tee -a "$W/redroid-status.txt"
     adb shell am start -W -n "$package/dev.symbiosis.playerruntime.DiagnosticLauncher" \
       --es test_config 'internet=true' --es test_kind tls | tee "$W/player-guest-tls-launch-$guest_core.txt"
     player_pid=$(adb shell pidof "$package:kenji" | tr -d '\r' || true)
@@ -462,7 +469,7 @@ if [ "${PLAYER_GUEST_TLS:-0}" = 1 ]; then
         sleep 1
       done
       if [ "${PLAYER_REFERENCE_TLS_PATCH:-0}" = 1 ]; then
-        python3 tests/player_runtime_probe/check_guest_tls_evidence.py "$log" "$player_pid" "$server_log" | tee -a "$W/redroid-status.txt" || guest_result=0
+        python3 tests/player_runtime_probe/check_guest_tls_evidence.py "$log" "$player_pid" "$server_log" "$tls_bind_mode" | tee -a "$W/redroid-status.txt" || guest_result=0
       else
         echo 'GUEST_TLS_NO_INSTRUMENTED_POLICY_EVIDENCE'
         guest_result=0

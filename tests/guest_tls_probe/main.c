@@ -20,6 +20,8 @@ static int check(const char *stage, Result rc) {
     return 1;
 }
 
+/* The mode is configured on the disposable SD card; never assume it. */
+static int use_auto_bind = -1;
 /* Require genuine verify flags and the same local server in both trials. */
 static int connection(SslContext* ctx, const char* host, const char* negative) {
     SslConnection conn = {0};
@@ -47,14 +49,16 @@ static int connection(SslContext* ctx, const char* host, const char* negative) {
     if (!check("set_hostname", sslConnectionSetHostName(&conn, host, (u32)strlen(host)+1))) goto done;
     fd = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
     if (fd < 0) { say("GUEST_TLS_ERROR stage=socket errno=%d", errno); goto done; }
-    // Explicit guest loopback bind isolates TLS from the unrelated automatic
-    // interface-selection path. It does not fix or test general networking.
-    struct sockaddr_in local = {0};
-    local.sin_family = AF_INET; local.sin_addr.s_addr = htonl(0x7f000001);
-    if (bind(fd, (struct sockaddr*)&local, sizeof(local)) < 0) {
-        say("GUEST_TLS_ERROR stage=loopback_bind errno=%d bsd=0x%08x", errno, socketGetLastResult()); goto done;
+    if (!use_auto_bind) {
+        // This mode isolates TLS from the automatic interface-selection path.
+        struct sockaddr_in local = {0};
+        local.sin_family = AF_INET; local.sin_addr.s_addr = htonl(0x7f000001);
+        if (bind(fd, (struct sockaddr*)&local, sizeof(local)) < 0) {
+            say("GUEST_TLS_ERROR stage=loopback_bind errno=%d bsd=0x%08x", errno, socketGetLastResult()); goto done;
+        }
+        say("GUEST_TLS_LOOPBACK_BOUND");
     }
-    say("GUEST_TLS_LOOPBACK_BOUND");
+    say("GUEST_TLS_CONNECT_BEGIN mode=%s", use_auto_bind ? "auto" : "bound");
     struct sockaddr_in addr = {0};
     addr.sin_family = AF_INET; addr.sin_port = htons(19443); addr.sin_addr.s_addr = htonl(0x7f000001);
     if (connect(fd, (struct sockaddr*)&addr, sizeof(addr)) < 0) {
@@ -125,6 +129,17 @@ static int read_cert(const char* path, unsigned char* out, size_t capacity, size
 }
 int main(void) {
     say("GUEST_TLS_BEGIN");
+    FILE *mode_file = fopen("sdmc:/ci-tls-mode.txt", "r");
+    if (mode_file) {
+        char mode[16] = {0};
+        if (fgets(mode, sizeof(mode), mode_file)) {
+            if (strcmp(mode, "auto\n") == 0) use_auto_bind = 1;
+            else if (strcmp(mode, "bound\n") == 0) use_auto_bind = 0;
+        }
+        fclose(mode_file);
+    }
+    if (use_auto_bind < 0) { say("GUEST_TLS_ERROR stage=mode"); goto finish; }
+    say("GUEST_TLS_MODE mode=%s", use_auto_bind ? "auto" : "bound");
     if (!check("socket_init", socketInitializeDefault())) goto finish;
     if (!check("ssl_init", sslInitialize(1))) { socketExit(); goto finish; }
     SslContext ctx = {0}, other = {0};
