@@ -483,10 +483,17 @@ jobs:
               || { echo "  missing JNI export: $sym"; fail=1; }
           done
 
-          for sym in nativeSetCrashLog nativeSetStep nativeConnectPad nativeUpdateInput nativeInputEventsAvailable nativeInputButton nativeInputStick nativeInputTouch nativeInputSize nativeEnableHidStubLog; do
+          for sym in nativeSetCrashLog nativeSetStep nativeConnectPad nativeUpdateInput nativeInputEventsAvailable nativeInputButton nativeInputStick nativeInputTouch nativeInputSize nativeSetDiagnosticLogging nativeGraphicsLog nativeGameFrameRate; do
             "$NM" -D lib/arm64-v8a/libsymbiosis_kenji.so \
               | grep -q "Java_org_yuzu_yuzu_1emu_utils_KenjiBridge_$sym" \
               || { echo "  missing JNI export in the bridge: $sym"; fail=1; }
+          done
+
+          # User-facing Auto and the logging preference must be in this APK;
+          # presence in dex is not an end-to-end UI or performance test.
+          for text in "CoreBenchmark" "KenjiLogSettings" "Подробный журнал Kenji-NX" "нет замеров обоих ядер"; do
+            if grep -qa "$text" /tmp/x/classes*.dex; then echo "  ok   $text in dex"
+            else echo "  MISSING $text in dex"; fail=1; fi
           done
 
           # The Kenji bridge, in both names. The core dlopen()s libkenjinxjni
