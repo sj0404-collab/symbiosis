@@ -86,7 +86,7 @@ jobs:
           python3 fork/tools/sign_core_manifest.py --sequence "$SEQUENCE" --core /tmp/core.so --private-key /tmp/core-test-key.pem --output /tmp/core-manifest.txt
           python3 fork/tools/verify_core_manifest.py --manifest /tmp/core-manifest.txt --public-key-der /tmp/pinned-public.der
           cp /tmp/core.so "/tmp/libkenji-$EXPECTED.so"
-          gh release create "engine-test-$SEQUENCE" "/tmp/libkenji-$EXPECTED.so" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --prerelease --title "Тестовое ядро $SEQUENCE" --notes "Только для тестового канала. Подпись и доставка не подтверждают совместимость игры. Известные SSL-заглушки и прочие ограничения могут оставаться."
+          gh release create "engine-test-$SEQUENCE" "/tmp/libkenji-$EXPECTED.so" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --prerelease --title "Тестовое ядро $SEQUENCE" --notes "ТОЛЬКО ДЛЯ ТЕСТА. Источник: $SOURCE. Подпись и доставка не подтверждают совместимость игры. SSL-заглушки остаются; обработчик Account помечен Stubbed. Ошибка 2202-0710 не объявлена исправленной. Старые ядра и обычный релиз не заменяются."
           curl -fsSL --retry 3 --max-time 300 --proto '=https' --proto-redir '=https' "https://github.com/$GITHUB_REPOSITORY/releases/download/engine-test-$SEQUENCE/libkenji-$EXPECTED.so" -o /tmp/published.so
           echo "$EXPECTED  /tmp/published.so" | sha256sum -c -
       - name: Update signed Pages manifest without replacing the site
