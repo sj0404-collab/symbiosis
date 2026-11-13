@@ -1,0 +1,14 @@
+name: Test signed Space update in ARM player
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  real-player:
+    uses: ./.github/workflows/kenji-player-runtime.yml
+    with:
+      core_update: true
+      core_update_sha: d781048671e4cef1cde2ec15db8fe29b949df9949d83569ceaf776ad12901590
+      bundled_tls_probe: true
+      hid_long: true
+      guest_account: true

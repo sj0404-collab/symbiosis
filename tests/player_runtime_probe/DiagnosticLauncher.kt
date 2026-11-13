@@ -22,7 +22,8 @@ class DiagnosticLauncher : Activity() {
                         check(second.ok && second.message.contains("уже установлена")) { second.message }
                         val active = checkNotNull(org.yuzu.yuzu_emu.utils.CoreUpdateStore.active(
                             filesDir, org.yuzu.yuzu_emu.utils.CoreTestUpdates.key()))
-                        check(active.core.sha256 == "969431b3962408dd02ce38bd2cd4b2a954d11e5212ddef3f65c80a0b419918b8")
+                        val expected = intent.getStringExtra("ci_expected_core_sha").orEmpty()
+                        check(expected.matches(Regex("[0-9a-f]{64}")) && active.core.sha256 == expected)
                         check(org.yuzu.yuzu_emu.utils.EngineLoader.coreFile(this, org.yuzu.yuzu_emu.utils.EngineLoader.Engine.KENJI) == active.file)
                         check(org.yuzu.yuzu_emu.utils.EngineLoader.state(this, org.yuzu.yuzu_emu.utils.EngineLoader.Engine.KENJI) is org.yuzu.yuzu_emu.utils.EngineLoader.State.Ready)
                         File(filesDir, "ci-core-update-ok.txt").writeText("OK version=${active.core.sequence} sha256=${active.core.sha256}\n")

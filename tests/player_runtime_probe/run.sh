@@ -268,7 +268,9 @@ press_plus() {
 # Install the actual signed Pages version in the disposable Android app. The
 # following real player sessions must then load that version, not the legacy file.
 if [ "${PLAYER_CORE_UPDATE:-0}" = 1 ]; then
-  adb shell am start -W -n "$package/dev.symbiosis.playerruntime.DiagnosticLauncher" --es test_kind core-update > "$W/core-update-launch.txt"
+  [[ "${PLAYER_CORE_UPDATE_EXPECTED_SHA:-}" =~ ^[0-9a-f]{64}$ ]] || { echo 'BAD_CORE_UPDATE_EXPECTED_SHA'; exit 1; }
+  adb shell am start -W -n "$package/dev.symbiosis.playerruntime.DiagnosticLauncher" --es test_kind core-update \
+    --es ci_expected_core_sha "$PLAYER_CORE_UPDATE_EXPECTED_SHA" > "$W/core-update-launch.txt"
   update_ok=0
   for ((n=0;n<180;n++)); do
     if adb shell run-as "$package" test -f files/ci-core-update-ok.txt; then update_ok=1; break; fi
@@ -280,6 +282,7 @@ if [ "${PLAYER_CORE_UPDATE:-0}" = 1 ]; then
     echo 'SIGNED_CORE_UPDATE_FAILED' | tee -a "$W/redroid-status.txt"; exit 1
   fi
   adb exec-out run-as "$package" cat files/ci-core-update-ok.txt | tee -a "$W/redroid-status.txt"
+  primary_core="signed-update-$PLAYER_CORE_UPDATE_EXPECTED_SHA"
 fi
 
 # Three isolated sessions exercise the real player and prove that the same
