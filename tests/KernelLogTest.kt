@@ -72,6 +72,15 @@ fun main() {
         lines
     )
 
+    // Status on the player UI thread must stay bounded even if old logs grow.
+    val statusLog = tempFile("старое Exception\n" + ("обычная строка\n".repeat(30000)) + "свежая строка\nпоследняя\n")
+    val sizeBefore = statusLog.length()
+    eq("статус видит только ограниченный хвост", KernelLogFormat.statusTail(statusLog, 2), "свежая строка\nпоследняя")
+    eq("чтение не изменяет журнал", statusLog.length(), sizeBefore)
+    statusLog.appendText("\n|E| новая ошибка\nкадр стека\nещё строка\n")
+    eq("статус сохраняет начало ошибки", KernelLogFormat.statusTail(statusLog, 2), "|E| новая ошибка\nкадр стека")
+    eq("нулевой лимит строк", KernelLogFormat.statusTail(statusLog, 0), "")
+
     // --- подсчёт ошибок --------------------------------------------------
     val log = """
         [    1.000000] Core <Info> core.cpp:10: запуск

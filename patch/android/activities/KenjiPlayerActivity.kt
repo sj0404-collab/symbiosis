@@ -948,19 +948,9 @@ class KenjiPlayerActivity : Activity(), SurfaceHolder.Callback {
     private fun coreLogTail(context: android.content.Context, lines: Int): String =
         runCatching {
             val file = KenjiBridge.coreLogFile(context) ?: return ""
-            val all = file.readLines().map { it.trim() }.filter { it.isNotEmpty() }
-            if (all.isEmpty()) return ""
-            val start = all.indexOfLast { line ->
-                line.contains("Exception", ignoreCase = true) ||
-                    line.contains("|E|") ||
-                    line.contains("Unhandled", ignoreCase = true)
-            }
-            val slice = if (start >= 0) {
-                all.subList(start, minOf(all.size, start + lines))
-            } else {
-                all.takeLast(lines)
-            }
-            slice.joinToString("\n") { it.take(200) }
+            // Called every 3 seconds on the UI thread: never read the entire
+            // potentially hundreds-of-MB log while the player handles input.
+            KernelLogFormat.statusTail(file, lines)
         }.getOrDefault("")
 
     /**

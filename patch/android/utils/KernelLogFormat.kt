@@ -38,6 +38,21 @@ object KernelLogFormat {
         return if (from > 0) text.substringAfter('\n', text) else text
     }
 
+    /** Compact status from a bounded tail; never reads or changes the full log. */
+    fun statusTail(file: File, lines: Int): String {
+        if (lines <= 0) return ""
+        val all = tailOf(file, TAIL_BYTES).lineSequence()
+            .map { it.trim() }.filter { it.isNotEmpty() }.toList()
+        if (all.isEmpty()) return ""
+        val start = all.indexOfLast { line ->
+            line.contains("Exception", ignoreCase = true) ||
+                line.contains("|E|") || line.contains("Unhandled", ignoreCase = true)
+        }
+        val slice = if (start >= 0) all.subList(start, minOf(all.size, start + lines))
+            else all.takeLast(lines)
+        return slice.joinToString("\n") { it.take(200) }
+    }
+
     /**
      * Разбор куска журнала на ЦЕЛЫЕ строки.
      *
