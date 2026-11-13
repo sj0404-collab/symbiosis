@@ -224,6 +224,10 @@ jobs:
           test -n "$SO"
           cp "$SO" fork/patch/libs/arm64-v8a/libopenal.so
           sha256sum "$SO"
+      - name: Build 16K-aligned Kenji FFmpeg from pinned source
+        run: |
+          ANDROID_NDK_HOME="$ANDROID_HOME/ndk/28.2.13676358" \
+            bash fork/tools/build_kenji_ffmpeg.sh "$GITHUB_WORKSPACE/fork/patch/libs/arm64-v8a"
       - name: Build supported TLS candidate for disposable player only
         if: inputs.tls_candidate
         run: |
@@ -238,6 +242,7 @@ jobs:
           bash fork/tools/apply_patch.sh --patch "$GITHUB_WORKSPACE/fork/patch" --eden "$GITHUB_WORKSPACE/eden"
           # Observe real graphics callback calls in the disposable debug tree only.
           python3 fork/tests/player_runtime_probe/instrument_graphics.py eden/src/android/app/src/main/jni/symbiosis_kenji_bridge.cpp
+          python3 fork/tests/player_runtime_probe/instrument_ffmpeg.py eden/src/android/app/src/main/jni/symbiosis_kenji_bridge.cpp
           if [ "${{ inputs.tls_candidate }}" = true ] || [ "${{ inputs.bundled_tls_probe }}" = true ]; then
             python3 fork/tests/player_runtime_probe/instrument_tls.py eden/src/android/app/src/main/jni/symbiosis_kenji_bridge.cpp
           fi
@@ -263,6 +268,21 @@ jobs:
             -Wl,-z,max-page-size=16384 -Wl,-soname,libtls_in_process_probe.so \
             fork/tests/standalone_core_probe/tls_handshake.cpp fork/tests/player_runtime_probe/tls_in_process.cpp \
             -ldl -llog -o eden/src/android/app/src/main/jniLibs/arm64-v8a/libtls_in_process_probe.so
+      - name: Build CI-only in-process FFmpeg decode probe
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq && sudo apt-get install -y ffmpeg xxd
+          ffmpeg -v error -f lavfi -i 'color=c=blue:s=16x16:r=1' -frames:v 1 \
+            -c:v libx264 -preset ultrafast -tune zerolatency -f h264 /tmp/ci_h264.h264
+          xxd -i -n ci_h264 /tmp/ci_h264.h264 > /tmp/ci_h264.h
+          TC="$ANDROID_HOME/ndk/28.2.13676358/toolchains/llvm/prebuilt/linux-x86_64/bin"
+          FFMPEG=/tmp/symbiosis-kenji-ffmpeg/ffmpeg-5.1.8
+          LIBS="$GITHUB_WORKSPACE/fork/patch/libs/arm64-v8a"
+          "$TC/aarch64-linux-android26-clang" -std=c11 -O2 -fPIC -shared \
+            -I"$FFMPEG" -I/tmp fork/tests/player_runtime_probe/ffmpeg_in_process.c \
+            -L"$LIBS" -lavcodec -lavutil -lswresample -ldl -llog \
+            -Wl,-z,max-page-size=16384 -Wl,-soname,libffmpeg_ci_probe.so \
+            -o eden/src/android/app/src/main/jniLibs/arm64-v8a/libffmpeg_ci_probe.so
       - name: Build disposable debug application, not a release
         working-directory: eden/src/android
         run: |
@@ -272,6 +292,9 @@ jobs:
           ccache --set-config=hash_dir=false
           ccache --set-config=compiler_check=content
           ./gradlew assembleLegacyDebug -PYUZU_ANDROID_ARGS='-DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache' --parallel --max-workers=4
+      - name: Audit FFmpeg and license in disposable APK
+        run: |
+          python3 fork/tests/player_runtime_probe/audit_ffmpeg_apk.py "$PLAY_WORK/player-debug.apk"
       - name: Prepare pinned core and self-authored NRO
         working-directory: fork
         run: |

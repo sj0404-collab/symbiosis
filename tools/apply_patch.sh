@@ -152,6 +152,22 @@ if [ -f "$P/libs/arm64-v8a/libopenal.so" ]; then
 else
   echo "ВНИМАНИЕ: libopenal.so не собран — deviceInitialize упадёт на OpenAL" >&2
 fi
+# FFmpeg is rebuilt from pinned source in the APK/player CI jobs; do not copy
+# the 4 KiB-only binaries from the reference APK. Partial sets are forbidden.
+ff_count=0
+for name in avutil swresample avcodec swscale; do
+  [ ! -f "$P/libs/arm64-v8a/lib${name}.so" ] || ff_count=$((ff_count + 1))
+done
+if [ "$ff_count" -eq 4 ]; then
+  for name in avutil swresample avcodec swscale; do
+    cp "$P/libs/arm64-v8a/lib${name}.so" "$A/jniLibs/arm64-v8a/"
+  done
+elif [ "$ff_count" -ne 0 ]; then
+  echo 'Неполный набор FFmpeg для Kenji: сборка остановлена' >&2
+  exit 1
+else
+  echo 'FFmpeg для Kenji не собран: видео ядра может не работать' >&2
+fi
 echo "Библиотеки ядра: $(ls "$A/jniLibs/arm64-v8a" | tr '\n' ' ')"
 
 # JNI bridge

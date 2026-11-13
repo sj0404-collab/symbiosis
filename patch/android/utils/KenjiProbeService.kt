@@ -197,8 +197,12 @@ class KenjiProbeService : Service() {
                     KernelLogFormat.tailOf(it, KernelLogFormat.TAIL_BYTES)
                 }
             }.getOrNull().orEmpty()
-            body.append("\n\nРазбор доступного журнала ядра (время сеанса не подтверждено):\n")
-                .append(KenjiCrash.diagnosticSummary(diagnosticLog))
+            val saidFile = runCatching { KenjiBridge.stdioFile(context) }.getOrNull()
+            val said = runCatching {
+                saidFile?.takeIf { it.isFile }?.let { KernelLogFormat.tailOf(it, KernelLogFormat.TAIL_BYTES) }
+            }.getOrNull().orEmpty()
+            body.append("\n\nРазбор доступного журнала и вывода ядра (время сеанса не подтверждено):\n")
+                .append(KenjiCrash.diagnosticSummary(diagnosticLog + "\n" + said))
             val configLine = text.lineSequence().lastOrNull { it.startsWith("symbiosis_effective_config=") }
                 ?.substringAfter('=')
             if (configLine != null) {
@@ -305,10 +309,6 @@ class KenjiProbeService : Service() {
             // В отчёте о сигнале есть адреса, но нет текста. Текст исключения
             // .NET печатается в stderr ядра и перенаправлен в файл — это
             // буквально сообщение рантайма, поэтому оно идёт первым.
-            val saidFile = runCatching { KenjiBridge.stdioFile(context) }.getOrNull()
-            val said = runCatching {
-                saidFile?.takeIf { it.isFile }?.let { KernelLogFormat.tailOf(it, KernelLogFormat.TAIL_BYTES) }
-            }.getOrNull().orEmpty()
             // consoleLines, а не exceptionLines: отбор по знакомым словам
             // выбросил сообщение, не похожее на «Unhandled exception», и окно
             // сказало «ядро молчит» при непустом файле. Теперь если отбор пуст,

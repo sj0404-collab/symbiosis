@@ -1,0 +1,7 @@
+FFmpeg 5.1.8 libraries for the Kenji player
+Copyright (c) the FFmpeg developers. Licensed under LGPL version 2.1 or later.
+Source: https://ffmpeg.org/releases/ffmpeg-5.1.8.tar.xz
+SHA-256: 56d4daf10c17330a45c8fe11bc260997677ca2432d3d5951dbeb5515c26028cb
+Build recipe and options: https://github.com/sj0404-collab/symbiosis/blob/fix/library-sees-all-games/tools/build_kenji_ffmpeg.sh
+The four dynamically linked libraries are independently replaceable; no GPL or nonfree options are enabled.
+This build enables the H.264 and VP8 software decoders needed by the related Kenji source; it does not provide the external codecs from the original FFmpeg kit build.

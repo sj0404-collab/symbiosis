@@ -42,7 +42,7 @@ class PlayerLogPerformance(unittest.TestCase):
         self.assertIn('rate * 1000.0 / intervalMs', watch)
         self.assertIn('FPS ядра:', watch)
         self.assertIn('callback/с:', watch)
-        self.assertIn('updateStatus(if (frames > 0) fpsText else summary, details)', watch)
+        self.assertIn('updateStatus(if (frames > 0 && showPlayerFps) fpsText', watch)
         self.assertIn('/proc/self/status', watch)
         self.assertIn('setNegativeButton("Выйти из игры")', activity)
         self.assertIn('root.addView(bar, LinearLayout.LayoutParams', activity)

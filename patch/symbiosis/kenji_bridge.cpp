@@ -953,6 +953,35 @@ void PreloadOpenSsl() {
     }
 }
 
+// FFmpeg is loaded lazily by Kenji when a game requests NVDEC. Android
+// must be able to resolve the plain SONAMEs from the core's linker namespace.
+// Keep handles alive for the isolated process and record failures without
+// pretending a library or codec exists. This is not an emulated decoder.
+void PreloadKenjiFfmpeg() {
+    Dl_info info{};
+    std::string dir;
+    if (::dladdr(reinterpret_cast<void*>(&PreloadKenjiFfmpeg), &info) && info.dli_fname) {
+        std::string path(info.dli_fname);
+        const auto slash = path.find_last_of('/');
+        if (slash != std::string::npos) dir = path.substr(0, slash + 1);
+    }
+    for (const char* name : {"libavutil.so", "libswresample.so", "libavcodec.so", "libswscale.so"}) {
+        ::dlerror();
+        void* handle = dir.empty() ? nullptr : ::dlopen((dir + name).c_str(), RTLD_NOW | RTLD_GLOBAL);
+        if (!handle) handle = ::dlopen(name, RTLD_NOW | RTLD_GLOBAL);
+        const char* error = handle ? nullptr : ::dlerror();
+        const std::string reason = error ? error : "не удалось загрузить";
+        LOGI("ffmpeg: %s %s", name, handle ? "ok" : "не найдена или несовместима");
+        if (g_crashPath[0] != '\0') {
+            char line[512];
+            const int n = ::snprintf(line, sizeof(line), "ffmpeg: %s=%s%s%s%s\n", name,
+                handle ? "ok" : "HET", handle ? "" : " (", handle ? "" : reason.c_str(),
+                handle ? "" : ")");
+            if (n > 0) AppendCrashLine(line);
+        }
+    }
+}
+
 void ConfigureCoreRuntimeEnv() {
     // Куча .NET резервирует виртуальное пространство заранее; на 39-битной
     // разметке 256 ГиБ не помещаются. 0x400000000 = 16 ГиБ.
@@ -980,6 +1009,7 @@ void ConfigureCoreRuntimeEnv() {
 
     // Криптография .NET ищет libssl сама и убивает процесс, если не нашла.
     PreloadOpenSsl();
+    PreloadKenjiFfmpeg();
 
     if (g_crashPath[0] != '\0') {
         char line[320];

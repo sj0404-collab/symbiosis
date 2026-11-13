@@ -23,6 +23,7 @@ import android.view.ViewGroup
 import android.widget.Button
 import android.widget.FrameLayout
 import android.widget.LinearLayout
+import android.widget.PopupWindow
 import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
@@ -146,6 +147,9 @@ class KenjiPlayerActivity : Activity(), SurfaceHolder.Callback {
     private var statusDetails = ""
     private var detailsDialog: AlertDialog? = null
     private var detailsText: TextView? = null
+    private var playerMenu: PopupWindow? = null
+    private var showPlayerFps = true
+    private var showTouchControls = true
     private fun dp(value: Int): Int = (value * resources.displayMetrics.density + .5f).toInt()
     private fun darkButton(textLabel: String, action: () -> Unit): Button = Button(this).apply {
         text = textLabel
@@ -180,7 +184,7 @@ class KenjiPlayerActivity : Activity(), SurfaceHolder.Callback {
             .setTitle("Состояние второго ядра")
             .setView(scroll)
             .setPositiveButton("Закрыть", null)
-            .setNegativeButton("Выйти из игры") { _, _ -> leave() }
+            .setNegativeButton("Выйти из игры") { _, _ -> confirmLeave() }
             .create()
         detailsDialog?.dismiss()
         detailsText = textView
@@ -193,6 +197,77 @@ class KenjiPlayerActivity : Activity(), SurfaceHolder.Callback {
         }
         dialog.show()
     }
+    private fun confirmLeave() {
+        if (isFinishing || isDestroyed) return
+        AlertDialog.Builder(this, android.R.style.Theme_Material_Dialog_Alert)
+            .setTitle("Выйти из игры?")
+            .setMessage("Сначала сохраните прогресс средствами самой игры. Меню не ставит игру на паузу.")
+            .setNegativeButton("Отмена", null)
+            .setPositiveButton("Выйти") { _, _ -> leave() }
+            .show()
+    }
+
+    /** This menu never claims to pause the running native core. */
+    private fun showPlayerMenu() {
+        if (isFinishing || isDestroyed || failed || sessionLease == null) return
+        if (playerMenu?.isShowing == true) return
+        val panel = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(16), dp(14), dp(16), dp(14))
+            setBackgroundColor(Color.rgb(25, 27, 33))
+        }
+        panel.addView(TextView(this).apply {
+            text = "Меню игры"
+            textSize = 20f
+            setTextColor(Color.WHITE)
+            setPadding(0, 0, 0, dp(12))
+        })
+        panel.addView(TextView(this).apply {
+            text = "Игра продолжает работать — пауза ядра пока недоступна."
+            textSize = 14f
+            setTextColor(Color.LTGRAY)
+            setPadding(0, 0, 0, dp(10))
+        })
+        val popup = PopupWindow(this)
+        fun addAction(label: String, action: () -> Unit) {
+            panel.addView(darkButton(label) { popup.dismiss(); action() },
+                LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(50)).apply {
+                    bottomMargin = dp(8)
+                })
+        }
+        addAction("Продолжить") { }
+        addAction(if (showPlayerFps) "Скрыть FPS" else "Показать FPS") {
+            showPlayerFps = !showPlayerFps
+            if (!showPlayerFps) status.text = "Второе ядро · подробнее"
+        }
+        if (::overlay.isInitialized) {
+            addAction(if (showTouchControls) "Скрыть управление" else "Показать управление") {
+                overlaySink.cancel()
+                showTouchControls = !showTouchControls
+                overlay.visibility = if (showTouchControls) android.view.View.VISIBLE else android.view.View.GONE
+            }
+        }
+        addAction("Состояние и журнал") { showStatusDetails() }
+        addAction("Сохранение состояния") {
+            AlertDialog.Builder(this, android.R.style.Theme_Material_Dialog_Alert)
+                .setTitle("Сохранение состояния недоступно")
+                .setMessage("В установленном ядре нет подтверждённой функции сохранения состояния. Используйте обычное сохранение внутри игры.")
+                .setPositiveButton("Понятно", null).show()
+        }
+        addAction("Выйти из игры") { confirmLeave() }
+        val scroll = ScrollView(this).apply { addView(panel) }
+        popup.contentView = scroll
+        popup.width = minOf(dp(340), resources.displayMetrics.widthPixels - dp(24))
+        popup.height = ViewGroup.LayoutParams.MATCH_PARENT
+        popup.isFocusable = true
+        popup.isOutsideTouchable = true
+        popup.setBackgroundDrawable(GradientDrawable().apply { setColor(Color.rgb(25, 27, 33)) })
+        popup.elevation = dp(12).toFloat()
+        popup.setOnDismissListener { if (playerMenu === popup) playerMenu = null }
+        playerMenu = popup
+        popup.showAtLocation(window.decorView, Gravity.END or Gravity.TOP, 0, 0)
+    }
+
     private lateinit var overlay: InputOverlay
     // Kenji's current API exposes only one touchscreen pointer.
     private var touchPointer = -1
@@ -320,7 +395,9 @@ class KenjiPlayerActivity : Activity(), SurfaceHolder.Callback {
         }
         statusDetails = "Подготовка: $title"
         bar.addView(status, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-        bar.addView(darkButton("Выйти") { leave() },
+        bar.addView(darkButton("Меню") { showPlayerMenu() },
+            LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(44)))
+        bar.addView(darkButton("Выйти") { confirmLeave() },
             LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(44)))
         root.addView(bar, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,
             ViewGroup.LayoutParams.WRAP_CONTENT))
@@ -749,7 +826,8 @@ class KenjiPlayerActivity : Activity(), SurfaceHolder.Callback {
                         // intercepts virtual controls or resizes the surface.
                         // Once callbacks arrive, replace the status text with
                         // the FPS/callback counter; tapping still opens details.
-                        updateStatus(if (frames > 0) fpsText else summary, details)
+                        updateStatus(if (frames > 0 && showPlayerFps) fpsText
+                            else if (frames > 0) "Второе ядро · подробнее" else summary, details)
                     }
                 }
                 // Тот же текст — в отчёт. Человеку некогда делать скриншот на
@@ -1064,7 +1142,7 @@ class KenjiPlayerActivity : Activity(), SurfaceHolder.Callback {
 
     @Deprecated("Deprecated in Java")
     override fun onBackPressed() {
-        if (sessionLease == null) finish() else leave()
+        if (sessionLease == null) finish() else showPlayerMenu()
     }
 
     /**
@@ -1087,6 +1165,8 @@ class KenjiPlayerActivity : Activity(), SurfaceHolder.Callback {
             return
         }
         sessionLease = null
+        playerMenu?.dismiss()
+        playerMenu = null
         detailsDialog?.dismiss()
         detailsDialog = null
         detailsText = null
@@ -1142,6 +1222,8 @@ class KenjiPlayerActivity : Activity(), SurfaceHolder.Callback {
     private fun fail(msg: String) {
         if (failed || isFinishing || isDestroyed) return
         failed = true
+        playerMenu?.dismiss()
+        playerMenu = null
         detailsDialog?.dismiss()
         detailsDialog = null
         detailsText = null

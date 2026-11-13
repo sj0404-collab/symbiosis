@@ -95,6 +95,18 @@ class InputContract(unittest.TestCase):
         self.assertIn('root.addView(gameArea', setup)
         self.assertIn('setOnClickListener { showStatusDetails() }', setup)
 
+    def test_back_opens_menu_and_exit_requires_confirmation(self):
+        back = ACTIVITY.split('override fun onBackPressed()', 1)[1].split('override fun onDestroy()', 1)[0]
+        self.assertIn('else showPlayerMenu()', back)
+        self.assertNotIn('else leave()', back)
+        menu = ACTIVITY.split('private fun showPlayerMenu()', 1)[1].split('private lateinit var overlay:', 1)[0]
+        self.assertIn('PopupWindow(this)', menu)
+        self.assertIn('Игра продолжает работать', menu)
+        self.assertIn('Сохранение состояния недоступно', menu)
+        self.assertIn('overlaySink.cancel()', menu)
+        self.assertIn('"Выйти из игры") { confirmLeave() }', menu)
+        self.assertIn('setPositiveButton("Выйти") { _, _ -> leave() }', ACTIVITY)
+
     def test_hid_calls_are_context_not_result(self):
         self.assertIn('KenjiCrash.mergeHidOperations(hidCalls, fresh)', ACTIVITY)
         self.assertIn('KenjiCrash.panicEvidence(fresh)', ACTIVITY)

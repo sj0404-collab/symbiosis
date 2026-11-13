@@ -117,7 +117,7 @@ fun main() {
         debugBreaks = emptyList()
     )
     val handlerVerdict = KenjiCrash.verdict(handlerOnTop)
-    check("верхний кадр — наш: виноват мост", handlerVerdict.contains("нашей части"), handlerVerdict)
+    check("кадр обработчика не доказывает причину SIGABRT", handlerVerdict.contains("не устанавливает причину"), handlerVerdict)
     // Именно фраза обвинения, а не слово «ядро»: последняя строка совета
     // говорит «чинить файл ядра или мост» и остаётся всегда.
     check("ядро не обвинено по нижнему кадру",
@@ -126,8 +126,8 @@ fun main() {
     val coreOnTop = handlerOnTop.copy(
         frames = listOf("libkenji.so+0x1a2b3", "libsymbiosis_kenji.so+0x44")
     )
-    check("верхний кадр — ядро: виноват файл ядра",
-        KenjiCrash.verdict(coreOnTop).contains("файл ядра"))
+    check("SIGABRT с кадром ядра не определяет причину по одному стеку",
+        KenjiCrash.verdict(coreOnTop).contains("Причину нужно сверить"))
 
     // «Система» — это библиотека, которая не наша и не ядро. libc сюда не
     // годится: она механизм abort/raise и пропускается намеренно.
@@ -156,7 +156,7 @@ fun main() {
     check("настоящий отчёт разобран", realReport != null)
     val realVerdict = KenjiCrash.verdict(realReport!!)
     check("libc не обвинён", !realVerdict.contains("виновата система"), realVerdict)
-    check("сказано, что abort из ядра", realVerdict.contains("abort() вызван изнутри libkenji.so"),
+    check("в стеке есть кадр ядра, но причина не предполагается", realVerdict.contains("В стеке SIGABRT есть кадр libkenji.so"),
         realVerdict)
     check("назван шаг словами", realVerdict.contains("передача ядру пути к данным"), realVerdict)
 
@@ -187,7 +187,7 @@ fun main() {
     check("в вердикте место вызова", interposedVerdict.contains("0x7a1b2c3e10"), interposedVerdict)
     check("libc не назван виновником", !interposedVerdict.startsWith("Остановку потребовал код в кадре libc"),
         interposedVerdict)
-    check("сказано, что это не сбой памяти", interposedVerdict.contains("не сбой памяти"),
+    check("причина abort не угадывается", interposedVerdict.contains("не устанавливает причину"),
         interposedVerdict)
     // Отчёт целиком: строка перехватчика обязана дойти до человека.
     val interposedText = KenjiCrash.format(interposed)
@@ -808,6 +808,8 @@ fun main() {
     check("без маркера загрузки этап неизвестен", early.contains("на неизвестном этапе"), early)
     check("тихий журнал не доказывает сбой при запуске", !early.contains("во время запуска"), early)
 
+    val ffmpegDiagnosis = KenjiCrash.diagnosticSummary("---> System.DllNotFoundException: Unable to load shared library 'avutil' or one of its dependencies")
+    check("FFmpeg failure named without assuming missing library", ffmpegDiagnosis.contains("FFmpeg") && ffmpegDiagnosis.contains("зависимость"), ffmpegDiagnosis)
     val emptyDiagnosis = KenjiCrash.diagnosticSummary("")
     check("пустой журнал не объявлен исправным", emptyDiagnosis.contains("Причина неизвестна"), emptyDiagnosis)
     val unknownDiagnosis = KenjiCrash.diagnosticSummary("ordinary log without failures")

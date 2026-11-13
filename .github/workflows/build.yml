@@ -199,6 +199,11 @@ jobs:
           cp "$SO" fork/patch/libs/arm64-v8a/libopenal.so
           ls -l fork/patch/libs/arm64-v8a/
 
+      - name: Build 16K-aligned Kenji FFmpeg from pinned source
+        run: |
+          ANDROID_NDK_HOME="$ANDROID_HOME/ndk/28.2.13676358" \
+            bash fork/tools/build_kenji_ffmpeg.sh "$GITHUB_WORKSPACE/fork/patch/libs/arm64-v8a"
+
       - name: Apply the Symbiosis patch
         run: |
           cd eden
@@ -253,6 +258,7 @@ jobs:
           unzip -q /tmp/kc.zip -d /tmp
           export PATH="/tmp/kotlinc/bin:$PATH"
           python3 fork/tests/test_kenji_input_contract.py
+          python3 fork/tests/test_kenji_ffmpeg_contract.py
           python3 fork/tests/test_game_session_contract.py
           python3 fork/tests/test_kenji_window_ref.py
           python3 fork/tests/test_kenji_loader_error.py
@@ -589,6 +595,7 @@ jobs:
           set -euo pipefail
           APK=$(find eden -name '*legacy-release.apk' -o -name '*legacy-debug.apk' | head -1)
           python3 fork/tests/player_runtime_probe/audit_apk_16k.py "$APK"
+          python3 fork/tests/player_runtime_probe/audit_ffmpeg_apk.py "$APK"
           python3 - "$APK" <<'PYAPK'
           import hashlib, sys, zipfile
           expected = {

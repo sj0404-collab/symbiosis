@@ -233,6 +233,9 @@ PY
   )
   adb shell input tap $coords
 }
+exit_player() {
+  click_text 'Выйти' && click_text 'Выйти'
+}
 # Locate the actual Plus hitbox printed by the debug-only geometry observer,
 # then inject a physical-style Android hold. Verify state transitions in the
 # guest, not just the view or JNI caller. Never call the overlay or core APIs.
@@ -324,6 +327,11 @@ for mode in 2 0 1; do
     [ "$observed" = 1 ] || { echo 'PLAYER_DID_NOT_SELECT_SIGNED_CORE'; exit 1; }
     echo 'PLAYER_SELECTED_SIGNED_CORE' | tee -a "$W/redroid-status.txt"
   fi
+  wait_log 'CI_FFMPEG_PROBE_RESULT=0' || { echo "PLAYER_FFMPEG_IN_PROCESS_FAILED mode=$mode"; exit 1; }
+  wait_log 'CI_FFMPEG_PRIVATE_DECODE version=59.37.100 h264=1 vp8=1 frame=16x16' || {
+    echo "PLAYER_FFMPEG_DECODE_MISSING mode=$mode"; exit 1;
+  }
+  echo "PLAYER_FFMPEG_H264_PRIVATE_DECODE_OK mode=$mode" | tee -a "$W/redroid-status.txt"
   if [ "${PLAYER_EXPECT_TLS_CANDIDATE:-0}" = 1 ]; then
     wait_log 'CI_ONLY_TLS_OPENSSL_VERSION=0x3050009[0-9a-f] .*libcrypto.so' || {
       echo "PLAYER_CANDIDATE_OPENSSL_NOT_OBSERVED mode=$mode"; exit 1;
@@ -352,7 +360,12 @@ for mode in 2 0 1; do
   wait_log 'SWKBD_GUEST_DONE' || { echo "PLAYER_GUEST_DID_NOT_COMPLETE mode=$mode"; exit 1; }
   wait_log 'SWKBD_SHOW_RETURN rc=0x00000000 .*text=Seed' || { echo "PLAYER_FIRST_ANSWER_WRONG mode=$mode"; exit 1; }
   wait_log 'SWKBD_SECOND_RETURN .*cancel_match=1' || { echo "PLAYER_CANCEL_WRONG mode=$mode"; exit 1; }
-  click_text 'Выйти' || { echo "PLAYER_EXIT_BUTTON_NOT_VISIBLE mode=$mode"; exit 1; }
+  # Back must open our real menu rather than terminate the playing process.
+  adb shell input keyevent KEYCODE_BACK
+  click_text 'Продолжить' || { echo "PLAYER_BACK_MENU_NOT_VISIBLE mode=$mode"; exit 1; }
+  [ "$(adb shell pidof "$package:kenji" | tr -d '\r' || true)" = "$player_pid" ] || { echo "PLAYER_BACK_ENDED_SESSION mode=$mode"; exit 1; }
+  echo "PLAYER_BACK_MENU_ALIVE mode=$mode" | tee -a "$W/redroid-status.txt"
+  exit_player || { echo "PLAYER_EXIT_BUTTON_NOT_VISIBLE mode=$mode"; exit 1; }
   for ((n=0;n<45;n++)); do
     pid=$(adb shell pidof "$package:kenji" | tr -d '\r' || true)
     [ -z "$pid" ] && break
@@ -402,7 +415,7 @@ if [ "${PLAYER_CORE_UPDATE:-0}" = 1 ] && [ "${PLAYER_HID_LONG:-0}" = 1 ]; then
   ! app_crashed || { echo 'QUIET_PLAYER_FATAL'; exit 1; }
   echo 'PLAYER_RETAINED_OLD_PANIC_DID_NOT_STOP_PLAYER' | tee -a "$W/redroid-status.txt"
   echo 'PLAYER_QUIET_LOG_POLICY_REQUESTED_AND_ALIVE' | tee -a "$W/redroid-status.txt"
-  click_text 'Выйти' || { echo 'QUIET_PLAYER_EXIT_NOT_VISIBLE'; exit 1; }
+  exit_player || { echo 'QUIET_PLAYER_EXIT_NOT_VISIBLE'; exit 1; }
   for ((n=0;n<45;n++)); do
     pid=$(adb shell pidof "$package:kenji" | tr -d '\r' || true)
     [ -z "$pid" ] && break
@@ -447,7 +460,7 @@ if [ "${PLAYER_HID_LONG:-0}" = 1 ]; then
       hid_failed=1
     fi
     echo "PLAYER_HID_LONG_RESULT core=$hid_label outcome=$outcome" | tee -a "$W/redroid-status.txt"
-    click_text 'Выйти' || true
+    exit_player || true
     for ((n=0;n<30;n++)); do
       pid=$(adb shell pidof "$package:kenji" | tr -d '\r' || true)
       [ -z "$pid" ] && break; sleep 1
@@ -515,7 +528,7 @@ if [ "${PLAYER_GUEST_ACCOUNT:-0}" = 1 ]; then
       fi
       echo "PLAYER_ACCOUNT_RESULT core=$account_label mode=$mode outcome=$outcome" | tee -a "$W/redroid-status.txt"
       [ "$outcome" = verified ] || account_failed=1
-      click_text 'Выйти' || true
+      exit_player || true
       pid=''
       for ((n=0;n<30;n++)); do
         pid=$(adb shell pidof "$package:kenji" | tr -d '\r' || true)
@@ -627,7 +640,7 @@ if [ "${PLAYER_GUEST_NETWORK:-0}" = 1 ]; then
         kill "$guest_server_pid" 2>/dev/null || true
         wait "$guest_server_pid" 2>/dev/null || true
         guest_server_pid=''
-        click_text 'Выйти' || true
+        exit_player || true
         pid=''
         for ((n=0;n<30;n++)); do
           pid=$(adb shell pidof "$package:kenji" | tr -d '\r' || true)
@@ -736,7 +749,7 @@ if [ "${PLAYER_GUEST_TLS:-0}" = 1 ]; then
     wait "$guest_server_pid" 2>/dev/null || true
     guest_server_pid=''
     # Stop even when the test fails, so the next pinned binary is isolated.
-    click_text 'Выйти' || true
+    exit_player || true
     for ((n=0;n<30;n++)); do
       pid=$(adb shell pidof "$package:kenji" | tr -d '\r' || true)
       [ -z "$pid" ] && break; sleep 1
@@ -800,7 +813,7 @@ if [ "${PLAYER_TLS_PARALLEL:-0}" = 1 ]; then
   wait "$guest_server_pid" 2>/dev/null || true
   guest_server_pid=''
   adb reverse --remove tcp:19445
-  click_text 'Выйти' || true
+  exit_player || true
   for ((n=0;n<30;n++)); do
     pid=$(adb shell pidof "$package:kenji" | tr -d '\r' || true)
     [ -z "$pid" ] && break; sleep 1
@@ -933,7 +946,7 @@ python3 tests/player_runtime_probe/check_exit_insets.py "$W/player-ui.xml" | tee
 ! app_crashed || { echo 'GRAPHICS_PLAYER_FATAL'; exit 1; }
 # Callback absence is reported, not invented or made a pass requirement.
 grep -E "^[0-9-]+ +[0-9:.]+ +$player_pid +[0-9]+ .*CI_ONLY_GRAPHICS" "$log" | tee -a "$W/redroid-status.txt" || true
-click_text 'Выйти' || { echo 'GRAPHICS_EXIT_BUTTON_NOT_VISIBLE'; exit 1; }
+exit_player || { echo 'GRAPHICS_EXIT_BUTTON_NOT_VISIBLE'; exit 1; }
 for ((n=0;n<45;n++)); do
   pid=$(adb shell pidof "$package:kenji" | tr -d '\r' || true)
   [ -z "$pid" ] && break
@@ -974,7 +987,7 @@ for setting in true true false; do
   [ "$visible" = 1 ] || { echo "SHADER_TRIANGLE_NOT_VISIBLE case=$case_count"; exit 1; }
   wait_log 'DEKO_CI_60_PRESENTS_RETURNED' || { echo "SHADER_GUEST_NO_CONTINUED_PRESENT case=$case_count"; exit 1; }
   ! app_crashed || { echo "SHADER_PLAYER_FATAL case=$case_count"; exit 1; }
-  click_text 'Выйти' || { echo "SHADER_EXIT_NOT_VISIBLE case=$case_count"; exit 1; }
+  exit_player || { echo "SHADER_EXIT_NOT_VISIBLE case=$case_count"; exit 1; }
   for ((n=0;n<45;n++)); do
     pid=$(adb shell pidof "$package:kenji" | tr -d '\r' || true)
     [ -z "$pid" ] && break
