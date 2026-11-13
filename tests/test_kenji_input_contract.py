@@ -96,9 +96,12 @@ class InputContract(unittest.TestCase):
         self.assertIn('setOnClickListener { showStatusDetails() }', setup)
 
     def test_back_opens_menu_and_exit_requires_confirmation(self):
-        back = ACTIVITY.split('override fun onBackPressed()', 1)[1].split('override fun onDestroy()', 1)[0]
+        back = ACTIVITY.split('private fun handlePlayerBack()', 1)[1].split('override fun onDestroy()', 1)[0]
         self.assertIn('else showPlayerMenu()', back)
         self.assertNotIn('else leave()', back)
+        self.assertIn('handlePlayerBack()', back.split('override fun onBackPressed()', 1)[1])
+        self.assertIn('OnBackInvokedCallback { handlePlayerBack() }', ACTIVITY)
+        self.assertIn('unregisterOnBackInvokedCallback', ACTIVITY)
         menu = ACTIVITY.split('private fun showPlayerMenu()', 1)[1].split('private lateinit var overlay:', 1)[0]
         self.assertIn('PopupWindow(this)', menu)
         self.assertIn('Игра продолжает работать', menu)

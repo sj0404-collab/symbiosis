@@ -250,6 +250,7 @@ service = """
             android:exported="false" />
         <activity
             android:name="org.yuzu.yuzu_emu.activities.KenjiPlayerActivity"
+            android:enableOnBackInvokedCallback="true"
             android:process=":kenji"
             android:exported="false"
             android:theme="@android:style/Theme.Black.NoTitleBar.Fullscreen"
@@ -359,6 +360,7 @@ if 'KenjiPlayerActivity' in text:
 act = '''
         <activity
             android:name="org.yuzu.yuzu_emu.activities.KenjiPlayerActivity"
+            android:enableOnBackInvokedCallback="true"
             android:process=":kenji"
             android:exported="false"
             android:theme="@android:style/Theme.Black.NoTitleBar.Fullscreen"

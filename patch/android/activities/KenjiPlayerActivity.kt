@@ -86,6 +86,8 @@ class KenjiPlayerActivity : Activity(), SurfaceHolder.Callback {
                 .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
     }
 
+    // Android 13+ predictive Back can bypass the deprecated onBackPressed().
+    private var systemBackCallback: android.window.OnBackInvokedCallback? = null
     private var pfd: ParcelFileDescriptor? = null
     private var sessionLease: GameSessionLock? = null
     // One reference from ANativeWindow_fromSurface, owned until teardown.
@@ -316,6 +318,13 @@ class KenjiPlayerActivity : Activity(), SurfaceHolder.Callback {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        if (android.os.Build.VERSION.SDK_INT >= 33) {
+            systemBackCallback = android.window.OnBackInvokedCallback { handlePlayerBack() }.also {
+                onBackInvokedDispatcher.registerOnBackInvokedCallback(
+                    android.window.OnBackInvokedDispatcher.PRIORITY_DEFAULT, it
+                )
+            }
+        }
         // Never start a native session if the manifest did not isolate this
         // activity: its teardown deliberately exits the :kenji process.
         if (!isIsolatedKenjiProcess()) {
@@ -1140,9 +1149,13 @@ class KenjiPlayerActivity : Activity(), SurfaceHolder.Callback {
         }, "kenji-stop").also { stopThread = it; it.start() }
     }
 
+    private fun handlePlayerBack() {
+        if (sessionLease == null) finish() else showPlayerMenu()
+    }
+
     @Deprecated("Deprecated in Java")
     override fun onBackPressed() {
-        if (sessionLease == null) finish() else showPlayerMenu()
+        handlePlayerBack()
     }
 
     /**
@@ -1159,6 +1172,10 @@ class KenjiPlayerActivity : Activity(), SurfaceHolder.Callback {
      * следующую игру запускать небезопасно.
      */
     override fun onDestroy() {
+        if (android.os.Build.VERSION.SDK_INT >= 33) {
+            systemBackCallback?.let { onBackInvokedDispatcher.unregisterOnBackInvokedCallback(it) }
+            systemBackCallback = null
+        }
         val lease = sessionLease
         if (lease == null) {
             super.onDestroy()
