@@ -292,9 +292,6 @@ jobs:
           ccache --set-config=hash_dir=false
           ccache --set-config=compiler_check=content
           ./gradlew assembleLegacyDebug -PYUZU_ANDROID_ARGS='-DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache' --parallel --max-workers=4
-      - name: Audit FFmpeg and license in disposable APK
-        run: |
-          python3 fork/tests/player_runtime_probe/audit_ffmpeg_apk.py "$PLAY_WORK/player-debug.apk"
       - name: Prepare pinned core and self-authored NRO
         working-directory: fork
         run: |
@@ -321,6 +318,9 @@ jobs:
             rm "$PLAY_WORK/reference.apk"
           fi
           bash tests/player_runtime_probe/build_nro.sh
+      - name: Audit FFmpeg and license in disposable APK
+        run: |
+          python3 fork/tests/player_runtime_probe/audit_ffmpeg_apk.py "$PLAY_WORK/player-debug.apk"
       - name: Audit actual debug APK ELF and ZIP alignment
         if: inputs.tls_candidate || inputs.bundled_tls_probe
         working-directory: fork
