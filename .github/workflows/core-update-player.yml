@@ -1,0 +1,11 @@
+name: Test signed core update in ARM player
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  real-player:
+    uses: ./.github/workflows/kenji-player-runtime.yml
+    with:
+      core_update: true
+      bundled_tls_probe: true
