@@ -434,11 +434,9 @@ object KenjiBridge {
      * Перенести профиль пользователя Eden во второе ядро.
      *
      * ЗАЧЕМ. У ядра свой `AccountManager`: он читает `<корень>/Profiles` и
-     * заводит пользователя «KenPlayer», если не нашёл никого. Игры спрашивают
-     * сервис учётной записи почти сразу после запуска (`IsUserAccountSwitchLocked`
-     * и соседние методы), и на пустом профиле эти вызовы кончаются
-     * исключением в гостевом потоке: игра встаёт на чёрном экране, а в журнале
-     * остаётся `Unhandled exception in guest thread`.
+     * может создать собственного пользователя, если не нашёл никого. Наличие
+     * или отсутствие файлов Eden не доказывает состояние AccountManager и не
+     * устанавливает причину исключения службы учётной записи.
      *
      * Профиль Eden переносится как есть — это те же json-файлы Ryujinx:
      * раскладка каталога у обоих ядер совпадает.
@@ -464,7 +462,7 @@ object KenjiBridge {
                 copied++
             }
         }
-        return if (copied > 0) "профиль Eden перенесён: $copied файлов" else "профиль Eden пуст"
+        return if (copied > 0) "профиль Eden перенесён: $copied файлов" else "файлы профиля Eden для переноса не найдены или недоступны"
     }
 
     /**
@@ -797,7 +795,8 @@ object KenjiBridge {
         return Status(
             true,
             "плеер второго ядра готов · " + lastConfig + " · " + fwText +
-                (if (fwShare.isNotEmpty()) " · " + fwShare else "") + " · " + firmware +
+                (if (fwShare.isNotEmpty()) " · " + fwShare else "") +
+                (if (firmware.isNotEmpty() && firmware != bridgeReport) " · " + firmware else "") +
                 " · " + profile,
             started.symbols
         )

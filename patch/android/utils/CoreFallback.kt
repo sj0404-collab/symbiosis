@@ -98,7 +98,7 @@ object CoreFallback {
                 .getOrDefault(false)
             // Проверка обратным чтением: «записали» и «сохранено» — разные вещи.
             val verified = ok && runCatching { EngineStore.coreFor(context, path) }
-                .getOrDefault(EngineHybrid.Core.EDEN) == EngineHybrid.Core.EDEN
+                .getOrNull() == EngineHybrid.Core.EDEN
             if (verified) {
                 applied++
                 kept = CoreFallbackNotes.remove(kept, path)
@@ -110,15 +110,14 @@ object CoreFallback {
 
         return when {
             failed == 0 && applied > 0 ->
-                "Эта игра переведена на Eden: выбор сохранён за ней и проверен — " +
-                    "при следующем запуске она пойдёт на Eden."
+                "Для игры выбран Eden: значение прочитано сразу после записи. " +
+                    "Следующий запуск и работа игры на Eden ещё не проверены."
             failed > 0 && applied > 0 ->
                 "Часть выбора сохранить не удалось ($failed). Записка оставлена: " +
                     "при следующем запуске попробую снова."
             else ->
-                "Перевести игру на Eden не удалось: путь игры не сохраняется в настройках " +
-                    "(такое бывает у игр, открытых через внешнее хранилище). " +
-                    "Выберите Eden долгим нажатием на плитке — это сработает всегда."
+                "Не удалось подтвердить выбор Eden для игры. " +
+                    "Попробуйте выбрать ядро долгим нажатием на плитке; причина не установлена."
         }
     }
 }
