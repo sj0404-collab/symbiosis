@@ -168,7 +168,7 @@ object NativeLibraryPresenter {
         val split = side.count { it.kind == "split" }
         val gamesCount = games.size
 
-        val onKenji = games.count { it.core == "kenji" }
+        val onKenji = games.count { it.core == "kenji" || it.core == "авто · kenji" }
 
         return Model(
             items = all,

@@ -149,6 +149,7 @@ if command -v kotlinc >/dev/null 2>&1; then
       # The hybrid decides which Eden setting reaches the second core, and
       # which stays its own. Plain Kotlin, so it compiles against the real file.
       EngineHybridTest) echo "$HERE/patch/android/utils/EngineHybrid.kt" ;;
+      CoreBenchmarkTest) echo "$HERE/patch/android/utils/CoreBenchmark.kt $HERE/patch/android/utils/EngineHybrid.kt" ;;
       SignedCoreManifestTest) echo "$HERE/patch/android/utils/SignedCoreManifest.kt" ;;
       CoreUpdateStoreTest) echo "$HERE/patch/android/utils/CoreUpdateStore.kt $HERE/patch/android/utils/SignedCoreManifest.kt $HERE/patch/android/utils/GameSessionLock.kt" ;;
       CoreElfCheckTest) echo "$HERE/patch/android/utils/CoreElfCheck.kt" ;;

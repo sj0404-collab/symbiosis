@@ -154,6 +154,7 @@ class EmulationFragment : Fragment(), SurfaceHolder.Callback {
     private var deferGameSetupUntilStopCompletes = false
 
     private var perfStatsRunnable: Runnable? = null
+    private var benchmarkRunnable: Runnable? = null
     private var socRunnable: Runnable? = null
     private var isAmiiboPickerOpen = false
     private var amiiboLoadJob: Job? = null
@@ -1931,6 +1932,8 @@ class EmulationFragment : Fragment(), SurfaceHolder.Callback {
         }
 
     override fun onPause() {
+        benchmarkRunnable?.let { handler.removeCallbacks(it) }
+        benchmarkRunnable = null
         if (this::emulationState.isInitialized) {
             if (emulationState.isRunning && emulationActivity?.isInPictureInPictureMode != true) {
                 pauseEmulationAndCaptureFrame()
@@ -1968,6 +1971,7 @@ class EmulationFragment : Fragment(), SurfaceHolder.Callback {
     override fun onResume() {
         super.onResume()
         val b = _binding ?: return
+        startPassiveBenchmark()
         updateStatsPosition(IntSetting.PERF_OVERLAY_POSITION.getInt())
         updateSocPosition(IntSetting.SOC_OVERLAY_POSITION.getInt())
 
@@ -1984,6 +1988,39 @@ class EmulationFragment : Fragment(), SurfaceHolder.Callback {
         initializeOverlayAutoHide()
 
         addQuickSettings()
+    }
+
+    /** Passive estimates only while this user session is actually running. */
+    private fun startPassiveBenchmark() {
+        benchmarkRunnable?.let { handler.removeCallbacks(it) }
+        val app = context?.applicationContext ?: return
+        val runnable = object : Runnable {
+            var measuredPath = ""
+            var recorder: org.yuzu.yuzu_emu.utils.CoreBenchmark.Recorder? = null
+            override fun run() {
+                if (_binding == null || !isResumed) return
+                val path = game?.path.orEmpty()
+                val active = path.isNotEmpty() && emulationViewModel.emulationStarted.value &&
+                    !emulationViewModel.isEmulationStopping.value &&
+                    runCatching { NativeLibrary.isRunning() && !NativeLibrary.isPaused() }.getOrDefault(false)
+                if (active) {
+                    if (measuredPath != path) {
+                        measuredPath = path
+                        recorder = org.yuzu.yuzu_emu.utils.CoreBenchmarkStore.generation(app)
+                            ?.let { org.yuzu.yuzu_emu.utils.CoreBenchmark.Recorder(it) }
+                    }
+                    val fps = runCatching { NativeLibrary.getPerfStats().getOrNull(1)?.toDouble() ?: 0.0 }.getOrDefault(0.0)
+                    val sample = recorder?.observe(android.os.SystemClock.elapsedRealtime(), System.currentTimeMillis(), fps)
+                    if (sample != null) Thread({
+                        org.yuzu.yuzu_emu.utils.CoreBenchmark.save(app.filesDir, path,
+                            org.yuzu.yuzu_emu.utils.EngineHybrid.Core.EDEN, sample)
+                    }, "eden-fps-save").start()
+                }
+                if (benchmarkRunnable === this) handler.postDelayed(this, 3000)
+            }
+        }
+        benchmarkRunnable = runnable
+        handler.postDelayed(runnable, 3000)
     }
 
     private fun resetInputOverlay() {

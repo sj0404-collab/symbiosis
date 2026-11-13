@@ -141,10 +141,15 @@ class LauncherTileAdapter(
         }
 
         holder.itemView.setOnClickListener { onClick(item) }
-        holder.itemView.setOnLongClickListener {
+        holder.cover.setOnClickListener { onClick(item) }
+        holder.monogram.setOnClickListener { onClick(item) }
+        val openGameActions = View.OnLongClickListener {
             onLongClick(item)
             true
         }
+        holder.itemView.setOnLongClickListener(openGameActions)
+        holder.cover.setOnLongClickListener(openGameActions)
+        holder.monogram.setOnLongClickListener(openGameActions)
     }
 
     /** Чип в цвете своей метки: подложка прозрачная, текст яркий. */

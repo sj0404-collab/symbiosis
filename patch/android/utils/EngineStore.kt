@@ -129,13 +129,36 @@ object EngineStore {
             else -> p.getString(KEY_PER_GAME + key, null)
                 ?: p.getString(KEY_PER_NAME + EngineHybrid.gameKeyByName(path), null)
         }
+        if (perGame == "auto") {
+            val default = globalCore(context)
+            return CoreBenchmarkStore.compare(context, path, default).choice ?: default
+        }
         return EngineHybrid.coreFor(globalCore(context).id, perGame)
+    }
+
+    fun isAuto(context: Context, path: String): Boolean {
+        val key = EngineHybrid.gameKey(path)
+        if (key.isEmpty()) return false
+        val p = prefs(context)
+        val raw = p.getString(KEY_PER_GAME + key, null)
+            ?: p.getString(KEY_PER_NAME + EngineHybrid.gameKeyByName(path), null)
+        return raw == "auto"
+    }
+
+    fun setAuto(context: Context, path: String): Boolean {
+        val key = EngineHybrid.gameKey(path)
+        if (key.isEmpty()) return false
+        val name = EngineHybrid.gameKeyByName(path)
+        val editor = prefs(context).edit().putString(KEY_PER_GAME + key, "auto")
+        if (name.isNotEmpty()) editor.putString(KEY_PER_NAME + name, "auto")
+        return runCatching { editor.commit() }.getOrDefault(false)
     }
 
     fun perGame(context: Context, path: String): EngineHybrid.Core? {
         val key = EngineHybrid.gameKey(path)
         if (key.isEmpty()) return null
         val raw = prefs(context).getString(KEY_PER_GAME + key, null) ?: return null
+        if (raw == "auto") return coreFor(context, path)
         return EngineHybrid.Core.of(raw)
     }
 

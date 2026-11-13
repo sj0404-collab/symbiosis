@@ -389,7 +389,8 @@ class NativeLauncherFragment : Fragment() {
                 titleId = runCatching { game.programIdHex }.getOrDefault(""),
                 developer = game.developer,
                 fileName = fileNameOf(game.path),
-                core = if (core == EngineHybrid.Core.KENJI) core.short else ""
+                core = if (EngineStore.isAuto(ctx, game.path)) "авто · ${core.short}"
+                    else if (core == EngineHybrid.Core.KENJI) core.short else ""
             )
         }
 
@@ -469,6 +470,12 @@ class NativeLauncherFragment : Fragment() {
                 val ctx = requireContext().applicationContext
                 val core = runCatching { EngineStore.coreFor(ctx, game.path) }
                     .getOrDefault(EngineHybrid.Core.EDEN)
+                if (EngineStore.isAuto(ctx, game.path)) {
+                    val result = org.yuzu.yuzu_emu.utils.CoreBenchmarkStore.compare(ctx, game.path, EngineStore.globalCore(ctx))
+                    val msg = if (result.choice == null) "Авто: пока нет замеров обоих ядер, выбрано общее ядро ${core.short}."
+                        else "Авто: ${core.short} по приблизительным замерам FPS."
+                    android.widget.Toast.makeText(ctx, msg, android.widget.Toast.LENGTH_LONG).show()
+                }
                 launchOn(game, core)
             }
             NativeLibraryPresenter.Action.CONVERT -> askConvert(item)
@@ -486,41 +493,94 @@ class NativeLauncherFragment : Fragment() {
     private fun onItemLongClick(item: NativeLibraryPresenter.Item) {
         val game = games.getOrNull(item.gameIndex) ?: return
         val ctx = requireContext().applicationContext
-        val current = runCatching { EngineStore.coreFor(ctx, game.path) }
-            .getOrDefault(EngineHybrid.Core.EDEN)
-        val options = arrayOf(
-            getString(R.string.launcher_core_eden),
-            getString(R.string.launcher_core_kenji),
-            getString(R.string.launcher_saves_menu),
-            getString(R.string.launcher_properties)
-        )
-        MaterialAlertDialogBuilder(requireContext())
-            .setTitle(game.title)
-            .setItems(options) { _, which ->
-                when (which) {
-                    0 -> runOnCore(game, EngineHybrid.Core.EDEN)
-                    1 -> runOnCore(game, EngineHybrid.Core.KENJI)
-                    2 -> openSaves(game)
-                    else -> openProperties(game)
+        val themed = requireContext()
+        val density = resources.displayMetrics.density
+        fun dp(v: Int) = (v * density).toInt()
+        val panel = android.widget.LinearLayout(themed).apply {
+            orientation = android.widget.LinearLayout.VERTICAL
+            setPadding(dp(20), dp(8), dp(20), dp(4))
+        }
+        val details = android.widget.TextView(themed).apply {
+            setTextColor(SymbiosisTheme.TEXT)
+            textSize = 14f
+            setPadding(0, dp(10), 0, dp(12))
+        }
+        val group = android.widget.RadioGroup(themed).apply {
+            orientation = android.widget.RadioGroup.HORIZONTAL
+        }
+        val edenId = View.generateViewId()
+        val autoId = View.generateViewId()
+        val kenjiId = View.generateViewId()
+        listOf(edenId to "Eden", autoId to "Авто", kenjiId to "Kenji").forEach { (id, label) ->
+            group.addView(android.widget.RadioButton(themed).apply {
+                this.id = id
+                text = label
+                textSize = 13f
+                setTextColor(SymbiosisTheme.TEXT)
+                buttonTintList = android.content.res.ColorStateList.valueOf(SymbiosisTheme.PINK)
+            }, android.widget.RadioGroup.LayoutParams(0, android.widget.RadioGroup.LayoutParams.WRAP_CONTENT, 1f))
+        }
+        val automatic = EngineStore.isAuto(ctx, game.path)
+        val current = EngineStore.coreFor(ctx, game.path)
+        group.check(if (automatic) autoId else if (current == EngineHybrid.Core.KENJI) kenjiId else edenId)
+        fun updateDetails() {
+            val result = org.yuzu.yuzu_emu.utils.CoreBenchmarkStore.compare(ctx, game.path, EngineStore.globalCore(ctx))
+            val chosen = EngineStore.coreFor(ctx, game.path)
+            val reason = if (EngineStore.isAuto(ctx, game.path)) {
+                if (result.choice == null) "Авто: данных с обоих ядер пока недостаточно; используется общее ядро ${chosen.short}."
+                else "Авто выбрало ${chosen.short} по примерным замерам FPS."
+            } else "Выбрано: ${chosen.short}."
+            val note = CoreFallback.noteFor(ctx, game.path)
+            details.text = reason + "\nEden: " + org.yuzu.yuzu_emu.utils.CoreBenchmark.label(result.eden) +
+                "\nKenji: " + org.yuzu.yuzu_emu.utils.CoreBenchmark.label(result.kenji) +
+                "\nЗамеры собираются в обычной игре после прогрева. Разные сцены и настройки влияют на сравнение." +
+                if (note.isBlank()) "" else "\nПрошлый сбой Kenji: " + note.take(160)
+        }
+        updateDetails()
+        panel.addView(group)
+        panel.addView(details)
+        val actions = android.widget.LinearLayout(themed).apply { orientation = android.widget.LinearLayout.HORIZONTAL }
+        val saves = com.google.android.material.button.MaterialButton(themed, null, com.google.android.material.R.attr.materialButtonOutlinedStyle).apply { text = "Сейвы" }
+        val properties = com.google.android.material.button.MaterialButton(themed, null, com.google.android.material.R.attr.materialButtonOutlinedStyle).apply { text = "Свойства" }
+        actions.addView(saves, android.widget.LinearLayout.LayoutParams(0, -2, 1f))
+        actions.addView(properties, android.widget.LinearLayout.LayoutParams(0, -2, 1f))
+        panel.addView(actions)
+        val scroll = android.widget.ScrollView(themed).apply { addView(panel) }
+        val dialog = MaterialAlertDialogBuilder(themed).setTitle(game.title).setView(scroll)
+            .setPositiveButton("Запустить") { _, _ ->
+                val selected = EngineStore.coreFor(ctx, game.path)
+                if (EngineStore.isAuto(ctx, game.path)) {
+                    val compared = org.yuzu.yuzu_emu.utils.CoreBenchmarkStore.compare(ctx, game.path, EngineStore.globalCore(ctx))
+                    if (compared.choice == null) Snackbar.make(binding.root,
+                        "Авто: нет замеров обоих ядер; запускаю на общем ядре ${selected.short}.", Snackbar.LENGTH_LONG).show()
                 }
+                launchOn(game, selected)
+            }.setNegativeButton("Закрыть", null).create()
+        var restoringChoice = false
+        var savedId = if (automatic) autoId else if (current == EngineHybrid.Core.KENJI) kenjiId else edenId
+        group.setOnCheckedChangeListener { _, id ->
+            if (restoringChoice) return@setOnCheckedChangeListener
+            val saved = runCatching { when (id) {
+                autoId -> EngineStore.setAuto(ctx, game.path)
+                edenId -> EngineStore.setCoreFor(ctx, game.path, EngineHybrid.Core.EDEN)
+                kenjiId -> EngineStore.setCoreFor(ctx, game.path, EngineHybrid.Core.KENJI)
+                else -> false
+            } }.getOrDefault(false)
+            if (saved) {
+                savedId = id
+                if (id == kenjiId) CoreFallback.clearFor(ctx, game.path)
+                updateDetails()
+                render()
+            } else {
+                restoringChoice = true
+                group.check(savedId)
+                restoringChoice = false
+                Snackbar.make(binding.root, "Не удалось сохранить выбор ядра.", Snackbar.LENGTH_LONG).show()
             }
-            .setMessage(
-                run {
-                    val now = getString(
-                        R.string.launcher_core_now,
-                        if (current == EngineHybrid.Core.KENJI) "Kenji-NX" else "Eden"
-                    )
-                    // Если за игрой есть записка, человек должен видеть это
-                    // здесь: иначе непонятно, почему она идёт не тем ядром,
-                    // которое он выбрал в прошлый раз.
-                    val why = runCatching { CoreFallback.noteFor(ctx, game.path) }
-                        .getOrDefault("")
-                    if (why.isEmpty()) now
-                    else "$now\n\nПрошлый запуск эта игра не пережила на втором ядре: " +
-                        why.take(160) + "\n\nВыбор Kenji сотрёт эту пометку."
-                }
-            )
-            .show()
+        }
+        saves.setOnClickListener { dialog.dismiss(); openSaves(game) }
+        properties.setOnClickListener { dialog.dismiss(); openProperties(game) }
+        dialog.show()
     }
 
     /**
@@ -541,35 +601,6 @@ class NativeLauncherFragment : Fragment() {
         }.onFailure {
             Snackbar.make(binding.root, R.string.launcher_nav_failed, Snackbar.LENGTH_LONG).show()
         }
-    }
-
-    /**
-     * Запомнить ядро за игрой и запустить её этим ядром.
-     *
-     * Явный выбор человека сильнее автоматики: если за игрой была записка
-     * «ядро её роняло», она стирается. Иначе вышло бы, что приложение
-     * спорит с владельцем телефона — он просит Kenji, а оно втихую
-     * запускает Eden.
-     */
-    private fun runOnCore(game: Game, core: EngineHybrid.Core) {
-        val ctx = requireContext().applicationContext
-        val wasMarked = runCatching { CoreFallback.isMarked(ctx, game.path) }.getOrDefault(false)
-        if (wasMarked && core == EngineHybrid.Core.KENJI) {
-            runCatching { CoreFallback.clearFor(ctx, game.path) }
-        }
-        runCatching { EngineStore.setCoreFor(ctx, game.path, core) }
-        render()
-        if (wasMarked && core == EngineHybrid.Core.KENJI) {
-            // Говорим прямо, что это его решение: иначе следующий отчёт о
-            // падении будет выглядеть как «приложение опять не послушало».
-            Snackbar.make(
-                binding.root,
-                "Запускаю на Kenji-NX по вашему выбору. Прошлый запуск эта игра " +
-                    "уронила — если упадёт снова, вернутся записка и перевод на Eden.",
-                Snackbar.LENGTH_LONG
-            ).show()
-        }
-        launchOn(game, core)
     }
 
     private fun openProperties(game: Game) {
@@ -639,7 +670,7 @@ class NativeLauncherFragment : Fragment() {
                     binding.root,
                     "Прошлый запуск этой игры второе ядро не пережило" +
                         (if (why.isNotEmpty()) " (${why.take(90)})" else "") +
-                        " — запускаю на Eden. Вернуть Kenji: долгое нажатие → «Запустить на Kenji-NX».",
+                        " — запускаю на Eden. Вернуть Kenji: удерживайте обложку и выберите Kenji.",
                     Snackbar.LENGTH_LONG
                 ).show()
                 navigateToGame(game)

@@ -136,6 +136,7 @@ class KenjiPlayerActivity : Activity(), SurfaceHolder.Callback {
     private var hidCalls = java.util.LinkedHashMap<String, String>()
     /** Игра уже встала внутри ядра — второй раз не сообщаем. */
     @Volatile private var guestFailed = false
+    @Volatile private var benchmarkHasFocus = false
     /** Путь игры: по нему основной процесс переведёт её на Eden. */
     private var gamePath = ""
     /** Когда начали: журнал старше этого времени — от прошлого запуска. */
@@ -618,6 +619,8 @@ class KenjiPlayerActivity : Activity(), SurfaceHolder.Callback {
         watchdogThread = worker
         watchdogHandler = background
         val tick = object : Runnable {
+            private var benchmarkInitialized = false
+            private var benchmark: org.yuzu.yuzu_emu.utils.CoreBenchmark.Recorder? = null
             override fun run() {
                 synchronized(watchdogLock) { tickOnce() }
             }
@@ -678,6 +681,17 @@ class KenjiPlayerActivity : Activity(), SurfaceHolder.Callback {
                     checkGuestFailure(appContext)
                     if (guestFailed) return
                 }
+                val coreFps = runCatching { KenjiBridge.gameFrameRate() }.getOrDefault(0.0)
+                if (!benchmarkInitialized) {
+                    benchmarkInitialized = true
+                    benchmark = org.yuzu.yuzu_emu.utils.CoreBenchmarkStore.generation(appContext)
+                        ?.let { org.yuzu.yuzu_emu.utils.CoreBenchmark.Recorder(it) }
+                }
+                if (benchmarkHasFocus && !guestFailed) {
+                    val sample = benchmark?.observe(android.os.SystemClock.elapsedRealtime(), System.currentTimeMillis(), coreFps)
+                    if (sample != null) org.yuzu.yuzu_emu.utils.CoreBenchmark.save(
+                        appContext.filesDir, gamePath, EngineHybrid.Core.KENJI, sample)
+                }
                 val details = buildString {
                     append("второе ядро · выполняется · ").append(seconds).append(" с")
                     append('\n').append(KenjiBridge.lastConfig)
@@ -686,7 +700,6 @@ class KenjiPlayerActivity : Activity(), SurfaceHolder.Callback {
                     // Счётчик самого ядра рядом с нашим: если он растёт, а наш
                     // стоит — картинка есть, а колбэк `frameEnded` до нас не
                     // доходит. Это разные поломки с разными причинами.
-                    val coreFps = runCatching { KenjiBridge.gameFrameRate() }.getOrDefault(0.0)
                     if (coreFps > 0.0) append("\nядро считает кадров/с: ").append((coreFps * 10).toInt() / 10.0)
                     if (KenjiBridge.lastUser.isEmpty()) {
                         append("\nпрофиль не открыт — сервис учётной записи может упасть")
@@ -1012,6 +1025,7 @@ class KenjiPlayerActivity : Activity(), SurfaceHolder.Callback {
 
     override fun onWindowFocusChanged(hasFocus: Boolean) {
         super.onWindowFocusChanged(hasFocus)
+        benchmarkHasFocus = hasFocus
         if (!hasFocus && ::overlay.isInitialized) {
             overlaySink.cancel()
             overlay.refreshControls()
