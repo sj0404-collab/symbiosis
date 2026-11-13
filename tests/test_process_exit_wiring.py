@@ -9,7 +9,8 @@ class ProcessExitWiring(unittest.TestCase):
   caller=(R/'patch/android/utils/KenjiProbeService.kt').read_text()
   self.assertIn('ProcessExitEvidence.matches(expectedPid, expectedStart, it.pid, it.timestamp, now)',system)
   self.assertIn('SysExit.read(context, fallenPid, pidStart)',caller)
-  self.assertIn('записи для PID',caller.replace('запись для PID','записи для PID'))
+  self.assertIn('метка может относиться к прежнему запуску',caller)
+  self.assertIn('она может относиться к прежнему запуску',system)
   self.assertNotIn('snapshot.description.take(120)',system)
  def test_fallback_read_failure_cannot_be_success(self):
   f=(R/'patch/android/utils/CoreFallback.kt').read_text()

@@ -79,7 +79,7 @@ object SysExit {
         val head = StringBuilder()
         val whenText = java.text.SimpleDateFormat("dd.MM.yyyy HH:mm:ss", java.util.Locale.ROOT)
             .format(java.util.Date(snapshot.timestamp))
-        head.append("Системная запись о завершении :kenji (PID и время совпали):\n")
+        head.append("Возможная системная запись о завершении :kenji (PID и время совпали с сохранённой меткой; она может относиться к прежнему запуску):\n")
         head.append("• PID: ").append(snapshot.pid).append(" · время: ").append(whenText).append('\n')
         head.append("• причина: ").append(snapshot.reason)
         if (snapshot.description.isNotBlank()) {

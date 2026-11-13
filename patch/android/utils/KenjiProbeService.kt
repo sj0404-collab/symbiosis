@@ -352,11 +352,12 @@ class KenjiProbeService : Service() {
             // Именно там лежит «Abort message» — текст, с которым процесс сам
             // себя остановил, и кадры, уже сопоставленные с функциями.
             // Last historical exit may be from an unrelated earlier process.
-            // The PID marker is written at the start of this session/probe.
+            // The marker is attempted at session/probe start. If writing failed
+            // or the process died first, it can still belong to an older run.
             val pidStart = runCatching { KenjiBridge.pidFile(context).lastModified().takeIf { it > 0 } }.getOrNull()
             val exit = runCatching { SysExit.read(context, fallenPid, pidStart) }.getOrNull()
             val exitText = if (exit == null)
-                "Системная запись для PID и времени этого запуска не найдена или недоступна."
+                "Системная запись по сохранённым PID и времени не найдена или недоступна; метка может относиться к прежнему запуску."
                 else SysExit.describe(exit)
             if (exitText.isNotEmpty()) {
                 body.append("\n\n").append(exitText)
