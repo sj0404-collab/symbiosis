@@ -14,6 +14,8 @@ class BenchmarkWiring(unittest.TestCase):
         self.assertNotIn('.setMessage(',m)
         self.assertIn('нет замеров обоих ядер',m)
         self.assertIn('group.check(savedId)',m)
+        self.assertIn('findViewById<android.widget.RadioButton>(kenjiId).setOnClickListener', m)
+        self.assertIn('CoreFallback.isMarked(ctx, game.path)', m)
         tile=(R/'patch/android/adapters/LauncherTileAdapter.kt').read_text()
         self.assertIn('holder.cover.setOnLongClickListener(openGameActions)', tile)
         self.assertIn('holder.cover.setOnClickListener { onClick(item) }', tile)

@@ -134,8 +134,8 @@ class KenjiPlayerActivity : Activity(), SurfaceHolder.Callback {
     private var coreLogPath: String? = null
     private val hidHistory = java.util.ArrayDeque<String>()
     private var hidCalls = java.util.LinkedHashMap<String, String>()
-    /** Игра уже встала внутри ядра — второй раз не сообщаем. */
-    @Volatile private var guestFailed = false
+    /** Log evidence alone cannot prove it belongs to this session. */
+    @Volatile private var logObservation = ""
     @Volatile private var benchmarkHasFocus = false
     private val benchmarkFocusEpoch = java.util.concurrent.atomic.AtomicInteger(0)
     /** Путь игры: по нему основной процесс переведёт её на Eden. */
@@ -581,9 +581,15 @@ class KenjiPlayerActivity : Activity(), SurfaceHolder.Callback {
             }
             KenjiBridge.noteStep("цикл завершён")
             synchronized(watchdogLock) {
-                if (!guestFailed && !failed) checkGuestFailure(appContext)
+                if (!failed) checkGuestFailure(appContext)
             }
-            runOnUiThread { if (!guestFailed && !failed) leave() }
+            val observed = logObservation
+            runOnUiThread {
+                if (!failed && !startup.isCancelled()) {
+                    if (observed.isNotEmpty()) fail("Цикл второго ядра завершился. " + observed)
+                    else leave()
+                }
+            }
           } catch (t: Throwable) {
             runCatching {
                 KenjiBridge.crashReportFile(appContext).appendText(
@@ -666,22 +672,16 @@ class KenjiPlayerActivity : Activity(), SurfaceHolder.Callback {
                     seconds >= noFramesLimitSeconds
                 ) {
                     checkGuestFailure(appContext)
-                    if (guestFailed) return
                     noFramesWarned = true
                     runCatching { KenjiReport.watch(appContext,
                         "30 с без callback кадров; это не доказывает отсутствие кадров") }
                 }
-                if (!guestFailed) checkGuestFailure(appContext)
-                // Игра встала внутри ядра: экран уже показывает причину, и
-                // перебивать её счётчиком кадров нельзя — человек читает
-                // именно объяснение.
-                if (guestFailed) return
+                checkGuestFailure(appContext)
                 val tail = coreLogTail(appContext, 2)
                 // The log may have advanced between the first check and tail().
                 if (tail.contains("SvcBreak", ignoreCase = true) ||
                     tail.contains("Unhandled exception in guest thread", ignoreCase = true)) {
                     checkGuestFailure(appContext)
-                    if (guestFailed) return
                 }
                 val coreFps = runCatching { KenjiBridge.gameFrameRate() }.getOrDefault(0.0)
                 if (!benchmarkInitialized) {
@@ -694,7 +694,7 @@ class KenjiPlayerActivity : Activity(), SurfaceHolder.Callback {
                     benchmark?.reset()
                     benchmarkFocusSeen = focusEpoch
                 }
-                if (benchmarkHasFocus && !guestFailed) {
+                if (benchmarkHasFocus && logObservation.isEmpty()) {
                     val sample = benchmark?.observe(android.os.SystemClock.elapsedRealtime(), System.currentTimeMillis(), coreFps)
                     if (sample != null && benchmarkHasFocus && benchmarkFocusEpoch.get() == focusEpoch)
                         org.yuzu.yuzu_emu.utils.CoreBenchmark.save(
@@ -704,6 +704,7 @@ class KenjiPlayerActivity : Activity(), SurfaceHolder.Callback {
                     append("второе ядро · выполняется · ").append(seconds).append(" с")
                     append('\n').append(KenjiBridge.lastConfig)
                     append('\n').append(verdict)
+                    if (logObservation.isNotEmpty()) append("\n").append(logObservation)
                     if (noFramesWarned && frames == 0L) append("\nНет callback кадров за 30 с; это не доказывает, что кадров нет. Игра не остановлена автоматически.")
                     // Счётчик самого ядра рядом с нашим: если он растёт, а наш
                     // стоит — картинка есть, а колбэк `frameEnded` до нас не
@@ -723,8 +724,11 @@ class KenjiPlayerActivity : Activity(), SurfaceHolder.Callback {
                             ?.let { line -> append("\nЧто ядро говорит про отрисовку:\n").append(line) }
                     }
                 }
-                val summary = if (noFramesWarned && frames == 0L)
-                    "Второе ядро · нет callback · подробнее" else "Второе ядро · $seconds с · подробнее"
+                val summary = when {
+                    logObservation.isNotEmpty() -> "Второе ядро · запись об ошибке · подробнее"
+                    noFramesWarned && frames == 0L -> "Второе ядро · нет callback · подробнее"
+                    else -> "Второе ядро · $seconds с · подробнее"
+                }
                 runOnUiThread {
                     if (!startup.isCancelled() && !isFinishing && !isDestroyed) updateStatus(summary, details)
                 }
@@ -740,25 +744,15 @@ class KenjiPlayerActivity : Activity(), SurfaceHolder.Callback {
     }
 
     /**
-     * Ядро уронило гостевой поток — сказать об этом сразу.
-     *
-     * ЗАЧЕМ. 05.11 игра встала через 20 секунд после старта: внутри ядра
-     * возникло исключение на вызове сервиса учётной записи, кадры перестали
-     * идти, а плеер ещё минуту показывал «поверхность создана, кадров нет» —
-     * человек ждал, хотя всё уже было кончено. Теперь журнал ядра читается
-     * каждые три секунды (только новые строки, чтобы не перечитывать файл
-     * целиком), и первое же «Unhandled exception in guest thread» заканчивает
-     * запуск с понятной причиной.
-     *
-     * Починить это наше ядро не может — это его внутренняя ошибка. Зато
-     * приложение запоминает игру и в следующий раз запускает её на Eden.
+     * Показывает замеченные записи без остановки игры. Дата изменения файла
+     * не доказывает, что строка принадлежит текущему сеансу. Чтение ограничено,
+     * журнал и выбор ядра не меняются.
      */
     private fun checkGuestFailure(appContext: android.content.Context) {
         val file = runCatching { KenjiBridge.coreLogFile(appContext) }.getOrNull() ?: return
         if (!file.isFile) return
-        // Журнал от прошлого запуска: в нём уже есть чужое исключение, и
-        // принять его за сегодняшнее — значит перевести здоровую игру на
-        // Eden из-за вчерашней ошибки.
+        // Ignore clearly old files; a recent mtime still does not prove that
+        // every line in an appended file belongs to the current session.
         if (file.lastModified() < playStartedAt) return
         if (coreLogPath != file.absolutePath) {
             coreLogPath = file.absolutePath
@@ -803,16 +797,7 @@ class KenjiPlayerActivity : Activity(), SurfaceHolder.Callback {
             }
         }
         hidCalls = KenjiCrash.mergeHidOperations(hidCalls, fresh)
-        // ДВЕ РАЗНЫЕ ОСТАНОВКИ, И РАНЬШЕ МЫ ВИДЕЛИ ТОЛЬКО ОДНУ.
-        //
-        //  1. Ядро уронило гостевой поток: в журнале
-        //     «Unhandled exception in guest thread».
-        //  2. Игра сама вызвала аварийный останов: в журнале `SvcBreak`
-        //     (`reason=0x0` — BreakReason_Panic). Это не ошибка ядра: игру оно
-        //     уже загрузило и отвечало на её вызовы, а приговор вынесла сама
-        //     игра. Разбор не знал этой строки, поэтому на телефоне 06.11
-        //     человек тридцать секунд смотрел на «кадров нет», хотя причина
-        //     лежала в журнале прямым текстом.
+        // Evidence in this file is observational, not authority to stop.
         val guestThread = fresh.contains("Unhandled exception in guest thread")
         val panic = KenjiCrash.guestPanic(fresh)
         // Третья разновидность: ядро уронило САМО СЕБЯ (.NET-исключение в
@@ -822,112 +807,27 @@ class KenjiPlayerActivity : Activity(), SurfaceHolder.Callback {
         val hostCrash = KenjiCrash.hostCrash(fresh)
         if (!guestThread && panic.isEmpty() && hostCrash.isEmpty()) return
 
-        guestFailed = true
-        if (!guestThread && panic.isEmpty()) {
-            runCatching { KenjiReport.watch(appContext, "ядро: " + hostCrash.take(200)) }
-            requestStop()
-            val tail = fresh.lines()
-                .filter { it.contains("LibKenjinx") || it.contains("System.") }
-                .map { it.trim().take(160) }
-                .distinct()
-                .takeLast(3)
-            runOnUiThread {
-                fail(
-                    "второе ядро остановилось. " + hostCrash +
-                        if (tail.isEmpty()) "" else "\n\n" + tail.joinToString("\n")
-                )
-            }
-            return
+        // A modified file may contain records from an older run. Never stop
+        // the current guest or change its selected core based on text alone.
+        // Keep a bounded diagnostic observation and let the user decide.
+        if (logObservation.isNotEmpty()) return
+        val kind = when {
+            guestThread -> "исключение гостевого потока"
+            panic.isNotEmpty() -> "SvcBreak"
+            else -> "исключение ядра"
         }
-        if (!guestThread) {
-            failOnGuestPanic(appContext, fresh, panic)
-            return
-        }
-
-        val guestBlock = KenjiCrash.guestExceptionBlock(fresh)
-        val why = KenjiCrash.guestFailure(guestBlock)
-        // Строки ДО исключения — единственное место, где ядро могло назвать
-        // номер процесса, который оно не нашло. Без них следующий отчёт
-        // опять будет «что-то внутри ядра».
-        val around = runCatching {
-            val all = fresh.lines()
-            val at = all.indexOfFirst { it.contains("Unhandled exception in guest thread") }
-            if (at < 0) emptyList()
-            else all.subList((at - 8).coerceAtLeast(0), (at + 4).coerceAtMost(all.size))
-        }.getOrDefault(emptyList())
-        around.forEach { line ->
-            if (line.isNotBlank()) runCatching { KenjiReport.watch(appContext, line.trim().take(150)) }
-        }
-        runCatching { CoreFallback.note(appContext, gamePath, why) }
-        runCatching { KenjiReport.watch(appContext, "ядро: " + why.take(160)) }
-        // Остановка может блокироваться в ядре: не задерживаем экран.
-        requestStop()
-        val fallbackText = "После возврата приложение может попробовать выбрать Eden. " +
-            "Чтобы повторить запуск на Kenji, удерживайте плитку игры и выберите Kenji-NX."
-        val observations = KenjiCrash.diagnosticSummary(fresh)
-        runOnUiThread {
-            fail(why + "\n\n" + observations + "\n\n" + fallbackText)
-        }
-    }
-
-    /**
-     * Игра сама остановила себя — сказать это её словами.
-     *
-     * ПОЧЕМУ ОТДЕЛЬНО. Паника гостя (`SvcBreak`) выглядит как наше падение
-     * только если не читать журнал. Ядро уже загрузило игру и десять секунд
-     * отвечало на её запросы; останов попросила сама игра. Человеку нужно
-     * ровно это и услышать: не «прошивки нет» и не «поверхность не создана»,
-     * а «игра сама вышла, вот её последние слова».
-     *
-     * Игру всё равно переводим на Eden: там она работает — проверено.
-     */
-    private fun failOnGuestPanic(appContext: android.content.Context, fresh: String, panic: String) {
-        val context = runCatching { KenjiCrash.panicContext(fresh) }.getOrDefault(emptyList())
-        val evidence = (hidHistory.toList() +
-            runCatching { KenjiCrash.panicEvidence(fresh) }.getOrDefault(emptyList())).distinct()
-        evidence.forEach { line ->
-            runCatching { KenjiReport.watch(appContext, "строка журнала: " + line.take(200)) }
-        }
-        val operations = hidCalls.values.toList()
-        // watch() retains only twelve lines, so keep the full bounded HID
-        // context in the persistent crash report as well; never clear the log.
-        if (operations.isNotEmpty()) runCatching {
+        val observation = "В журнале найдена запись: $kind. Не подтверждено, " +
+            "что она относится к этому запуску. Плеер не останавливал игру по одной записи; " +
+            "подробности сохранены в отчёте."
+        logObservation = observation
+        android.util.Log.w("SymbiosisKenji", "LOG_OBSERVATION_NO_AUTO_STOP kind=$kind")
+        runCatching { KenjiReport.watch(appContext, observation) }
+        runCatching {
+            val evidence = KenjiCrash.panicEvidence(fresh).takeLast(8)
+            val details = KenjiCrash.diagnosticSummary(fresh)
             KenjiBridge.crashReportFile(appContext).appendText(
-                "\nвызовы HID (контекст, не результат и не доказательство причины):\n" +
-                    operations.joinToString("\n") + "\n")
-        }
-        operations.takeLast(4).forEach { line ->
-            runCatching { KenjiReport.watch(appContext, "вызов HID (контекст): " + line.take(300)) }
-        }
-        context.forEach { line ->
-            runCatching { KenjiReport.watch(appContext, "перед паникой: " + line.take(140)) }
-        }
-        runCatching { KenjiReport.watch(appContext, "гость: " + panic.take(200)) }
-        runCatching { CoreFallback.note(appContext, gamePath, panic) }
-        // Preferences are cached per process. The launcher applies the note;
-        // writing from :kenji can overwrite its newer per-game Auto choice.
-        requestStop()
-        val details = if (evidence.isNotEmpty()) evidence else context.take(4)
-        val tail = if (details.isEmpty()) "" else
-            "\n\nСтроки журнала рядом с остановкой (не обязательно причина):\n" +
-                details.joinToString("\n")
-        val next = "После возврата приложение проверит отметку сбоя и предложит Eden. " +
-            "Вы можете повторно выбрать Kenji удержанием обложки."
-        val hint = KenjiCrash.panicResultHint(fresh).let { if (it.isEmpty()) "" else "\n\n" + it }
-        val observations = KenjiCrash.diagnosticSummary(fresh)
-        runCatching { KenjiBridge.crashReportFile(appContext).appendText("\n$observations\n") }
-        val parameters = operations.filter { line ->
-            line.contains("Stubbed", ignoreCase = true) &&
-                (line.contains("SetSupportedNpadIdType", ignoreCase = true) ||
-                 line.contains("SetSupportedNpadStyleSet", ignoreCase = true))
-        }.takeLast(4)
-        val paramText = if (parameters.isEmpty()) "" else
-            "\n\nПараметры, записанные ядром (не причина ошибки):\n" + parameters.joinToString("\n")
-        val hidTail = if (operations.isEmpty()) "" else
-            "\n\nПоследние разные вызовы HID (контекст, не доказательство причины):\n" +
-                operations.takeLast(10).joinToString("\n")
-        runOnUiThread {
-            fail("второе ядро остановилось. " + panic + hint + "\n\n" + observations + tail + paramText + hidTail + "\n\n" + next)
+                "\nНеподтверждённая связь с сеансом: $kind\n$details\n" +
+                    evidence.joinToString("\n") + "\n")
         }
     }
 

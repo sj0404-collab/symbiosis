@@ -97,16 +97,16 @@ class InputContract(unittest.TestCase):
 
     def test_hid_calls_are_context_not_result(self):
         self.assertIn('KenjiCrash.mergeHidOperations(hidCalls, fresh)', ACTIVITY)
-        self.assertIn('контекст, не доказательство причины', ACTIVITY)
+        self.assertIn('KenjiCrash.panicEvidence(fresh)', ACTIVITY)
 
     def test_open_status_dialog_dismissed_on_failure(self):
         fail = ACTIVITY.split('private fun fail(msg: String)', 1)[1].split('private fun openRom', 1)[0]
         self.assertLess(fail.index('detailsDialog?.dismiss()'), fail.index('setContentView(screen)'))
         self.assertIn('detailsText?.text = details', ACTIVITY)
-        self.assertIn('if (!guestFailed && !failed) checkGuestFailure(appContext)', ACTIVITY)
+        self.assertIn('if (!failed) checkGuestFailure(appContext)', ACTIVITY)
 
     def test_no_frame_callback_does_not_stop_game(self):
-        block = ACTIVITY.split('if (!noFramesWarned && frames == 0L', 1)[1].split('if (!guestFailed) checkGuestFailure', 1)[0]
+        block = ACTIVITY.split('if (!noFramesWarned && frames == 0L', 1)[1].split('val tail = coreLogTail', 1)[0]
         self.assertIn('noFramesWarned = true', block)
         self.assertNotIn('requestStop()', block)
         self.assertNotIn('setCoreFor', block)

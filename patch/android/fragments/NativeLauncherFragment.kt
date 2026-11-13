@@ -580,6 +580,19 @@ class NativeLauncherFragment : Fragment() {
                 Snackbar.make(binding.root, "Не удалось сохранить выбор ядра.", Snackbar.LENGTH_LONG).show()
             }
         }
+        // Clicking an already checked radio button does not trigger the group
+        // change listener. It must still count as an explicit Kenji retry.
+        group.findViewById<android.widget.RadioButton>(kenjiId).setOnClickListener {
+            if (group.checkedRadioButtonId == kenjiId && CoreFallback.isMarked(ctx, game.path)) {
+                runCatching { CoreFallback.clearFor(ctx, game.path) }
+                if (CoreFallback.isMarked(ctx, game.path)) {
+                    Snackbar.make(binding.root, "Не удалось снять отметку сбоя Kenji.", Snackbar.LENGTH_LONG).show()
+                } else {
+                    updateDetails()
+                    render()
+                }
+            }
+        }
         saves.setOnClickListener { dialog.dismiss(); openSaves(game) }
         properties.setOnClickListener { dialog.dismiss(); openProperties(game) }
         dialog.show()

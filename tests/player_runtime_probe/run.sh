@@ -368,6 +368,14 @@ done
 # Exercise the default quiet request on the real signed core. This checks that
 # the player survives and asks for the API, not that every binary log source is silent.
 if [ "${PLAYER_CORE_UPDATE:-0}" = 1 ] && [ "${PLAYER_HID_LONG:-0}" = 1 ]; then
+  # CI-only retained log with an old failure. After the player starts we update
+  # its mtime to reproduce the dangerous condition: file freshness alone does
+  # not make an old SvcBreak current. Do not alter any user files or games.
+  printf '%s\n' '00:00:15.200 |E| KernelSvc Break: SvcBreak reason=0x0 tid=46 pc=0x139553C0' > "$W/ci-retained-panic.log"
+  adb push "$W/ci-retained-panic.log" /data/local/tmp/ci-retained-panic.log >/dev/null
+  adb shell chmod 644 /data/local/tmp/ci-retained-panic.log
+  adb shell run-as "$package" mkdir -p files/kenji/Logs
+  adb shell run-as "$package" cp /data/local/tmp/ci-retained-panic.log files/kenji/Logs/ci-retained-panic.log
   adb shell am start -W -n "$package/dev.symbiosis.playerruntime.DiagnosticLauncher" \
     --es test_config 'memory=2' --es test_kind hid-long --ez ci_quiet_log true > "$W/quiet-launch.txt"
   quiet_pid=$(adb shell pidof "$package:kenji" | tr -d '\r' || true)
@@ -379,9 +387,20 @@ if [ "${PLAYER_CORE_UPDATE:-0}" = 1 ] && [ "${PLAYER_HID_LONG:-0}" = 1 ]; then
     sleep 1
   done
   [ "$quiet_seen" = 1 ] || { echo 'QUIET_POLICY_NOT_OBSERVED'; exit 1; }
+  # Force this pre-existing record to be selected as the newest file; the
+  # future mtime makes the test deterministic even with other concurrent logs.
+  adb shell run-as "$package" touch -t 203001010000 files/kenji/Logs/ci-retained-panic.log
+  observed=0
+  for ((n=0;n<30;n++)); do
+    if grep -qE "^[0-9-]+ +[0-9:.]+ +$quiet_pid +[0-9]+ .*LOG_OBSERVATION_NO_AUTO_STOP kind=SvcBreak" "$log"; then observed=1; break; fi
+    app_crashed && break
+    sleep 1
+  done
+  [ "$observed" = 1 ] || { echo 'OLD_LOG_NOT_OBSERVED'; exit 1; }
   sleep 10
   [ "$(adb shell pidof "$package:kenji" | tr -d '\r' || true)" = "$quiet_pid" ] || { echo 'QUIET_PLAYER_DIED'; exit 1; }
   ! app_crashed || { echo 'QUIET_PLAYER_FATAL'; exit 1; }
+  echo 'PLAYER_RETAINED_OLD_PANIC_DID_NOT_STOP_PLAYER' | tee -a "$W/redroid-status.txt"
   echo 'PLAYER_QUIET_LOG_POLICY_REQUESTED_AND_ALIVE' | tee -a "$W/redroid-status.txt"
   click_text 'Выйти' || { echo 'QUIET_PLAYER_EXIT_NOT_VISIBLE'; exit 1; }
   for ((n=0;n<45;n++)); do
@@ -390,6 +409,8 @@ if [ "${PLAYER_CORE_UPDATE:-0}" = 1 ] && [ "${PLAYER_HID_LONG:-0}" = 1 ]; then
     sleep 1
   done
   [ -z "${pid:-}" ] || { echo 'QUIET_PLAYER_EXIT_STUCK'; exit 1; }
+  adb shell run-as "$package" rm -f files/kenji/Logs/ci-retained-panic.log
+  adb shell rm -f /data/local/tmp/ci-retained-panic.log
 fi
 
 # Long-lived HID observations are synthetic and never represent a real game.
