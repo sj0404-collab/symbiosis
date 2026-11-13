@@ -30,6 +30,29 @@ class PlayerLogPerformance(unittest.TestCase):
         self.assertIn('watchdogThread?.quitSafely()', stop)
         self.assertIn('synchronized(watchdogLock)', stop)
 
+    def test_report_log_reads_are_bounded(self):
+        probe = (ROOT / 'patch/android/utils/KenjiProbeService.kt').read_text()
+        self.assertNotIn('file.readLines()', probe)
+        self.assertNotIn('file?.takeIf { it.isFile }?.readText()', probe)
+        self.assertIn('KernelLogFormat.tailOf(it, KernelLogFormat.TAIL_BYTES)', probe)
+
+    def test_player_metrics_and_compact_controls(self):
+        activity = (ROOT / 'patch/android/activities/KenjiPlayerActivity.kt').read_text()
+        watch = activity.split('private fun startWatchdog(', 1)[1].split('private fun checkGuestFailure(', 1)[0]
+        self.assertIn('rate * 1000.0 / intervalMs', watch)
+        self.assertIn('FPS ядра:', watch)
+        self.assertIn('callback/с:', watch)
+        self.assertIn('statusBar.visibility = android.view.View.GONE', watch)
+        self.assertIn('playerMenu.visibility = android.view.View.VISIBLE', watch)
+        self.assertIn('/proc/self/status', watch)
+        self.assertIn('setNegativeButton("Выйти из игры")', activity)
+        self.assertIn('gameArea.addView(bar, FrameLayout.LayoutParams', activity)
+
+    def test_exit_query_is_pid_filtered_and_time_checked(self):
+        code = (ROOT / 'patch/android/utils/SysExit.kt').read_text()
+        self.assertIn('getHistoricalProcessExitReasons(context.packageName, expectedPid, 0)', code)
+        self.assertIn('ProcessExitEvidence.matches(expectedPid, expectedStart', code)
+
     def test_verbose_is_opt_in_and_passed_across_processes(self):
         settings = (ROOT / 'patch/android/utils/KenjiLogSettings.kt').read_text()
         self.assertIn('getBoolean(VERBOSE, false)', settings)

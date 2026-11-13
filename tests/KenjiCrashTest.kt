@@ -805,7 +805,8 @@ fun main() {
     check("слово «запуск» не приписано позднему падению",
         !late.contains("во время запуска"), late)
     val early = KenjiCrash.format(null)
-    check("падение до загрузки — «во время запуска»", early.contains("во время запуска"), early)
+    check("без маркера загрузки этап неизвестен", early.contains("на неизвестном этапе"), early)
+    check("тихий журнал не доказывает сбой при запуске", !early.contains("во время запуска"), early)
 
     val emptyDiagnosis = KenjiCrash.diagnosticSummary("")
     check("пустой журнал не объявлен исправным", emptyDiagnosis.contains("Причина неизвестна"), emptyDiagnosis)

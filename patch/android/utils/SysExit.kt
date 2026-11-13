@@ -46,7 +46,9 @@ object SysExit {
     private fun query(context: Context, processSuffix: String, expectedPid: Int, expectedStart: Long): Snapshot? = runCatching {
         val manager = context.getSystemService(Context.ACTIVITY_SERVICE) as? ActivityManager
             ?: return@runCatching null
-        val entries = manager.getHistoricalProcessExitReasons(context.packageName, 0, 10)
+        // Ask for this PID directly. A fixed ten-record package-wide query can
+        // hide the player behind unrelated process exits; still verify time and name.
+        val entries = manager.getHistoricalProcessExitReasons(context.packageName, expectedPid, 0)
         val now = System.currentTimeMillis()
         val entry = entries
             .filter { it.processName?.endsWith(processSuffix) == true &&

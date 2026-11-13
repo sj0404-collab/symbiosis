@@ -146,7 +146,9 @@ class KenjiProbeService : Service() {
                 KenjiBridge.pidFile(context).takeIf { it.isFile }?.readText()?.trim()?.toIntOrNull()
             }.getOrNull()
             val file = runCatching { KenjiBridge.crashReportFile(context) }.getOrNull()
-            val text = runCatching { file?.takeIf { it.isFile }?.readText() }.getOrNull().orEmpty()
+            val text = runCatching {
+                file?.takeIf { it.isFile }?.let { KernelLogFormat.tailOf(it, KernelLogFormat.TAIL_BYTES) }
+            }.getOrNull().orEmpty()
             val report = KenjiCrash.parse(text)
 
             // Штамп сборки и время файла: по ним видно, к какой версии
@@ -173,10 +175,11 @@ class KenjiProbeService : Service() {
                     if (when_ != null) append(", файл отчёта изменён ").append(when_)
                 }
             }.getOrDefault("")
-            // «Во время запуска» или «через N секунд после загрузки игры»:
-            // решает журнал ядра, а не наша догадка.
+            // A quiet or truncated log may omit the load marker; absence is
+            // not evidence the session failed during startup. Bound the read.
             val coreTextForTiming = runCatching {
-                KenjiBridge.coreLogFile(context)?.takeIf { it.isFile }?.readText()
+                KenjiBridge.coreLogFile(context)?.takeIf { it.isFile }
+                    ?.let { KernelLogFormat.tailOf(it, KernelLogFormat.TAIL_BYTES) }
             }.getOrNull().orEmpty()
             val body = StringBuilder(
                 KenjiCrash.format(
@@ -215,7 +218,8 @@ class KenjiProbeService : Service() {
                 f.takeIf { it.isFile && it.length() > 0 }?.let { clue ->
                     val when_ = java.text.SimpleDateFormat("dd.MM HH:mm:ss", java.util.Locale.ROOT)
                         .format(java.util.Date(clue.lastModified()))
-                    val lines = clue.readLines().map { it.trim() }.filter { it.isNotEmpty() }
+                    val lines = KernelLogFormat.tailOf(clue, KernelLogFormat.TAIL_BYTES)
+                        .lineSequence().map { it.trim() }.filter { it.isNotEmpty() }.toList()
                     // Время обязательно: файл переживает запуски, и без него
                     // вчерашнее падение читается как сегодняшнее.
                     listOf("(записано $when_)") + lines.takeLast(14)
@@ -235,7 +239,8 @@ class KenjiProbeService : Service() {
             val coreLog = runCatching { KenjiBridge.coreLogFile(context) }.getOrNull()
             val coreTail = runCatching {
                 coreLog?.takeIf { it.isFile }?.let { file ->
-                    val all = file.readLines().map { it.trim() }.filter { it.isNotEmpty() }
+                    val all = KernelLogFormat.tailOf(file, KernelLogFormat.TAIL_BYTES)
+                        .lineSequence().map { it.trim() }.filter { it.isNotEmpty() }.toList()
                     // Начало исключения, а не хвост стека: последние строки
                     // журнала — это `at ... + 0x6f0`, по ним причину не назвать.
                     val start = all.indexOfLast { line ->
@@ -302,7 +307,7 @@ class KenjiProbeService : Service() {
             // буквально сообщение рантайма, поэтому оно идёт первым.
             val saidFile = runCatching { KenjiBridge.stdioFile(context) }.getOrNull()
             val said = runCatching {
-                saidFile?.takeIf { it.isFile }?.readText()
+                saidFile?.takeIf { it.isFile }?.let { KernelLogFormat.tailOf(it, KernelLogFormat.TAIL_BYTES) }
             }.getOrNull().orEmpty()
             // consoleLines, а не exceptionLines: отбор по знакомым словам
             // выбросил сообщение, не похожее на «Unhandled exception», и окно
@@ -330,7 +335,7 @@ class KenjiProbeService : Service() {
             // дословно, поэтому он идёт сразу после вывода самого ядра.
             val jniFile = runCatching { KenjiBridge.jniLogFile(context) }.getOrNull()
             val jniText = runCatching {
-                jniFile?.takeIf { it.isFile }?.readText()
+                jniFile?.takeIf { it.isFile }?.let { KernelLogFormat.tailOf(it, KernelLogFormat.TAIL_BYTES) }
             }.getOrNull().orEmpty()
             val asked = KenjiCrash.jniLines(jniText)
             // Показываем этот блок, ТОЛЬКО когда что-то не нашлось.
