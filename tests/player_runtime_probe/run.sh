@@ -269,6 +269,19 @@ press_plus() {
 # following real player sessions must then load that version, not the legacy file.
 if [ "${PLAYER_CORE_UPDATE:-0}" = 1 ]; then
   [[ "${PLAYER_CORE_UPDATE_EXPECTED_SHA:-}" =~ ^[0-9a-f]{64}$ ]] || { echo 'BAD_CORE_UPDATE_EXPECTED_SHA'; exit 1; }
+  if [ "$PLAYER_CORE_UPDATE_EXPECTED_SHA" = d781048671e4cef1cde2ec15db8fe29b949df9949d83569ceaf776ad12901590 ]; then
+    # Restore signed version 1 into the isolated test app before installing v2.
+    # The app itself verifies its real signature and core hash before the update.
+    curl -fsSL --retry 3 https://raw.githubusercontent.com/sj0404-collab/symbiosis/91495c32ed963ce46a06883a150267fb17b344ef/docs/core-test/current.txt -o "$W/old-signed-manifest.txt"
+    adb push "$W/old-signed-manifest.txt" /data/local/tmp/player-old-manifest.txt >/dev/null
+    adb shell chmod 644 /data/local/tmp/player-old-manifest.txt
+    olddir=files/engines/core-test-updates/1-969431b3962408dd02ce38bd2cd4b2a954d11e5212ddef3f65c80a0b419918b8
+    adb shell run-as "$package" mkdir -p "$olddir"
+    adb shell run-as "$package" cp /data/local/tmp/player-core.so "$olddir/libkenji.so"
+    adb shell run-as "$package" chmod 400 "$olddir/libkenji.so"
+    adb shell run-as "$package" cp /data/local/tmp/player-old-manifest.txt "$olddir/manifest.txt"
+    adb shell rm /data/local/tmp/player-old-manifest.txt
+  fi
   adb shell am start -W -n "$package/dev.symbiosis.playerruntime.DiagnosticLauncher" --es test_kind core-update \
     --es ci_expected_core_sha "$PLAYER_CORE_UPDATE_EXPECTED_SHA" > "$W/core-update-launch.txt"
   update_ok=0

@@ -16,14 +16,23 @@ class DiagnosticLauncher : Activity() {
             if (kind == "core-update") {
                 Thread {
                     try {
+                        val expected = intent.getStringExtra("ci_expected_core_sha").orEmpty()
+                        check(expected.matches(Regex("[0-9a-f]{64}")))
+                        if (expected == "d781048671e4cef1cde2ec15db8fe29b949df9949d83569ceaf776ad12901590") {
+                            val previous = checkNotNull(org.yuzu.yuzu_emu.utils.CoreUpdateStore.active(
+                                filesDir, org.yuzu.yuzu_emu.utils.CoreTestUpdates.key()))
+                            check(previous.core.sequence == 1L && previous.core.sha256 ==
+                                "969431b3962408dd02ce38bd2cd4b2a954d11e5212ddef3f65c80a0b419918b8")
+                            Log.i("PlayerRuntimeCI", "CORE_UPDATE_CI_PREVIOUS_V1_OK")
+                        }
                         val first = org.yuzu.yuzu_emu.utils.CoreTestUpdates.install(this)
                         check(first.ok) { first.message }
                         val second = org.yuzu.yuzu_emu.utils.CoreTestUpdates.install(this)
                         check(second.ok && second.message.contains("уже установлена")) { second.message }
                         val active = checkNotNull(org.yuzu.yuzu_emu.utils.CoreUpdateStore.active(
                             filesDir, org.yuzu.yuzu_emu.utils.CoreTestUpdates.key()))
-                        val expected = intent.getStringExtra("ci_expected_core_sha").orEmpty()
-                        check(expected.matches(Regex("[0-9a-f]{64}")) && active.core.sha256 == expected)
+                        check(active.core.sha256 == expected)
+                        if (expected == "d781048671e4cef1cde2ec15db8fe29b949df9949d83569ceaf776ad12901590") check(active.core.sequence == 2L)
                         check(org.yuzu.yuzu_emu.utils.EngineLoader.coreFile(this, org.yuzu.yuzu_emu.utils.EngineLoader.Engine.KENJI) == active.file)
                         check(org.yuzu.yuzu_emu.utils.EngineLoader.state(this, org.yuzu.yuzu_emu.utils.EngineLoader.Engine.KENJI) is org.yuzu.yuzu_emu.utils.EngineLoader.State.Ready)
                         File(filesDir, "ci-core-update-ok.txt").writeText("OK version=${active.core.sequence} sha256=${active.core.sha256}\n")
