@@ -1,0 +1,111 @@
+name: Publish test core channel
+
+on:
+  workflow_dispatch:
+    inputs:
+      sequence:
+        description: 'New monotonically increasing test sequence'
+        required: true
+        type: string
+      source_url:
+        description: 'Existing .so release asset in this repository'
+        required: true
+        type: string
+      expected_sha256:
+        description: 'SHA-256 independently obtained from the tested core'
+        required: true
+        type: string
+
+concurrency:
+  group: publish-core-test-channel
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  pages: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: fork
+      - name: Verify input, key, and existing signed version
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SIGNING_KEY: ${{ secrets.SYMBIOSIS_CORE_TEST_SIGNING_KEY }}
+          SEQUENCE: ${{ inputs.sequence }}
+          SOURCE: ${{ inputs.source_url }}
+          EXPECTED: ${{ inputs.expected_sha256 }}
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import os,re
+          assert re.fullmatch(r'[1-9][0-9]{0,17}',os.environ['SEQUENCE'])
+          assert re.fullmatch(r'[0-9a-f]{64}',os.environ['EXPECTED'])
+          assert re.fullmatch(r'https://github\.com/sj0404-collab/symbiosis/releases/download/[A-Za-z0-9._-]+/[A-Za-z0-9._-]+\.so',os.environ['SOURCE'])
+          PY
+          umask 077
+          test -n "$SIGNING_KEY"
+          printf '%s\n' "$SIGNING_KEY" > /tmp/core-test-key.pem
+          sed -n 's/.*private const val PUBLIC_KEY = "\([^"]*\)".*/\1/p' fork/patch/android/utils/CoreTestUpdates.kt | base64 -d > /tmp/pinned-public.der
+          openssl pkey -in /tmp/core-test-key.pem -pubout -outform DER -out /tmp/signing-public.der
+          cmp /tmp/pinned-public.der /tmp/signing-public.der
+          API="https://api.github.com/repos/$GITHUB_REPOSITORY"
+          code=$(curl -sS -o /tmp/old-page.json -w '%{http_code}' -H "Authorization: Bearer $GH_TOKEN" -H 'Accept: application/vnd.github+json' "$API/contents/docs/core-test/current.txt?ref=main")
+          if [ "$code" = 200 ]; then
+            python3 - <<'PY'
+          import base64,json
+          v=json.load(open('/tmp/old-page.json'))
+          open('/tmp/old-manifest.txt','wb').write(base64.b64decode(v['content']))
+          PY
+            python3 fork/tools/verify_core_manifest.py --manifest /tmp/old-manifest.txt --public-key-der /tmp/pinned-public.der > /tmp/old-verified.json
+            python3 - <<'PY'
+          import json,os
+          assert int(os.environ['SEQUENCE']) > json.load(open('/tmp/old-verified.json'))['sequence'], 'sequence must advance'
+          PY
+          elif [ "$code" != 404 ]; then
+            echo "Cannot read current Pages manifest: HTTP $code"; exit 1
+          fi
+          code=$(curl -sS -o /tmp/old-release.json -w '%{http_code}' -H "Authorization: Bearer $GH_TOKEN" -H 'Accept: application/vnd.github+json' "$API/releases/tags/engine-test-$SEQUENCE")
+          [ "$code" = 404 ] || { echo "Version tag already exists, or release API returned $code; refusing overwrite"; exit 1; }
+      - name: Verify core and create immutable test asset
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SEQUENCE: ${{ inputs.sequence }}
+          SOURCE: ${{ inputs.source_url }}
+          EXPECTED: ${{ inputs.expected_sha256 }}
+        run: |
+          set -euo pipefail
+          curl -fsSL --retry 3 --max-time 300 --proto '=https' --proto-redir '=https' --max-filesize 268435456 "$SOURCE" -o /tmp/core.so
+          echo "$EXPECTED  /tmp/core.so" | sha256sum -c -
+          readelf -h /tmp/core.so | grep -q 'AArch64'
+          readelf -h /tmp/core.so | grep -q 'DYN (Shared object file)'
+          python3 fork/tools/sign_core_manifest.py --sequence "$SEQUENCE" --core /tmp/core.so --private-key /tmp/core-test-key.pem --output /tmp/core-manifest.txt
+          python3 fork/tools/verify_core_manifest.py --manifest /tmp/core-manifest.txt --public-key-der /tmp/pinned-public.der
+          cp /tmp/core.so "/tmp/libkenji-$EXPECTED.so"
+          gh release create "engine-test-$SEQUENCE" "/tmp/libkenji-$EXPECTED.so" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --prerelease --title "Тестовое ядро $SEQUENCE" --notes "Только для тестового канала. Подпись и доставка не подтверждают совместимость игры. Известные SSL-заглушки и прочие ограничения могут оставаться."
+          curl -fsSL --retry 3 --max-time 300 --proto '=https' --proto-redir '=https' "https://github.com/$GITHUB_REPOSITORY/releases/download/engine-test-$SEQUENCE/libkenji-$EXPECTED.so" -o /tmp/published.so
+          echo "$EXPECTED  /tmp/published.so" | sha256sum -c -
+      - name: Update signed Pages manifest without replacing the site
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import base64,json,os
+          p={'message':'Publish signed test core metadata','branch':'main', 'content':base64.b64encode(open('/tmp/core-manifest.txt','rb').read()).decode()}
+          old=json.load(open('/tmp/old-page.json'))
+          if 'sha' in old: p['sha']=old['sha']
+          open('/tmp/page-put.json','w').write(json.dumps(p))
+          PY
+          API="https://api.github.com/repos/$GITHUB_REPOSITORY"
+          curl -fsS -X PUT -H "Authorization: Bearer $GH_TOKEN" -H 'Accept: application/vnd.github+json' -H 'Content-Type: application/json' --data-binary @/tmp/page-put.json "$API/contents/docs/core-test/current.txt" > /tmp/page-result.json
+          code=$(curl -sS -o /tmp/pages-build.json -w '%{http_code}' -X POST -H "Authorization: Bearer $GH_TOKEN" -H 'Accept: application/vnd.github+json' "$API/pages/builds")
+          echo "Pages build request HTTP $code (live manifest must be checked separately)."
+          [ "$code" = 201 ] || [ "$code" = 202 ] || { echo 'Pages build not confirmed'; exit 1; }
+      - name: Remove signing key
+        if: always()
+        run: rm -f /tmp/core-test-key.pem
