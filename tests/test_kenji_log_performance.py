@@ -42,11 +42,11 @@ class PlayerLogPerformance(unittest.TestCase):
         self.assertIn('rate * 1000.0 / intervalMs', watch)
         self.assertIn('FPS ядра:', watch)
         self.assertIn('callback/с:', watch)
-        self.assertIn('statusBar.visibility = android.view.View.GONE', watch)
-        self.assertIn('playerMenu.visibility = android.view.View.VISIBLE', watch)
+        self.assertIn('updateStatus(if (frames > 0) fpsText else summary, details)', watch)
         self.assertIn('/proc/self/status', watch)
         self.assertIn('setNegativeButton("Выйти из игры")', activity)
-        self.assertIn('gameArea.addView(bar, FrameLayout.LayoutParams', activity)
+        self.assertIn('root.addView(bar, LinearLayout.LayoutParams', activity)
+        self.assertNotIn('gameArea.addView(bar', activity)
 
     def test_exit_query_is_pid_filtered_and_time_checked(self):
         code = (ROOT / 'patch/android/utils/SysExit.kt').read_text()

@@ -143,9 +143,6 @@ class KenjiPlayerActivity : Activity(), SurfaceHolder.Callback {
     /** Когда начали: журнал старше этого времени — от прошлого запуска. */
     private var playStartedAt = 0L
     private lateinit var status: TextView
-    private lateinit var statusBar: LinearLayout
-    private lateinit var fpsLabel: TextView
-    private lateinit var playerMenu: Button
     private var statusDetails = ""
     private var detailsDialog: AlertDialog? = null
     private var detailsText: TextView? = null
@@ -314,7 +311,6 @@ class KenjiPlayerActivity : Activity(), SurfaceHolder.Callback {
             setBackgroundColor(Color.rgb(25, 27, 33))
             setPadding(dp(12), dp(4), dp(8), dp(4))
         }
-        statusBar = bar
         status = TextView(this).apply {
             text = "Второе ядро · подготовка · подробнее"
             setTextColor(Color.WHITE)
@@ -326,6 +322,8 @@ class KenjiPlayerActivity : Activity(), SurfaceHolder.Callback {
         bar.addView(status, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
         bar.addView(darkButton("Выйти") { leave() },
             LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(44)))
+        root.addView(bar, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,
+            ViewGroup.LayoutParams.WRAP_CONTENT))
         val gameArea = FrameLayout(this).apply { setBackgroundColor(Color.BLACK) }
         val surface = SurfaceView(this)
         surface.holder.addCallback(this)
@@ -345,34 +343,6 @@ class KenjiPlayerActivity : Activity(), SurfaceHolder.Callback {
             gameArea.addView(overlay, FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
         }
-        // Overlay the startup strip instead of resizing the rendering surface
-        // when it disappears; an active Vulkan surface must remain stable.
-        gameArea.addView(bar, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,
-            ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.TOP))
-        // Once callbacks arrive, replace the full-width progress strip with a
-        // small FPS badge and a menu. Keep details and exit reachable.
-        fpsLabel = TextView(this).apply {
-            text = "FPS: —"
-            textSize = 13f
-            setTextColor(Color.WHITE)
-            setPadding(dp(8), dp(5), dp(8), dp(5))
-            background = GradientDrawable().apply {
-                setColor(Color.argb(210, 25, 27, 33)); cornerRadius = dp(8).toFloat()
-            }
-            visibility = android.view.View.GONE
-            setOnClickListener { showStatusDetails() }
-            contentDescription = "Частота кадров, подробнее"
-        }
-        gameArea.addView(fpsLabel, FrameLayout.LayoutParams(
-            ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT,
-            Gravity.TOP or Gravity.START).apply { setMargins(dp(6), dp(6), dp(6), dp(6)) })
-        playerMenu = darkButton("⋮") { showStatusDetails() }.apply {
-            visibility = android.view.View.GONE
-            contentDescription = "Состояние и выход из игры"
-            minWidth = 0
-        }
-        gameArea.addView(playerMenu, FrameLayout.LayoutParams(dp(48), dp(48),
-            Gravity.TOP or Gravity.END).apply { setMargins(dp(6), dp(6), dp(6), dp(6)) })
         root.addView(gameArea, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
         setContentView(root)
         if (android.os.Build.VERSION.SDK_INT >= 30) root.requestApplyInsets()
@@ -775,13 +745,11 @@ class KenjiPlayerActivity : Activity(), SurfaceHolder.Callback {
                 }
                 runOnUiThread {
                     if (!startup.isCancelled() && !isFinishing && !isDestroyed) {
-                        updateStatus(summary, details)
-                        if (frames > 0) {
-                            statusBar.visibility = android.view.View.GONE
-                            fpsLabel.text = fpsText
-                            fpsLabel.visibility = android.view.View.VISIBLE
-                            playerMenu.visibility = android.view.View.VISIBLE
-                        }
+                        // Keep the strip outside the game area so it never
+                        // intercepts virtual controls or resizes the surface.
+                        // Once callbacks arrive, replace the status text with
+                        // the FPS/callback counter; tapping still opens details.
+                        updateStatus(if (frames > 0) fpsText else summary, details)
                     }
                 }
                 // Тот же текст — в отчёт. Человеку некогда делать скриншот на
