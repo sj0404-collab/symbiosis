@@ -66,8 +66,15 @@ object EngineLoader {
     private fun coreDir(context: Context) =
         File(context.filesDir, "engines").apply { mkdirs() }
 
-    fun coreFile(context: Context, engine: Engine) =
+    private fun legacyCoreFile(context: Context, engine: Engine) =
         File(coreDir(context), "lib${engine.id}.so")
+
+    fun coreFile(context: Context, engine: Engine): File {
+        if (engine == Engine.KENJI && CoreTestUpdates.enabled()) {
+            CoreUpdateStore.active(context.filesDir, CoreTestUpdates.key())?.let { return it.file }
+        }
+        return legacyCoreFile(context, engine)
+    }
 
     /**
      * The core's SHA-256, pinned at build time.
@@ -87,7 +94,15 @@ object EngineLoader {
     fun state(context: Context, engine: Engine): State {
         if (engine == Engine.EDEN) return State.Builtin
 
-        val file = coreFile(context, engine)
+        if (CoreTestUpdates.enabled()) {
+            val key = CoreTestUpdates.key()
+            if (CoreUpdateStore.hasSignedVersion(context.filesDir, key)) {
+                val active = CoreUpdateStore.active(context.filesDir, key)
+                    ?: return State.Broken("подписанная версия отсутствует или повреждена; восстановите её через обновление")
+                return State.Ready(active.file.absolutePath, active.file.length())
+            }
+        }
+        val file = legacyCoreFile(context, engine)
         if (!file.exists()) return State.Missing(KNOWN_SIZE[engine] ?: 0L)
         if (file.length() < 1_000_000L) {
             return State.Broken("файл ядра обрезан (${file.length()} Б)")
@@ -167,7 +182,10 @@ object EngineLoader {
 
     /** Delete a downloaded core. Must undo read-only first, or delete fails. */
     fun remove(context: Context, engine: Engine): Boolean {
-        val file = coreFile(context, engine)
+        val file = legacyCoreFile(context, engine)
+        if (engine == Engine.KENJI && CoreTestUpdates.enabled()) {
+            return CoreUpdateStore.remove(context.filesDir, CoreTestUpdates.key(), file)
+        }
         if (!file.exists()) return true
         file.setWritable(true, true)
         return file.delete()

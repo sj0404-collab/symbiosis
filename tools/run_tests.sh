@@ -151,6 +151,8 @@ if command -v kotlinc >/dev/null 2>&1; then
       EngineHybridTest) echo "$HERE/patch/android/utils/EngineHybrid.kt" ;;
       SignedCoreManifestTest) echo "$HERE/patch/android/utils/SignedCoreManifest.kt" ;;
       CoreUpdateStoreTest) echo "$HERE/patch/android/utils/CoreUpdateStore.kt $HERE/patch/android/utils/SignedCoreManifest.kt $HERE/patch/android/utils/GameSessionLock.kt" ;;
+      CoreElfCheckTest) echo "$HERE/patch/android/utils/CoreElfCheck.kt" ;;
+      CoreUpdateNetworkTest) echo "$HERE/patch/android/utils/CoreUpdateNetwork.kt $HERE/patch/android/utils/SignedCoreManifest.kt" ;;
       # Палитра: цвет игры, читаемость текста, монограммы. Чистые функции —
       # поэтому проверяются без Android.
       SymbiosisThemeTest) echo "$HERE/patch/android/utils/SymbiosisTheme.kt" ;;

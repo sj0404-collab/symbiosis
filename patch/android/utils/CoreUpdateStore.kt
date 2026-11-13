@@ -35,14 +35,37 @@ object CoreUpdateStore {
             }.maxByOrNull { it.first.sequence }
     }
 
+    fun hasSignedVersion(root: File, key: ByteArray): Boolean = highest(root, key) != null
+
     /** No silent rollback to an older version if the newest file is damaged. */
     fun active(root: File, key: ByteArray): Active? {
         val (core, file) = highest(root, key) ?: return null
         return if (SignedCoreManifest.matches(core, file)) Active(core, file) else null
     }
 
+    /** Remove binaries but retain signed version records as an anti-rollback watermark. */
+    fun remove(root: File, key: ByteArray, legacy: File): Boolean {
+        val lock = when (val acquired = GameSessionLock.tryAcquire(File(root, GameSessionLock.FILE_NAME))) {
+            is GameSessionLock.Result.Acquired -> acquired.lease
+            else -> return false
+        }
+        lock.use {
+            var ok = !legacy.exists() || legacy.delete()
+            for (dir in updates(root).listFiles().orEmpty()) {
+                val manifest = File(dir, "manifest.txt")
+                if (!dir.isDirectory || dir.name.startsWith(".") || !manifest.isFile || manifest.length() !in 1..2048) continue
+                val core = runCatching { SignedCoreManifest.verify(manifest.readBytes(), key, 0) }.getOrNull() ?: continue
+                if (dir.name != "${core.sequence}-${core.sha256}") continue
+                val file = File(dir, "libkenji.so")
+                if (file.exists() && !file.delete()) ok = false
+            }
+            return ok
+        }
+    }
+
     /** Caller supplies an already-open byte stream; network policy is separate. */
-    fun install(root: File, signedManifest: ByteArray, key: ByteArray, source: InputStream): Outcome {
+    fun install(root: File, signedManifest: ByteArray, key: ByteArray, source: InputStream,
+                validate: (File) -> String? = { null }): Outcome {
         val candidate = SignedCoreManifest.verify(signedManifest, key, 0)
             ?: return Outcome.Rejected("подпись или описание ядра не прошли проверку")
         val lock = when (val acquired = GameSessionLock.tryAcquire(File(root, GameSessionLock.FILE_NAME))) {
@@ -52,8 +75,14 @@ object CoreUpdateStore {
         }
         lock.use {
             val existing = highest(root, key)
-            if (existing != null && candidate.sequence <= existing.first.sequence) {
-                return Outcome.Rejected("версия не новее установленной")
+            if (existing != null && candidate.sequence < existing.first.sequence) {
+                return Outcome.Rejected("версия старее установленной")
+            }
+            if (existing != null && candidate.sequence == existing.first.sequence && candidate != existing.first) {
+                return Outcome.Rejected("номер версии уже принадлежит другому ядру")
+            }
+            if (existing != null && candidate == existing.first && SignedCoreManifest.matches(candidate, existing.second)) {
+                return Outcome.Rejected("эта версия ядра уже установлена")
             }
             val parent = updates(root)
             if (!parent.isDirectory && !parent.mkdirs()) return Outcome.Rejected("не удалось создать папку обновления")
@@ -94,6 +123,13 @@ object CoreUpdateStore {
                     header[16] != 3.toByte() || header[17] != 0.toByte() ||
                     header[18] != 183.toByte() || header[19] != 0.toByte()) {
                     return Outcome.Rejected("файл не является ARM64 ELF-библиотекой")
+                }
+                val problem = validate(file)
+                if (problem != null) return Outcome.Rejected(problem)
+                if (existing != null && candidate == existing.first) {
+                    // Repair same signed version without dropping its signed high-water mark.
+                    if (!file.renameTo(existing.second)) return Outcome.Rejected("не удалось восстановить ядро")
+                    return Outcome.Installed(candidate.sequence, existing.second)
                 }
                 FileOutputStream(File(stage, "manifest.txt")).use { out ->
                     out.write(signedManifest)

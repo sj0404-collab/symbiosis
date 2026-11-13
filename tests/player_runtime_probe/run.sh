@@ -265,6 +265,23 @@ press_plus() {
   echo "PLUS_GUEST_TRANSITION_MISSING orientation=$orientation"
   return 1
 }
+# Install the actual signed Pages version in the disposable Android app. The
+# following real player sessions must then load that version, not the legacy file.
+if [ "${PLAYER_CORE_UPDATE:-0}" = 1 ]; then
+  adb shell am start -W -n "$package/dev.symbiosis.playerruntime.DiagnosticLauncher" --es test_kind core-update > "$W/core-update-launch.txt"
+  update_ok=0
+  for ((n=0;n<180;n++)); do
+    if adb shell run-as "$package" test -f files/ci-core-update-ok.txt; then update_ok=1; break; fi
+    if adb shell run-as "$package" test -f files/ci-core-update-fail.txt; then break; fi
+    sleep 1
+  done
+  if [ "$update_ok" != 1 ]; then
+    adb exec-out run-as "$package" cat files/ci-core-update-fail.txt > "$W/core-update-failure.txt" 2>&1 || true
+    echo 'SIGNED_CORE_UPDATE_FAILED' | tee -a "$W/redroid-status.txt"; exit 1
+  fi
+  adb exec-out run-as "$package" cat files/ci-core-update-ok.txt | tee -a "$W/redroid-status.txt"
+fi
+
 # Three isolated sessions exercise the real player and prove that the same
 # main process can launch again after the previous :kenji process has exited.
 # Mode 2 is the normal default; 0/1 are explicit real config values, not
@@ -280,6 +297,17 @@ for mode in 2 0 1; do
   [ "$this_main" = "$main_pid" ] || { echo "PLAYER_MAIN_PROCESS_CHANGED mode=$mode"; exit 1; }
   [ -n "$player_pid" ] || { echo "PLAYER_PROCESS_NOT_RUNNING mode=$mode"; exit 1; }
   printf 'PLAYER_PID=%s MAIN_PID=%s MODE=%s\n' "$player_pid" "$main_pid" "$mode" | tee -a "$W/redroid-status.txt"
+  if [ "${PLAYER_CORE_UPDATE:-0}" = 1 ]; then
+    # This is written by the real player process after its session lock and
+    # verified selection, not merely by the diagnostic update launcher.
+    observed=0
+    for ((n=0;n<30;n++)); do
+      if adb exec-out run-as "$package" cat files/core-update-events.txt 2>/dev/null | grep -q 'Запуск игрока: версия'; then observed=1; break; fi
+      sleep 1
+    done
+    [ "$observed" = 1 ] || { echo 'PLAYER_DID_NOT_SELECT_SIGNED_CORE'; exit 1; }
+    echo 'PLAYER_SELECTED_SIGNED_CORE' | tee -a "$W/redroid-status.txt"
+  fi
   if [ "${PLAYER_EXPECT_TLS_CANDIDATE:-0}" = 1 ]; then
     wait_log 'CI_ONLY_TLS_OPENSSL_VERSION=0x3050009[0-9a-f] .*libcrypto.so' || {
       echo "PLAYER_CANDIDATE_OPENSSL_NOT_OBSERVED mode=$mode"; exit 1;

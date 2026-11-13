@@ -50,6 +50,16 @@ fun main() {
         active.file.writeBytes(byteArrayOf(0))
         check(CoreUpdateStore.active(root, key.public.encoded) == null) // no silent rollback
         check(install(one, first) is CoreUpdateStore.Outcome.Rejected)
+        check(install(two, second) is CoreUpdateStore.Outcome.Installed) // repair with identical signed bytes
+        check(CoreUpdateStore.active(root, key.public.encoded)?.core?.sequence == 2L)
+        val third = image(3)
+        check(CoreUpdateStore.install(root, manifest(3, third), key.public.encoded, third.inputStream()) { "несовместимый ELF" } is CoreUpdateStore.Outcome.Rejected)
+        check(CoreUpdateStore.active(root, key.public.encoded)?.core?.sequence == 2L)
+        check(CoreUpdateStore.remove(root, key.public.encoded, root.resolve("legacy.so")))
+        check(CoreUpdateStore.hasSignedVersion(root, key.public.encoded))
+        check(CoreUpdateStore.active(root, key.public.encoded) == null)
+        check(install(one, first) is CoreUpdateStore.Outcome.Rejected)
+        check(install(two, second) is CoreUpdateStore.Outcome.Installed)
         check(root.resolve("engines/core-test-updates").listFiles()!!.none { it.name.startsWith(".part-") })
         println("CoreUpdateStore: atomic staging, digest, interruption, lock, rollback and corruption checks passed")
     } finally { root.deleteRecursively() }

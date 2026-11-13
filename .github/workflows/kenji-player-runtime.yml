@@ -8,6 +8,9 @@ on:
       bundled_tls_probe:
         type: boolean
         default: false
+      core_update:
+        type: boolean
+        default: false
       compare_space:
         type: boolean
         default: false
@@ -84,6 +87,11 @@ jobs:
         if: inputs.tls_candidate && inputs.bundled_tls_probe
         run: |
           echo 'BUNDLED_TLS_PROBE_MUST_NOT_REPLACE_LIBRARIES'
+          exit 1
+      - name: Restrict published core update probe to pinned core
+        if: inputs.core_update && (inputs.compare_space || inputs.reference_core || inputs.hid_long || inputs.guest_account)
+        run: |
+          echo 'CORE_UPDATE_PROBE_REQUIRES_PINNED_PRIMARY_CORE'
           exit 1
       - name: Reject incompatible research options
         if: (inputs.reference_tls_patch || inputs.reference_network_patch) && !inputs.reference_core
@@ -343,6 +351,7 @@ jobs:
       ANDROID_SERIAL: 127.0.0.1:5558
       PLAYER_EXPECT_TLS_CANDIDATE: ${{ (inputs.tls_candidate || inputs.bundled_tls_probe) && '1' || '0' }}
       PLAYER_COMPARE_SPACE: ${{ inputs.compare_space && '1' || '0' }}
+      PLAYER_CORE_UPDATE: ${{ inputs.core_update && '1' || '0' }}
       PLAYER_GUEST_TLS: ${{ inputs.guest_tls && '1' || '0' }}
       PLAYER_GUEST_TLS_AUTO_BIND: ${{ inputs.guest_tls_auto_bind && '1' || '0' }}
       PLAYER_SSL_COUNT: ${{ inputs.ssl_count && '1' || '0' }}

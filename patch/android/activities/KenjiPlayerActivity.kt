@@ -400,6 +400,15 @@ class KenjiPlayerActivity : Activity(), SurfaceHolder.Callback {
             runCatching { UiGuard.install(appContext) }
             KenjiBridge.armCrashReport(appContext)
             KenjiReport.markStart(appContext)
+            runCatching {
+                if (org.yuzu.yuzu_emu.utils.CoreTestUpdates.enabled()) {
+                    val active = org.yuzu.yuzu_emu.utils.CoreUpdateStore.active(
+                        appContext.filesDir, org.yuzu.yuzu_emu.utils.CoreTestUpdates.key())
+                    val label = active?.let { "версия ${it.core.sequence}, SHA-256 ${it.core.sha256}" }
+                        ?: "закреплённое исходное ядро"
+                    org.yuzu.yuzu_emu.utils.CoreTestUpdates.note(appContext, "Запуск игрока: $label")
+                }
+            }
             org.kenjinx.android.KenjinxNative.resetStats()
 
             if (startup.isCancelled()) return@Thread

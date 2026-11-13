@@ -30,6 +30,9 @@ import org.yuzu.yuzu_emu.features.settings.model.Settings
 import org.yuzu.yuzu_emu.utils.EngineDownloader
 import org.yuzu.yuzu_emu.utils.EngineHybrid
 import org.yuzu.yuzu_emu.utils.DeviceCompat
+import org.yuzu.yuzu_emu.utils.CoreTestUpdates
+import org.yuzu.yuzu_emu.utils.CoreUpdateStore
+import org.yuzu.yuzu_emu.utils.KernelLogFormat
 import org.yuzu.yuzu_emu.utils.EngineLoader
 import org.yuzu.yuzu_emu.utils.EngineStore
 import org.yuzu.yuzu_emu.utils.KenjiBridge
@@ -557,7 +560,9 @@ class EnginesFragment : Fragment() {
             // диалогом, который невозможно не заметить.
             buttons.addView(filledButton("Проверить", accent) { probe(engine, body) })
         }
-        if (state is EngineLoader.State.Missing || state is EngineLoader.State.Broken) {
+        val signedVersionExists = engine == EngineLoader.Engine.KENJI && CoreTestUpdates.enabled() &&
+            CoreUpdateStore.hasSignedVersion(ctx.filesDir, CoreTestUpdates.key())
+        if ((state is EngineLoader.State.Missing || state is EngineLoader.State.Broken) && !signedVersionExists) {
             // Кнопка показывается ВСЕГДА.
             //
             // Здесь стояло условие «если устройство поддерживается» — и на
@@ -583,12 +588,22 @@ class EnginesFragment : Fragment() {
                 if (EngineStore.globalCore(ctx) == EngineHybrid.Core.KENJI) {
                     EngineStore.setGlobalCore(ctx, EngineHybrid.Core.EDEN)
                 }
-                EngineLoader.remove(ctx, engine)
-                statusLine = "второе ядро удалено · игры пойдут на Eden"
+                val removed = EngineLoader.remove(ctx, engine)
+                statusLine = if (removed) "второе ядро удалено · игры пойдут на Eden"
+                    else "не удалось удалить ядро: закройте игру и повторите"
                 render()
             })
         }
         if (buttons.childCount > 0) body.addView(buttons)
+        if (!isEden && CoreTestUpdates.enabled()) {
+            body.addView(outlineButton("Обновить ядро · тестовый канал", accent) { updateCore() })
+            body.addView(outlineButton("Журналы ядра и обновлений", accent) { showCoreLogs() })
+            body.addView(TextView(ctx).apply {
+                text = "Только тест: обновляется второе ядро, не Eden и не сам APK. Совместимость игры не гарантирована."
+                textSize = 12f
+                setTextColor(SymbiosisTheme.TEXT_DIM)
+            })
+        }
         if (!isEden) body.addView(compatBlock())
         return box
     }
@@ -805,6 +820,50 @@ class EnginesFragment : Fragment() {
      *  3. Любое исключение, кроме сетевого, роняло корутину без сообщения.
      *     Теперь ловится всё, и текст попадает в ту же плашку.
      */
+    private fun updateCore() {
+        if (busy) { statusLine = "Дождитесь завершения текущей операции"; render(); return }
+        busy = true
+        val ctx = requireContext().applicationContext
+        statusLine = "Проверяю подписанное обновление и скачиваю ядро…"
+        render()
+        viewLifecycleOwner.lifecycleScope.launch {
+            try {
+                val result = withContext(Dispatchers.IO) { CoreTestUpdates.install(ctx) }
+                statusLine = result.message
+                render()
+                com.google.android.material.dialog.MaterialAlertDialogBuilder(requireContext())
+                    .setTitle(if (result.ok) "Обновление ядра" else "Ядро не обновлено")
+                    .setMessage(result.message)
+                    .setPositiveButton("Понятно", null).show()
+            } catch (cancel: CancellationException) { throw cancel }
+            finally { busy = false }
+        }
+    }
+
+    private fun showCoreLogs() {
+        val ctx = requireContext()
+        val core = runCatching {
+            KenjiBridge.coreLogFile(ctx)?.takeIf { it.isFile }?.let { KernelLogFormat.tailOf(it, 24 * 1024) }
+        }.getOrNull().orEmpty()
+        val text = "Обновления (на устройстве):\n" + CoreTestUpdates.tail(ctx) +
+            "\n\nЖурнал ядра (хвост; может содержать записи прежних запусков):\n" +
+            core.ifBlank { "Журнал ядра не найден или пуст." } +
+            "\n\nПеред отправкой проверьте текст: в журнале могут быть пути и данные устройства."
+        val content = TextView(ctx).apply {
+            this.text = text; textSize = 13f; setTextColor(SymbiosisTheme.TEXT)
+            setPadding(dp(16), dp(12), dp(16), dp(12)); setTextIsSelectable(true)
+        }
+        val scroll = ScrollView(ctx).apply { addView(content) }
+        com.google.android.material.dialog.MaterialAlertDialogBuilder(ctx)
+            .setTitle("Журналы")
+            .setView(scroll)
+            .setPositiveButton("Скопировать") { _, _ ->
+                val clipboard = ctx.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+                clipboard.setPrimaryClip(android.content.ClipData.newPlainText("Журналы Symbiosis", text))
+            }
+            .setNegativeButton("Закрыть", null).show()
+    }
+
     private fun fetch(engine: EngineLoader.Engine) {
         if (busy) {
             statusLine = "скачивание уже идёт — подождите"
