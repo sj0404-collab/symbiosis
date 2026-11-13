@@ -1,0 +1,29 @@
+name: Stage previously tested Space core
+on:
+  workflow_dispatch:
+permissions:
+  contents: write
+  actions: read
+jobs:
+  stage:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Extract exact core from the prior ARM comparison artifact
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          API="https://api.github.com/repos/$GITHUB_REPOSITORY"
+          artifact=13984510962
+          curl -fsSL --retry 3 -H "Authorization: Bearer $GH_TOKEN" "$API/actions/artifacts/$artifact/zip" -o /tmp/space-tested.zip
+          unzip -p /tmp/space-tested.zip core_space.so > /tmp/libkenji-space.so
+          echo 'd781048671e4cef1cde2ec15db8fe29b949df9949d83569ceaf776ad12901590  /tmp/libkenji-space.so' | sha256sum -c -
+          readelf -h /tmp/libkenji-space.so | grep -q 'AArch64'
+          readelf -h /tmp/libkenji-space.so | grep -q 'DYN (Shared object file)'
+          readelf -lW /tmp/libkenji-space.so | grep ' LOAD '
+          code=$(curl -sS -o /tmp/existing-stage.json -w '%{http_code}' -H "Authorization: Bearer $GH_TOKEN" "$API/releases/tags/engine-stage-space-d781048")
+          [ "$code" = 404 ] || { echo "Stage tag already exists or API returned $code; refusing overwrite"; exit 1; }
+          gh release create engine-stage-space-d781048 /tmp/libkenji-space.so --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --prerelease --title 'Проверочный бинарник Kenji Space' --notes 'Только для отдельного тестового канала. Это ядро из SymbEK, не исправленный бинарник Symbiosis. Синтетический Account IPC в ARM Redroid вернул успех, но обработчик помечен Stubbed; SSL-заглушки остаются. Запуск игры не подтверждён. Проверка: https://github.com/sj0404-collab/symbiosis/actions/runs/43305587109'
+          curl -fsSL --retry 3 "https://github.com/$GITHUB_REPOSITORY/releases/download/engine-stage-space-d781048/libkenji-space.so" -o /tmp/retrieved.so
+          echo 'd781048671e4cef1cde2ec15db8fe29b949df9949d83569ceaf776ad12901590  /tmp/retrieved.so' | sha256sum -c -
