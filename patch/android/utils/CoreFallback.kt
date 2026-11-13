@@ -92,8 +92,15 @@ object CoreFallback {
 
         var applied = 0
         var failed = 0
+        var autoBlocked = 0
         var kept = text
         for ((path, _) in notes) {
+            // Keep Auto selected, but retain the crash note so launchOn can
+            // safely use Eden until the user explicitly retries Kenji.
+            if (EngineStore.isAuto(context, path)) {
+                autoBlocked++
+                continue
+            }
             val ok = runCatching { EngineStore.setCoreFor(context, path, EngineHybrid.Core.EDEN) }
                 .getOrDefault(false)
             // Проверка обратным чтением: «записали» и «сохранено» — разные вещи.
@@ -109,6 +116,10 @@ object CoreFallback {
         if (kept != text) write(context, kept)
 
         return when {
+            autoBlocked > 0 ->
+                "Для $autoBlocked игр выбор Авто сохранён. После сбоя Kenji запуск будет на Eden; " +
+                    "для повторной проверки выберите Kenji вручную. " +
+                    "Другие записи: сохранено $applied, не удалось $failed."
             failed == 0 && applied > 0 ->
                 "Для игры выбран Eden: значение прочитано сразу после записи. " +
                     "Следующий запуск и работа игры на Eden ещё не проверены."

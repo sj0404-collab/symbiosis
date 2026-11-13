@@ -2002,6 +2002,7 @@ class EmulationFragment : Fragment(), SurfaceHolder.Callback {
                 val path = game?.path.orEmpty()
                 val active = path.isNotEmpty() && emulationViewModel.emulationStarted.value &&
                     !emulationViewModel.isEmulationStopping.value &&
+                    (activity?.hasWindowFocus() == true) &&
                     runCatching { NativeLibrary.isRunning() && !NativeLibrary.isPaused() }.getOrDefault(false)
                 if (active) {
                     if (measuredPath != path) {
@@ -2015,6 +2016,8 @@ class EmulationFragment : Fragment(), SurfaceHolder.Callback {
                         org.yuzu.yuzu_emu.utils.CoreBenchmark.save(app.filesDir, path,
                             org.yuzu.yuzu_emu.utils.EngineHybrid.Core.EDEN, sample)
                     }, "eden-fps-save").start()
+                } else {
+                    recorder?.reset()
                 }
                 if (benchmarkRunnable === this) handler.postDelayed(this, 3000)
             }

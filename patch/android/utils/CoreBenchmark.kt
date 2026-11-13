@@ -14,11 +14,28 @@ object CoreBenchmark {
 
     class Recorder(private val generation: String) {
         private var first = -1L
+        private var last = -1L
         private var sum = 0.0
         private var count = 0
+
+        /** A pause, lost focus, loading gap or invalid reading starts a new window. */
+        fun reset() {
+            first = -1L
+            last = -1L
+            sum = 0.0
+            count = 0
+        }
+
         fun observe(elapsedMs: Long, wallMs: Long, fps: Double): Sample? {
-            if (elapsedMs < 0 || wallMs <= 0 || !fps.isFinite() || fps <= 0 || fps > 240) return null
+            if (elapsedMs < 0 || wallMs <= 0 || !fps.isFinite() || fps <= 0 || fps > 240) {
+                reset()
+                return null
+            }
+            // Sampling normally occurs every 3 seconds. Do not count a long
+            // suspension or a non-monotonic clock as active play.
+            if (last >= 0 && (elapsedMs < last || elapsedMs - last > 9_000L)) reset()
             if (first < 0) first = elapsedMs
+            last = elapsedMs
             if (elapsedMs - first < WARMUP_MS) return null
             sum += fps
             count++
@@ -39,7 +56,7 @@ object CoreBenchmark {
     /** One file per game/core; temp+rename prevents readers observing half a record. */
     fun save(root: File, path: String, core: EngineHybrid.Core, sample: Sample): Boolean = runCatching {
         val dest = file(root, path, core) ?: return@runCatching false
-        if (!dest.parentFile.isDirectory && !dest.parentFile.mkdirs()) return@runCatching false
+        if (!dest.parentFile.isDirectory && !dest.parentFile.mkdirs() && !dest.parentFile.isDirectory) return@runCatching false
         val temp = File.createTempFile("bench-", ".tmp", dest.parentFile)
         try {
             temp.writeText("1\n${sample.fps}\n${sample.count}\n${sample.time}\n${sample.generation}\n")

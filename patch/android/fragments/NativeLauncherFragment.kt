@@ -526,11 +526,13 @@ class NativeLauncherFragment : Fragment() {
         fun updateDetails() {
             val result = org.yuzu.yuzu_emu.utils.CoreBenchmarkStore.compare(ctx, game.path, EngineStore.globalCore(ctx))
             val chosen = EngineStore.coreFor(ctx, game.path)
+            val note = CoreFallback.noteFor(ctx, game.path)
             val reason = if (EngineStore.isAuto(ctx, game.path)) {
-                if (result.choice == null) "Авто: данных с обоих ядер пока недостаточно; используется общее ядро ${chosen.short}."
+                if (chosen == EngineHybrid.Core.KENJI && note.isNotBlank())
+                    "Авто выбрало Kenji, но после сбоя запуск будет на Eden. Для повторной проверки выберите Kenji вручную."
+                else if (result.choice == null) "Авто: данных с обоих ядер пока недостаточно; используется общее ядро ${chosen.short}."
                 else "Авто выбрало ${chosen.short} по примерным замерам FPS."
             } else "Выбрано: ${chosen.short}."
-            val note = CoreFallback.noteFor(ctx, game.path)
             details.text = reason + "\nEden: " + org.yuzu.yuzu_emu.utils.CoreBenchmark.label(result.eden) +
                 "\nKenji: " + org.yuzu.yuzu_emu.utils.CoreBenchmark.label(result.kenji) +
                 "\nЗамеры собираются в обычной игре после прогрева. Разные сцены и настройки влияют на сравнение." +
@@ -665,7 +667,9 @@ class NativeLauncherFragment : Fragment() {
             if (marked) {
                 val why = runCatching { CoreFallback.noteFor(appCtx, game.path) }
                     .getOrDefault("")
-                runCatching { EngineStore.setCoreFor(appCtx, game.path, EngineHybrid.Core.EDEN) }
+                if (!EngineStore.isAuto(appCtx, game.path)) {
+                    runCatching { EngineStore.setCoreFor(appCtx, game.path, EngineHybrid.Core.EDEN) }
+                }
                 Snackbar.make(
                     binding.root,
                     "Прошлый запуск этой игры второе ядро не пережило" +
@@ -704,23 +708,9 @@ class NativeLauncherFragment : Fragment() {
             else -> getString(R.string.launcher_core_kenji_failed)
         }
 
-        // Своё ядро не готово — но на телефоне может стоять официальный Kenji,
-        // и он там работает. Отдать игру ему честнее, чем молча запустить на
-        // Eden и сделать вид, что так и задумано: человек выбрал Kenji.
-        val official = runCatching { Spaces.official(ctx) }.getOrNull()
-        if (official != null && official.installed) {
-            val handed = runCatching { Spaces.openOfficial(ctx, game.path) }.getOrNull()
-            val opened = handed != null && handed.contains("\"ok\":true")
-            if (opened) {
-                Snackbar.make(
-                    binding.root,
-                    "Открыл игру в «${official.label}»: своё ядро не готово ($why).",
-                    Snackbar.LENGTH_LONG
-                ).show()
-                return
-            }
-        }
-        Snackbar.make(binding.root, why, Snackbar.LENGTH_LONG).show()
+        // Hybrid keeps launches in its own player; do not hand off to a
+        // separate application. Explain the fallback to the available core.
+        Snackbar.make(binding.root, "$why · запускаю на Eden", Snackbar.LENGTH_LONG).show()
         navigateToGame(game)
     }
 

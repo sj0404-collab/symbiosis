@@ -137,6 +137,7 @@ class KenjiPlayerActivity : Activity(), SurfaceHolder.Callback {
     /** Игра уже встала внутри ядра — второй раз не сообщаем. */
     @Volatile private var guestFailed = false
     @Volatile private var benchmarkHasFocus = false
+    private val benchmarkFocusEpoch = java.util.concurrent.atomic.AtomicInteger(0)
     /** Путь игры: по нему основной процесс переведёт её на Eden. */
     private var gamePath = ""
     /** Когда начали: журнал старше этого времени — от прошлого запуска. */
@@ -620,6 +621,7 @@ class KenjiPlayerActivity : Activity(), SurfaceHolder.Callback {
         watchdogHandler = background
         val tick = object : Runnable {
             private var benchmarkInitialized = false
+            private var benchmarkFocusSeen = benchmarkFocusEpoch.get()
             private var benchmark: org.yuzu.yuzu_emu.utils.CoreBenchmark.Recorder? = null
             override fun run() {
                 synchronized(watchdogLock) { tickOnce() }
@@ -687,10 +689,16 @@ class KenjiPlayerActivity : Activity(), SurfaceHolder.Callback {
                     benchmark = org.yuzu.yuzu_emu.utils.CoreBenchmarkStore.generation(appContext)
                         ?.let { org.yuzu.yuzu_emu.utils.CoreBenchmark.Recorder(it) }
                 }
+                val focusEpoch = benchmarkFocusEpoch.get()
+                if (focusEpoch != benchmarkFocusSeen || !benchmarkHasFocus) {
+                    benchmark?.reset()
+                    benchmarkFocusSeen = focusEpoch
+                }
                 if (benchmarkHasFocus && !guestFailed) {
                     val sample = benchmark?.observe(android.os.SystemClock.elapsedRealtime(), System.currentTimeMillis(), coreFps)
-                    if (sample != null) org.yuzu.yuzu_emu.utils.CoreBenchmark.save(
-                        appContext.filesDir, gamePath, EngineHybrid.Core.KENJI, sample)
+                    if (sample != null && benchmarkHasFocus && benchmarkFocusEpoch.get() == focusEpoch)
+                        org.yuzu.yuzu_emu.utils.CoreBenchmark.save(
+                            appContext.filesDir, gamePath, EngineHybrid.Core.KENJI, sample)
                 }
                 val details = buildString {
                     append("второе ядро · выполняется · ").append(seconds).append(" с")
@@ -896,16 +904,15 @@ class KenjiPlayerActivity : Activity(), SurfaceHolder.Callback {
         }
         runCatching { KenjiReport.watch(appContext, "гость: " + panic.take(200)) }
         runCatching { CoreFallback.note(appContext, gamePath, panic) }
-        val remember = runCatching {
-            EngineStore.setCoreFor(appContext, romPath, EngineHybrid.Core.EDEN)
-        }.getOrDefault(false)
+        // Preferences are cached per process. The launcher applies the note;
+        // writing from :kenji can overwrite its newer per-game Auto choice.
         requestStop()
         val details = if (evidence.isNotEmpty()) evidence else context.take(4)
         val tail = if (details.isEmpty()) "" else
             "\n\nСтроки журнала рядом с остановкой (не обязательно причина):\n" +
                 details.joinToString("\n")
-        val next = if (remember) "Запомнил: эта игра теперь запускается на Eden."
-        else "Запустите её на Eden — выбор ядра на вкладке «Инструменты»."
+        val next = "После возврата приложение проверит отметку сбоя и предложит Eden. " +
+            "Вы можете повторно выбрать Kenji удержанием обложки."
         val hint = KenjiCrash.panicResultHint(fresh).let { if (it.isEmpty()) "" else "\n\n" + it }
         val observations = KenjiCrash.diagnosticSummary(fresh)
         runCatching { KenjiBridge.crashReportFile(appContext).appendText("\n$observations\n") }
@@ -1026,6 +1033,7 @@ class KenjiPlayerActivity : Activity(), SurfaceHolder.Callback {
     override fun onWindowFocusChanged(hasFocus: Boolean) {
         super.onWindowFocusChanged(hasFocus)
         benchmarkHasFocus = hasFocus
+        benchmarkFocusEpoch.incrementAndGet()
         if (!hasFocus && ::overlay.isInitialized) {
             overlaySink.cancel()
             overlay.refreshControls()
