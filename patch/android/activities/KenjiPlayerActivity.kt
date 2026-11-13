@@ -68,6 +68,7 @@ class KenjiPlayerActivity : Activity(), SurfaceHolder.Callback {
          */
         const val EXTRA_CONFIG = "kenji_config"
         private const val EXTRA_OVERLAY = "kenji_eden_overlay"
+        const val EXTRA_VERBOSE_LOG = "kenji_verbose_log"
 
         fun intent(
             context: Context,
@@ -80,6 +81,7 @@ class KenjiPlayerActivity : Activity(), SurfaceHolder.Callback {
                 .putExtra(EXTRA_TITLE, title)
                 .putExtra(EXTRA_CONFIG, config)
                 .putExtra(EXTRA_OVERLAY, KenjiOverlaySnapshot.capture())
+                .putExtra(EXTRA_VERBOSE_LOG, org.yuzu.yuzu_emu.utils.KenjiLogSettings.verbose(context))
                 .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
     }
 
@@ -98,6 +100,8 @@ class KenjiPlayerActivity : Activity(), SurfaceHolder.Callback {
     private val surfaceStart = KenjiSurfaceStartGate()
     private val startup = KenjiStartupCoordinator()
     private val watchdogLock = Any()
+    private var watchdogThread: android.os.HandlerThread? = null
+    private var watchdogHandler: Handler? = null
     @Volatile private var requireIsolatedProcessExit = false
     @Volatile private var runLoopReturnedSuccessfully = false
     /** Запуск оборвался с названной причиной — она должна остаться в отчёте. */
@@ -131,7 +135,7 @@ class KenjiPlayerActivity : Activity(), SurfaceHolder.Callback {
     private val hidHistory = java.util.ArrayDeque<String>()
     private var hidCalls = java.util.LinkedHashMap<String, String>()
     /** Игра уже встала внутри ядра — второй раз не сообщаем. */
-    private var guestFailed = false
+    @Volatile private var guestFailed = false
     /** Путь игры: по нему основной процесс переведёт её на Eden. */
     private var gamePath = ""
     /** Когда начали: журнал старше этого времени — от прошлого запуска. */
@@ -431,12 +435,14 @@ class KenjiPlayerActivity : Activity(), SurfaceHolder.Callback {
                 return@Thread
             }
 
-            // Enable the core's own stub log to capture the guest's requested
-            // Npad IDs/styles. The available sibling source calls this level 1;
-            // this is diagnostic and its binary compatibility remains untested.
-            val stubLog = KenjiBridge.enableHidStubLog()
+            // Requested policy is applied at the source, not merely hidden in
+            // the UI. The isolated process receives a snapshot from the launcher.
+            val verboseLog = intent.getBooleanExtra(EXTRA_VERBOSE_LOG, false)
+            val logPolicy = KenjiBridge.setDiagnosticLogging(verboseLog)
+            android.util.Log.i("SymbiosisKenji", "log_policy=${if (verboseLog) "verbose" else "errors"} api=$logPolicy")
             runCatching { KenjiReport.watch(appContext,
-                if (stubLog) "отправлен запрос на журнал параметров служб" else "запрос журнала параметров служб недоступен") }
+                if (logPolicy) "запрошен журнал: " + if (verboseLog) "подробный" else "ошибки"
+                else "управление уровнями журнала ядра недоступно") }
 
             // Порядок как в официальном Kenji: конфигурация графики →
             // рендерер → устройство → игра. Устройство без рендерера ядро
@@ -547,9 +553,7 @@ class KenjiPlayerActivity : Activity(), SurfaceHolder.Callback {
             // цикл идёт, а на экране ничего.
             if (startup.isCancelled()) return@Thread
             KenjiBridge.noteStep("6/7 · рендерер")
-            // Журнал графики ядра — до пинка: пинок и его последствия должны
-            // быть в журнале, а не только в наших словах.
-            KenjiBridge.enableGraphicsLog()
+            // Graphics logging follows the opt-in log policy set above.
             // СИНХРОНИЗАЦИЮ РЕНДЕРЕРА ЗДЕСЬ НЕ ЗОВЁМ — ЯДРО НА НЕЙ ПАДАЕТ.
             //
             // `graphicsRendererSetVsync` (в ядре `LibKenjinx.SetVsyncState`)
@@ -574,10 +578,10 @@ class KenjiPlayerActivity : Activity(), SurfaceHolder.Callback {
                 return@Thread
             }
             KenjiBridge.noteStep("цикл завершён")
-            runOnUiThread {
+            synchronized(watchdogLock) {
                 if (!guestFailed && !failed) checkGuestFailure(appContext)
-                if (!guestFailed && !failed) leave()
             }
+            runOnUiThread { if (!guestFailed && !failed) leave() }
           } catch (t: Throwable) {
             runCatching {
                 KenjiBridge.crashReportFile(appContext).appendText(
@@ -609,6 +613,10 @@ class KenjiPlayerActivity : Activity(), SurfaceHolder.Callback {
      */
     private fun startWatchdog(appContext: android.content.Context) {
         val beganAt = android.os.SystemClock.elapsedRealtime()
+        val worker = android.os.HandlerThread("kenji-log-watch").apply { start() }
+        val background = Handler(worker.looper)
+        watchdogThread = worker
+        watchdogHandler = background
         val tick = object : Runnable {
             override fun run() {
                 synchronized(watchdogLock) { tickOnce() }
@@ -696,17 +704,18 @@ class KenjiPlayerActivity : Activity(), SurfaceHolder.Callback {
                 }
                 val summary = if (noFramesWarned && frames == 0L)
                     "Второе ядро · нет callback · подробнее" else "Второе ядро · $seconds с · подробнее"
-                updateStatus(summary, details)
+                runOnUiThread {
+                    if (!startup.isCancelled() && !isFinishing && !isDestroyed) updateStatus(summary, details)
+                }
                 // Тот же текст — в отчёт. Человеку некогда делать скриншот на
                 // чёрном экране, поэтому всё, что видно, записывается само.
                 runCatching {
                     KenjiReport.watch(appContext, "$seconds с · $verdict")
                 }
-                status.postDelayed(this, 3000)
+                if (!startup.isCancelled()) background.postDelayed(this, 3000)
             }
         }
-        status.removeCallbacks(tick)
-        status.postDelayed(tick, 3000)
+        background.postDelayed(tick, 3000)
     }
 
     /**
@@ -1043,6 +1052,10 @@ class KenjiPlayerActivity : Activity(), SurfaceHolder.Callback {
         // game loading is itself waiting for a keyboard response.
         uiSession?.stop()
         stopThread?.let { return it }
+        watchdogHandler?.removeCallbacksAndMessages(null)
+        watchdogThread?.quitSafely()
+        watchdogHandler = null
+        watchdogThread = null
         inputRunning = false
         KenjiBridge.disableInputEvents()
         val updater = inputThread

@@ -113,13 +113,14 @@ class InputContract(unittest.TestCase):
         self.assertNotIn('fail(', block)
         self.assertNotIn('giveUpOnFrames', ACTIVITY)
 
-    def test_stub_logging_is_requested_after_core_initialized_before_game(self):
-        self.assertLess(ACTIVITY.index('KenjiBridge.preparePlay(appContext, config)'), ACTIVITY.index('KenjiBridge.enableHidStubLog()'))
-        self.assertLess(ACTIVITY.index('KenjiBridge.enableHidStubLog()'), ACTIVITY.index('KenjiBridge.loadGame(fd'))
-        call = BRIDGE.split('KenjiBridge_nativeEnableHidStubLog', 1)[1].split('JNIEXPORT', 1)[0]
+    def test_log_policy_is_requested_after_core_initialized_before_game(self):
+        self.assertLess(ACTIVITY.index('KenjiBridge.preparePlay(appContext, config)'), ACTIVITY.index('KenjiBridge.setDiagnosticLogging(verboseLog)'))
+        self.assertLess(ACTIVITY.index('KenjiBridge.setDiagnosticLogging(verboseLog)'), ACTIVITY.index('KenjiBridge.loadGame(fd'))
+        call = BRIDGE.split('KenjiBridge_nativeSetDiagnosticLogging', 1)[1].split('JNIEXPORT', 1)[0]
         self.assertIn('"loggingSetEnabled"', call)
         self.assertIn('void (*)(int, bool)', call)
-        self.assertIn('fn(1, true)', call)
+        self.assertIn('fn(4, true)', call)
+        self.assertIn('{0, 1, 2, 3, 5, 6, 8}', call)
 
     def test_failed_connect_is_not_reported_as_success(self):
         self.assertIn('if (padId < 0)', ACTIVITY)

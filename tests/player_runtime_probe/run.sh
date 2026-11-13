@@ -365,6 +365,33 @@ for mode in 2 0 1; do
   echo "PLAYER_REAL_UI_AND_EXIT_OK mode=$mode" | tee -a "$W/redroid-status.txt"
 done
 
+# Exercise the default quiet request on the real signed core. This checks that
+# the player survives and asks for the API, not that every binary log source is silent.
+if [ "${PLAYER_CORE_UPDATE:-0}" = 1 ] && [ "${PLAYER_HID_LONG:-0}" = 1 ]; then
+  adb shell am start -W -n "$package/dev.symbiosis.playerruntime.DiagnosticLauncher" \
+    --es test_config 'memory=2' --es test_kind hid-long --ez ci_quiet_log true > "$W/quiet-launch.txt"
+  quiet_pid=$(adb shell pidof "$package:kenji" | tr -d '\r' || true)
+  [ -n "$quiet_pid" ] || { echo 'QUIET_PLAYER_NOT_RUNNING'; exit 1; }
+  quiet_seen=0
+  for ((n=0;n<40;n++)); do
+    if grep -qE "^[0-9-]+ +[0-9:.]+ +$quiet_pid +[0-9]+ .*log_policy=errors api=true" "$log"; then quiet_seen=1; break; fi
+    app_crashed && break
+    sleep 1
+  done
+  [ "$quiet_seen" = 1 ] || { echo 'QUIET_POLICY_NOT_OBSERVED'; exit 1; }
+  sleep 10
+  [ "$(adb shell pidof "$package:kenji" | tr -d '\r' || true)" = "$quiet_pid" ] || { echo 'QUIET_PLAYER_DIED'; exit 1; }
+  ! app_crashed || { echo 'QUIET_PLAYER_FATAL'; exit 1; }
+  echo 'PLAYER_QUIET_LOG_POLICY_REQUESTED_AND_ALIVE' | tee -a "$W/redroid-status.txt"
+  click_text 'Выйти' || { echo 'QUIET_PLAYER_EXIT_NOT_VISIBLE'; exit 1; }
+  for ((n=0;n<45;n++)); do
+    pid=$(adb shell pidof "$package:kenji" | tr -d '\r' || true)
+    [ -z "$pid" ] && break
+    sleep 1
+  done
+  [ -z "${pid:-}" ] || { echo 'QUIET_PLAYER_EXIT_STUCK'; exit 1; }
+fi
+
 # Long-lived HID observations are synthetic and never represent a real game.
 if [ "${PLAYER_HID_LONG:-0}" = 1 ]; then
   hid_failed=0

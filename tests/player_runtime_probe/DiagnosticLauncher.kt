@@ -58,6 +58,8 @@ class DiagnosticLauncher : Activity() {
             check(game.isFile) { "missing test NRO" }
             val config = intent.getStringExtra("test_config").orEmpty()
             val playerIntent = KenjiPlayerActivity.intent(this, game.absolutePath, "Keyboard test", config)
+            // Guest test sentinels use Guest logging; regular users default to errors only.
+            playerIntent.putExtra(KenjiPlayerActivity.EXTRA_VERBOSE_LOG, !intent.getBooleanExtra("ci_quiet_log", false))
             playerIntent.putExtra("ci_test_stop_probe", intent.getBooleanExtra("ci_test_stop_probe", false))
             playerIntent.putExtra("ci_delay_cancel", intent.getBooleanExtra("ci_delay_cancel", false))
             startActivity(playerIntent)

@@ -134,7 +134,7 @@ object KenjiBridge {
     private external fun nativeSetWindowHandle(handle: Long)
     /** Собственный журнал графики ядра: без него причина молчания не видна. */
     private external fun nativeGraphicsLog(on: Boolean)
-    private external fun nativeEnableHidStubLog(): Boolean
+    private external fun nativeSetDiagnosticLogging(verbose: Boolean): Boolean
     /** Сколько кадров в секунду считает само ядро — не наш колбэк. */
     private external fun nativeGameFrameRate(): Double
     private external fun nativeLoadGame(fd: Int, type: Int): String
@@ -1009,20 +1009,13 @@ object KenjiBridge {
         return if (err.isNullOrEmpty()) Status(true, "рендерер готов") else Status(false, err)
     }
 
-    /** Отдать ядру окно Android — по нему оно считает поворот и размер. */
-    /**
-     * Включить журнал графики ядра — один раз на запуск.
-     *
-     * Цена: несколько строк в его журнал. Польза: если кадров нет, в журнале
-     * будет сказано, на чём остановился Vulkan, а не только наше «кадров нет».
-     */
-    fun enableGraphicsLog() {
-        if (bridgeLoaded) runCatching { nativeGraphicsLog(true) }
+    /** Request error-only or opt-in verbose levels; true means the API exists. */
+    fun setDiagnosticLogging(verbose: Boolean): Boolean {
+        if (!bridgeLoaded) return false
+        val applied = runCatching { nativeSetDiagnosticLogging(verbose) }.getOrDefault(false)
+        runCatching { nativeGraphicsLog(verbose) }
+        return applied
     }
-
-    /** In related Kenji sources Stub is log level 1, enabled after initialization. */
-    fun enableHidStubLog(): Boolean =
-        bridgeLoaded && runCatching { nativeEnableHidStubLog() }.getOrDefault(false)
 
     /** Сколько кадров в секунду считает само ядро (0 — не считает или не рисует). */
     fun gameFrameRate(): Double =

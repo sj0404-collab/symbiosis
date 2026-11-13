@@ -1923,16 +1923,19 @@ Java_org_yuzu_yuzu_1emu_utils_KenjiBridge_nativeSetWindowHandle(JNIEnv*, jobject
  * Подпись сверена не по догадке: в официальном `KenjinxNative` это
  * `loggingEnabledGraphicsLog(enabled: Boolean)`, то есть `void(bool)`.
  */
-// Related Android host exposes loggingSetEnabled(int logLevel, bool enabled).
-// LogLevel.Stub is ordinal 1 in that source; the binary's export is verified.
+// Related source: Debug=0, Stub=1, Info=2, Warning=3, Error=4,
+// Guest=5, AccessLog=6, Notice=7 (always on), Trace=8. The exact
+// downloaded binary must be tested: the symbol alone doesn't prove the enum.
 JNIEXPORT jboolean JNICALL
-Java_org_yuzu_yuzu_1emu_utils_KenjiBridge_nativeEnableHidStubLog(JNIEnv*, jobject) {
+Java_org_yuzu_yuzu_1emu_utils_KenjiBridge_nativeSetDiagnosticLogging(JNIEnv*, jobject, jboolean verbose) {
     std::lock_guard<std::mutex> guard(g_lock);
     if (g_core == nullptr) return JNI_FALSE;
     using Fn = void (*)(int, bool);
     auto fn = reinterpret_cast<Fn>(dlsym(g_core, "loggingSetEnabled"));
     if (fn == nullptr) return JNI_FALSE;
-    fn(1, true);
+    const bool detailed = verbose == JNI_TRUE;
+    for (int level : {0, 1, 2, 3, 5, 6, 8}) fn(level, detailed);
+    fn(4, true); // never disable error reporting
     return JNI_TRUE;
 }
 

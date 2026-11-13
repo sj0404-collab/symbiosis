@@ -19,6 +19,8 @@ import androidx.core.view.updatePadding
 import androidx.fragment.app.Fragment
 import androidx.lifecycle.lifecycleScope
 import com.google.android.material.button.MaterialButton
+import com.google.android.material.switchmaterial.SwitchMaterial
+import org.yuzu.yuzu_emu.utils.KenjiLogSettings
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -125,6 +127,29 @@ class KernelLogFragment : Fragment() {
                 setPadding(0, dp(2), 0, dp(10))
             }
         )
+
+        val detailedLog = SwitchMaterial(ctx).apply {
+            text = "Подробный журнал Kenji-NX"
+            setTextColor(SymbiosisTheme.TEXT)
+            isChecked = KenjiLogSettings.verbose(ctx)
+        }
+        root.addView(detailedLog)
+        root.addView(TextView(ctx).apply {
+            text = "По умолчанию выключен: ядру запрашиваются только ошибки. " +
+                "Системные и обязательные сообщения могут остаться. Изменение действует со следующего запуска игры; старые журналы не удаляются."
+            textSize = 13f
+            setTextColor(SymbiosisTheme.TEXT_DIM)
+            setPadding(0, 0, 0, dp(10))
+        })
+        var restoringLogSwitch = false
+        detailedLog.setOnCheckedChangeListener { _, checked ->
+            if (!restoringLogSwitch && !KenjiLogSettings.setVerbose(ctx, checked)) {
+                restoringLogSwitch = true
+                detailedLog.isChecked = !checked
+                restoringLogSwitch = false
+                android.widget.Toast.makeText(ctx, "Не удалось сохранить настройку журнала", android.widget.Toast.LENGTH_LONG).show()
+            }
+        }
 
         val tabs = LinearLayout(ctx).apply {
             orientation = LinearLayout.HORIZONTAL
