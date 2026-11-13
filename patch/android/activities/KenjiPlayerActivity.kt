@@ -1172,11 +1172,11 @@ class KenjiPlayerActivity : Activity(), SurfaceHolder.Callback {
      * следующую игру запускать небезопасно.
      */
     override fun onDestroy() {
+        val lease = sessionLease
         if (android.os.Build.VERSION.SDK_INT >= 33) {
             systemBackCallback?.let { onBackInvokedDispatcher.unregisterOnBackInvokedCallback(it) }
             systemBackCallback = null
         }
-        val lease = sessionLease
         if (lease == null) {
             super.onDestroy()
             return
