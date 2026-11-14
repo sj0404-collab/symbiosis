@@ -731,7 +731,7 @@ object KenjiBridge {
      * `EngineHybrid.seed/merge` решает, что откуда, и это проверяется на
      * хосте, а не на телефоне.
      */
-    fun preparePlay(context: Context, effective: String = ""): Status {
+    fun preparePlay(context: Context, effective: String = "", gamePath: String = ""): Status {
         seedKeys(context)
         // Прошивка — до старта ядра: ContentManager перечисляет её в
         // javaInitialize, и то, что скопировано позже, он уже не увидит.
@@ -746,11 +746,16 @@ object KenjiBridge {
         // Настройки приходят строкой из главного процесса: SharedPreferences
         // между процессами не синхронизируются, и :kenji увидел бы свою
         // копию файла. Пустая строка — читаем локально (проверка ядра).
-        val cfg = if (effective.isBlank()) {
+        val base = if (effective.isBlank()) {
             EngineStore.config(context)
         } else {
             EngineStore.configWith(context, EngineHybrid.decode(effective))
         }
+        val gameOverrides = if (gamePath.isEmpty()) emptyMap() else
+            GameProfileStore.read(context.filesDir, gamePath)
+                ?: return Status(false, "Не удалось прочитать настройки этой игры. Они не изменены; проверьте доступ к данным приложения.")
+        val cfg = GameProfileStore.merge(base, gameOverrides)
+        lastEffectiveConfig = EngineHybrid.encode(EngineHybrid.effective(cfg))
         pendingCfg = cfg
         // Record the actual prepared values, not secret paths or key material.
         // The marker describes intent; it does not claim the core accepted them.
@@ -878,6 +883,11 @@ object KenjiBridge {
      */
     @Volatile
     var lastConfig: String = ""
+        private set
+
+    /** Snapshot used to initialise the current session, never pending changes. */
+    @Volatile
+    var lastEffectiveConfig: String = ""
         private set
 
     /** Версия прошивки второго ядра, как её называет само ядро. */

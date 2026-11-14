@@ -177,6 +177,8 @@ object EngineHybrid {
             "shaderCache" -> bool(v)?.let { cfg.copy(enableShaderCache = it) }
             "ptc" -> bool(v)?.let { cfg.copy(enablePtc = it) }
             "lowPowerPtc" -> bool(v)?.let { cfg.copy(enableLowPowerPtc = it) }
+            "jitEviction" -> bool(v)?.let { cfg.copy(enableJitCacheEviction = it) }
+            "textureRecompression" -> bool(v)?.let { cfg.copy(enableTextureRecompression = it) }
             "macroHle" -> bool(v)?.let { cfg.copy(enableMacroHLE = it) }
             "macroJit" -> bool(v)?.let { cfg.copy(enableMacroJit = it) }
             "fastGpuTime" -> bool(v)?.let { cfg.copy(fastGpuTime = it) }
@@ -193,7 +195,7 @@ object EngineHybrid {
             "aniso" -> v.toFloatOrNull()?.takeIf { it in 0f..16f }?.let {
                 cfg.copy(maxAnisotropy = it)
             }
-            "threads" -> v.toIntOrNull()?.takeIf { it in 0..4 }?.let {
+            "threads" -> v.toIntOrNull()?.takeIf { it in 0..2 }?.let {
                 cfg.copy(backendThreading = it)
             }
             else -> null
@@ -208,6 +210,8 @@ object EngineHybrid {
         "shaderCache" -> cfg.enableShaderCache.toString()
         "ptc" -> cfg.enablePtc.toString()
         "lowPowerPtc" -> cfg.enableLowPowerPtc.toString()
+        "jitEviction" -> cfg.enableJitCacheEviction.toString()
+        "textureRecompression" -> cfg.enableTextureRecompression.toString()
         "macroHle" -> cfg.enableMacroHLE.toString()
         "macroJit" -> cfg.enableMacroJit.toString()
         "fastGpuTime" -> cfg.fastGpuTime.toString()
@@ -427,7 +431,7 @@ object EngineHybrid {
         ),
         Field(
             "nce", "NCE (нативный код)",
-            "Общее с Eden: берётся его CPU-бэкенд. На Mali NCE быстрее, но чаще падает.",
+            "Dynarmic и NCE — разные способы выполнения процессора. Поддержка и скорость зависят от устройства и игры.",
             true,
             listOf(Choice("false", "выкл · Dynarmic"), Choice("true", "вкл · NCE"))
         ),
@@ -448,6 +452,36 @@ object EngineHybrid {
             "Только у Kenji: сохраняет переведённый код между запусками.",
             false,
             listOf(Choice("true", "вкл"), Choice("false", "выкл"))
+        ),
+        Field(
+            "lowPowerPtc", "Энергосберегающий PPTC",
+            "Режим профиля переведённого кода; влияние зависит от игры. После перезапуска.",
+            false, listOf(Choice("false", "выкл"), Choice("true", "вкл"))
+        ),
+        Field(
+            "jitEviction", "Очистка кэша JIT",
+            "Ограничение кэша кода ядром; последствия для скорости нужно проверять в игре.",
+            false, listOf(Choice("false", "выкл"), Choice("true", "вкл"))
+        ),
+        Field(
+            "threads", "Поток графического бэкенда",
+            "Авто, один поток или отдельный поток графики. Это не настройки компиляции шейдеров чанками.",
+            false, listOf(Choice("0", "авто"), Choice("1", "без отдельного потока"), Choice("2", "отдельный поток"))
+        ),
+        Field(
+            "textureRecompression", "Пересжатие текстур",
+            "Пересжатие текстур, если поддерживается ядром. Не добавляет новые эффекты выпуклости.",
+            false, listOf(Choice("false", "выкл"), Choice("true", "вкл"))
+        ),
+        Field(
+            "fast2DCopy", "Быстрое копирование 2D",
+            "Оптимизация копирования в графическом ядре; проверяйте изображение в игре.",
+            false, listOf(Choice("true", "вкл"), Choice("false", "выкл"))
+        ),
+        Field(
+            "macroJit", "Macro JIT",
+            "Компиляция графических макрокоманд. Не все игры и драйверы одинаково реагируют.",
+            false, listOf(Choice("false", "выкл"), Choice("true", "вкл"))
         ),
         Field(
             "macroHle", "Macro HLE",
@@ -474,9 +508,9 @@ object EngineHybrid {
         ),
         Field(
             "vsync", "Вертикальная синхронизация",
-            "Только у Kenji. 0 — без ограничения кадров.",
+            "Режим синхронизации ядра: Switch или без ограничения. Это не выбор произвольного FPS.",
             false,
-            listOf(Choice("0", "выкл"), Choice("1", "вкл"))
+            listOf(Choice("0", "Switch"), Choice("1", "без ограничения"))
         ),
         Field(
             "internet", "Интернет в играх",

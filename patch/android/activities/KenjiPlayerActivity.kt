@@ -39,6 +39,7 @@ import org.yuzu.yuzu_emu.utils.KenjiOverlaySnapshot
 import org.yuzu.yuzu_emu.utils.KenjiSurfaceStartGate
 import org.yuzu.yuzu_emu.utils.KenjiStartupCoordinator
 import org.yuzu.yuzu_emu.utils.GameSessionLock
+import org.yuzu.yuzu_emu.utils.GameProfileStore
 import org.yuzu.yuzu_emu.overlay.InputOverlay
 import org.yuzu.yuzu_emu.overlay.model.OverlayLayout
 import org.yuzu.yuzu_emu.features.input.NativeInput
@@ -218,46 +219,116 @@ class KenjiPlayerActivity : Activity(), SurfaceHolder.Callback {
             setPadding(dp(16), dp(14), dp(16), dp(14))
             setBackgroundColor(Color.rgb(25, 27, 33))
         }
-        panel.addView(TextView(this).apply {
-            text = "Меню игры"
-            textSize = 20f
-            setTextColor(Color.WHITE)
-            setPadding(0, 0, 0, dp(12))
-        })
-        panel.addView(TextView(this).apply {
-            text = "Игра продолжает работать — пауза ядра пока недоступна."
-            textSize = 14f
-            setTextColor(Color.LTGRAY)
-            setPadding(0, 0, 0, dp(10))
-        })
         val popup = PopupWindow(this)
+        var pageVersion = 0
+        var saving = false
+        lateinit var showPage: (String) -> Unit
+        fun note(textValue: String) {
+            panel.addView(TextView(this).apply {
+                text = textValue
+                textSize = 14f
+                setTextColor(Color.LTGRAY)
+                setPadding(0, dp(5), 0, dp(10))
+            })
+        }
         fun addAction(label: String, action: () -> Unit) {
-            panel.addView(darkButton(label) { popup.dismiss(); action() },
+            panel.addView(darkButton(label, action),
                 LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(50)).apply {
                     bottomMargin = dp(8)
                 })
         }
-        addAction("Продолжить") { }
-        // Keep exit reachable without scrolling in landscape as well.
-        addAction("Выйти из игры") { confirmLeave() }
-        addAction(if (showPlayerFps) "Скрыть FPS" else "Показать FPS") {
-            showPlayerFps = !showPlayerFps
-            if (!showPlayerFps) status.text = status.text.toString().substringBefore(" · ")
+        fun saveSetting(id: String, value: String?) {
+            if (saving) return
+            saving = true
+            val path = intent.getStringExtra(EXTRA_PATH).orEmpty()
+            Thread({
+                val ok = GameProfileStore.set(filesDir, path, id, value)
+                runOnUiThread {
+                    saving = false
+                    if (isFinishing || isDestroyed || !popup.isShowing) return@runOnUiThread
+                    Toast.makeText(this, if (ok) "Сохранено. Применится после перезапуска игры." else
+                        "Не удалось сохранить настройку. Старые настройки не изменены.", Toast.LENGTH_LONG).show()
+                    showPage("settings")
+                }
+            }, "kenji-profile-save").start()
         }
-        if (::overlay.isInitialized) {
-            addAction(if (showTouchControls) "Скрыть управление" else "Показать управление") {
-                overlaySink.cancel()
-                showTouchControls = !showTouchControls
-                overlay.visibility = if (showTouchControls) android.view.View.VISIBLE else android.view.View.GONE
+        showPage = { page ->
+            pageVersion++
+            val version = pageVersion
+            panel.removeAllViews()
+            if (page == "menu") {
+                note("Меню игры\nИгра продолжает работать — пауза ядра пока недоступна.")
+                addAction("Продолжить") { popup.dismiss() }
+                // Keep exit reachable without scrolling in landscape as well.
+                addAction("Выйти из игры") { popup.dismiss(); confirmLeave() }
+                addAction("Настройки этой игры") { showPage("settings") }
+                addAction("Журнал игры") { showPage("logs") }
+                addAction(if (showPlayerFps) "Скрыть FPS" else "Показать FPS") {
+                    showPlayerFps = !showPlayerFps
+                    if (!showPlayerFps) status.text = status.text.toString().substringBefore(" · ")
+                    showPage("menu")
+                }
+                if (::overlay.isInitialized) {
+                    addAction(if (showTouchControls) "Скрыть управление" else "Показать управление") {
+                        overlaySink.cancel()
+                        showTouchControls = !showTouchControls
+                        overlay.visibility = if (showTouchControls) android.view.View.VISIBLE else android.view.View.GONE
+                        showPage("menu")
+                    }
+                }
+                addAction("Состояние и журнал") { popup.dismiss(); showStatusDetails() }
+                addAction("Сохранение состояния") {
+                    popup.dismiss()
+                    AlertDialog.Builder(this, android.R.style.Theme_Material_Dialog_Alert)
+                        .setTitle("Сохранение состояния недоступно")
+                        .setMessage("В установленном ядре нет подтверждённой функции сохранения состояния. Используйте обычное сохранение внутри игры.")
+                        .setPositiveButton("Понятно", null).show()
+                }
+            } else if (page == "settings") {
+                addAction("← Меню игры") { showPage("menu") }
+                note("Настройки этой игры · изменения действуют после перезапуска. Запущенная игра не ставится на паузу. Индивидуальные значения имеют приоритет над общими настройками и плагинами.")
+                val path = intent.getStringExtra(EXTRA_PATH).orEmpty()
+                val overrides = GameProfileStore.read(filesDir, path)
+                if (overrides == null) {
+                    note("Не удалось прочитать настройки игры. Сохранённые данные не изменены.")
+                } else {
+                    val running = EngineHybrid.decode(KenjiBridge.lastEffectiveConfig)
+                    for (field in EngineHybrid.FIELDS) {
+                        val selected = overrides[field.id]
+                        val selectedLabel = field.choices.firstOrNull { it.value == selected }?.label ?: "общие / плагины"
+                        val activeLabel = field.choices.firstOrNull { it.value == running[field.id] }?.label
+                            ?: running[field.id] ?: "ещё не подготовлено"
+                        addAction("${field.label}: $selectedLabel") { showPage("field:" + field.id) }
+                        note("Подготовлено для текущего запуска: $activeLabel")
+                    }
+                }
+            } else if (page.startsWith("field:")) {
+                addAction("← Настройки игры") { showPage("settings") }
+                val field = EngineHybrid.FIELDS.firstOrNull { it.id == page.substringAfter(':') }
+                if (field != null) {
+                    note(field.label + "\n" + field.hint + "\nПрименится после перезапуска.")
+                    addAction("Общие настройки / плагины") { saveSetting(field.id, null) }
+                    field.choices.forEach { choice -> addAction(choice.label) { saveSetting(field.id, choice.value) } }
+                }
+            } else if (page == "logs") {
+                addAction("← Меню игры") { showPage("menu") }
+                note("Последние записи ядра. Подробный журнал управляется в общей вкладке логов. Файл может содержать записи предыдущего сеанса; журнал не очищается.")
+                val output = TextView(this).apply {
+                    text = "Чтение журнала…"
+                    setTextColor(Color.WHITE)
+                    textSize = 13f
+                    setTextIsSelectable(true)
+                }
+                panel.addView(output)
+                Thread({
+                    val content = coreLogTail(applicationContext, 60).ifBlank { "Записей пока нет." }
+                    runOnUiThread {
+                        if (!isFinishing && !isDestroyed && popup.isShowing && pageVersion == version) output.text = content
+                    }
+                }, "kenji-log-view").start()
             }
         }
-        addAction("Состояние и журнал") { showStatusDetails() }
-        addAction("Сохранение состояния") {
-            AlertDialog.Builder(this, android.R.style.Theme_Material_Dialog_Alert)
-                .setTitle("Сохранение состояния недоступно")
-                .setMessage("В установленном ядре нет подтверждённой функции сохранения состояния. Используйте обычное сохранение внутри игры.")
-                .setPositiveButton("Понятно", null).show()
-        }
+        showPage("menu")
         val scroll = ScrollView(this).apply { addView(panel) }
         popup.contentView = scroll
         popup.width = minOf(dp(340), resources.displayMetrics.widthPixels - dp(24))
@@ -516,7 +587,7 @@ class KenjiPlayerActivity : Activity(), SurfaceHolder.Callback {
             org.kenjinx.android.KenjinxNative.nativeWindow = nw
             runOnUiThread { updateStatus("Второе ядро · подготовка · подробнее", "Готовлю ядро и прошивку") }
             KenjiBridge.noteStep("1/6 · загрузка ядра")
-            val prep = KenjiBridge.preparePlay(appContext, config)
+            val prep = KenjiBridge.preparePlay(appContext, config, path)
             if (startup.isCancelled()) return@Thread
             if (!prep.ok) {
                 runOnUiThread { fail(prep.message) }
@@ -715,6 +786,7 @@ class KenjiPlayerActivity : Activity(), SurfaceHolder.Callback {
             private var benchmarkInitialized = false
             private var tickNumber = 0L
             private var lastLogTail = ""
+            private var lastRendererLine = ""
             private var lastRateAt = beganAt
             private var benchmarkFocusSeen = benchmarkFocusEpoch.get()
             private var benchmark: org.yuzu.yuzu_emu.utils.CoreBenchmark.Recorder? = null
@@ -773,9 +845,12 @@ class KenjiPlayerActivity : Activity(), SurfaceHolder.Callback {
                 // Errors are still recorded by the core. Reading/parsing its log
                 // is bounded, off the UI thread, and normally only every 15 s.
                 // No log is cleared and an old line never stops the game.
-                if (tickNumber == 1L || tickNumber % 5L == 0L) {
+                if (tickNumber == 1L || tickNumber % 15L == 0L) {
                     checkGuestFailure(appContext)
                     lastLogTail = coreLogTail(appContext, 2)
+                    lastRendererLine = if (frames == 0L) runCatching {
+                        rendererTail(appContext, 1).firstOrNull { !lastLogTail.contains(it) }.orEmpty()
+                    }.getOrDefault("") else ""
                 }
                 val tail = lastLogTail
                 val coreFps = runCatching { KenjiBridge.gameFrameRate() }.getOrDefault(0.0)
@@ -789,7 +864,8 @@ class KenjiPlayerActivity : Activity(), SurfaceHolder.Callback {
                     benchmark?.reset()
                     benchmarkFocusSeen = focusEpoch
                 }
-                if (benchmarkHasFocus && logObservation.isEmpty()) {
+                // Keep the passive Auto comparison at its original 3 s cadence.
+                if (tickNumber % 3L == 0L && benchmarkHasFocus && logObservation.isEmpty()) {
                     val sample = benchmark?.observe(android.os.SystemClock.elapsedRealtime(), System.currentTimeMillis(), coreFps)
                     if (sample != null && benchmarkHasFocus && benchmarkFocusEpoch.get() == focusEpoch)
                         org.yuzu.yuzu_emu.utils.CoreBenchmark.save(
@@ -815,10 +891,8 @@ class KenjiPlayerActivity : Activity(), SurfaceHolder.Callback {
                     // Ноль кадров — показываем слова ядра про отрисовку: без
                     // них экран состоит из наших догадок, а причина лежит в
                     // журнале, которого человек не видит.
-                    if (frames == 0L) {
-                        runCatching { rendererTail(appContext, 1) }.getOrDefault(emptyList())
-                            .firstOrNull { line -> !tail.contains(line) }
-                            ?.let { line -> append("\nЧто ядро говорит про отрисовку:\n").append(line) }
+                    if (frames == 0L && lastRendererLine.isNotEmpty()) {
+                        append("\nЧто ядро говорит про отрисовку:\n").append(lastRendererLine)
                     }
                 }
                 val fpsText = if (coreFps.isFinite() && coreFps > 0.0 && coreFps < 400.0)
@@ -833,7 +907,7 @@ class KenjiPlayerActivity : Activity(), SurfaceHolder.Callback {
                 }
                 // Тот же текст — в отчёт. Человеку некогда делать скриншот на
                 // чёрном экране, поэтому всё, что видно, записывается само.
-                if (tickNumber == 1L || tickNumber % 5L == 0L) runCatching {
+                if (tickNumber == 1L || tickNumber % 15L == 0L) runCatching {
                     // Sparse background samples: process RSS is not GPU or
                     // free memory, and does not by itself establish an OOM.
                     val memory = runCatching {
@@ -847,10 +921,10 @@ class KenjiPlayerActivity : Activity(), SurfaceHolder.Callback {
                     KenjiReport.watch(appContext, "$seconds с · $verdict$fps" +
                         if (memory.isNotEmpty()) " · $memory" else "")
                 }
-                if (!startup.isCancelled()) background.postDelayed(this, 3000)
+                if (!startup.isCancelled()) background.postDelayed(this, 1000)
             }
         }
-        background.postDelayed(tick, 3000)
+        background.postDelayed(tick, 1000)
     }
 
     /**

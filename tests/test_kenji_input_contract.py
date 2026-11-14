@@ -107,7 +107,7 @@ class InputContract(unittest.TestCase):
         self.assertIn('Игра продолжает работать', menu)
         self.assertIn('Сохранение состояния недоступно', menu)
         self.assertIn('overlaySink.cancel()', menu)
-        self.assertIn('"Выйти из игры") { confirmLeave() }', menu)
+        self.assertIn('"Выйти из игры") { popup.dismiss(); confirmLeave() }', menu)
         self.assertIn('setPositiveButton("Выйти") { _, _ -> leave() }', ACTIVITY)
 
     def test_hid_calls_are_context_not_result(self):
@@ -129,7 +129,7 @@ class InputContract(unittest.TestCase):
         self.assertNotIn('giveUpOnFrames', ACTIVITY)
 
     def test_log_policy_is_requested_after_core_initialized_before_game(self):
-        self.assertLess(ACTIVITY.index('KenjiBridge.preparePlay(appContext, config)'), ACTIVITY.index('KenjiBridge.setDiagnosticLogging(verboseLog)'))
+        self.assertLess(ACTIVITY.index('KenjiBridge.preparePlay(appContext, config, path)'), ACTIVITY.index('KenjiBridge.setDiagnosticLogging(verboseLog)'))
         self.assertLess(ACTIVITY.index('KenjiBridge.setDiagnosticLogging(verboseLog)'), ACTIVITY.index('KenjiBridge.loadGame(fd'))
         call = BRIDGE.split('KenjiBridge_nativeSetDiagnosticLogging', 1)[1].split('JNIEXPORT', 1)[0]
         self.assertIn('"loggingSetEnabled"', call)
