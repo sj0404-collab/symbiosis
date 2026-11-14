@@ -220,6 +220,7 @@ class KenjiPlayerActivity : Activity(), SurfaceHolder.Callback {
             setBackgroundColor(Color.rgb(25, 27, 33))
         }
         val popup = PopupWindow(this)
+        val scroll = ScrollView(this).apply { addView(panel) }
         var pageVersion = 0
         var saving = false
         lateinit var showPage: (String) -> Unit
@@ -255,6 +256,7 @@ class KenjiPlayerActivity : Activity(), SurfaceHolder.Callback {
         showPage = { page ->
             pageVersion++
             val version = pageVersion
+            scroll.scrollTo(0, 0)
             panel.removeAllViews()
             if (page == "menu") {
                 note("Меню игры\nИгра продолжает работать — пауза ядра пока недоступна.")
@@ -286,7 +288,7 @@ class KenjiPlayerActivity : Activity(), SurfaceHolder.Callback {
                 }
             } else if (page == "settings") {
                 addAction("← Меню игры") { showPage("menu") }
-                note("Настройки этой игры · изменения действуют после перезапуска. Запущенная игра не ставится на паузу. Индивидуальные значения имеют приоритет над общими настройками и плагинами.")
+                note("Настройки этой игры · изменения действуют после перезапуска. Запущенная игра не ставится на паузу. Индивидуальные значения имеют приоритет над общими настройками и плагинами. Автоматическая цель FPS и частичная компиляция в этом ядре не подтверждены и здесь не включаются.")
                 val path = intent.getStringExtra(EXTRA_PATH).orEmpty()
                 val overrides = GameProfileStore.read(filesDir, path)
                 if (overrides == null) {
@@ -313,6 +315,7 @@ class KenjiPlayerActivity : Activity(), SurfaceHolder.Callback {
             } else if (page == "logs") {
                 addAction("← Меню игры") { showPage("menu") }
                 note("Последние записи ядра. Подробный журнал управляется в общей вкладке логов. Файл может содержать записи предыдущего сеанса; журнал не очищается.")
+                addAction("Обновить журнал") { showPage("logs") }
                 val output = TextView(this).apply {
                     text = "Чтение журнала…"
                     setTextColor(Color.WHITE)
@@ -321,7 +324,13 @@ class KenjiPlayerActivity : Activity(), SurfaceHolder.Callback {
                 }
                 panel.addView(output)
                 Thread({
-                    val content = coreLogTail(applicationContext, 60).ifBlank { "Записей пока нет." }
+                    val content = runCatching {
+                        KenjiBridge.coreLogFile(applicationContext)?.let { file ->
+                            KernelLogFormat.tailOf(file, KernelLogFormat.TAIL_BYTES).lineSequence()
+                                .filter { it.isNotBlank() }.toList().takeLast(60)
+                                .joinToString("\n") { it.take(400) }
+                        }.orEmpty()
+                    }.getOrDefault("").ifBlank { "Записей пока нет или журнал недоступен." }
                     runOnUiThread {
                         if (!isFinishing && !isDestroyed && popup.isShowing && pageVersion == version) output.text = content
                     }
@@ -329,7 +338,6 @@ class KenjiPlayerActivity : Activity(), SurfaceHolder.Callback {
             }
         }
         showPage("menu")
-        val scroll = ScrollView(this).apply { addView(panel) }
         popup.contentView = scroll
         popup.width = minOf(dp(340), resources.displayMetrics.widthPixels - dp(24))
         popup.height = ViewGroup.LayoutParams.MATCH_PARENT

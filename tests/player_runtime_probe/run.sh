@@ -245,7 +245,9 @@ for e in root.iter('node'):
     if e.get('text','').casefold() == target:
         m=re.fullmatch(r'\[(\d+),(\d+)\]\[(\d+),(\d+)\]', e.get('bounds',''))
         if m:
-            x1,y1,x2,y2=map(int,m.groups());print((x1+x2)//2,(y1+y2)//2);break
+            x1,y1,x2,y2=map(int,m.groups())
+            if x2 > x1 and y2 > y1:
+                print((x1+x2)//2,(y1+y2)//2);break
 else: sys.exit(1)
 PY
   ) || return 1
@@ -384,6 +386,24 @@ for mode in 2 0 1; do
   click_text 'Продолжить' || { echo "PLAYER_BACK_MENU_NOT_VISIBLE mode=$mode"; exit 1; }
   [ "$(adb shell pidof "$package:kenji" | tr -d '\r' || true)" = "$player_pid" ] || { echo "PLAYER_BACK_ENDED_SESSION mode=$mode"; exit 1; }
   echo "PLAYER_BACK_MENU_ALIVE mode=$mode" | tee -a "$W/redroid-status.txt"
+  if [ "$mode" = 2 ]; then
+    # Exercise the real side panel, file write and inheritance in a disposable
+    # app. The profile file is removed below before the next test session.
+    click_text 'Меню' || { echo 'PROFILE_MENU_MISSING'; exit 1; }
+    click_text 'Настройки этой игры' || { echo 'PROFILE_SETTINGS_MISSING'; exit 1; }
+    click_text 'Режим управления памятью: общие / плагины' || { echo 'PROFILE_MEMORY_FIELD_MISSING'; exit 1; }
+    click_text 'режим 1' || { echo 'PROFILE_MEMORY_CHOICE_MISSING'; exit 1; }
+    profile=''
+    for ((n=0;n<20;n++)); do
+      profile=$(adb shell run-as "$package" ls files/kenji-game-profiles 2>/dev/null | tr -d '\r' | grep -E '^[0-9a-f]{64}\.txt$' | head -1 || true)
+      [ -n "$profile" ] && adb exec-out run-as "$package" cat "files/kenji-game-profiles/$profile" 2>/dev/null | grep -q '^memory=1' && break
+      sleep 1
+    done
+    [ -n "$profile" ] && adb exec-out run-as "$package" cat "files/kenji-game-profiles/$profile" | grep -q '^memory=1' || { echo 'PROFILE_WRITE_FAILED'; exit 1; }
+    echo 'PLAYER_GAME_PROFILE_WRITE_OK (next launch, not live)' | tee -a "$W/redroid-status.txt"
+    adb shell run-as "$package" rm "files/kenji-game-profiles/$profile"
+    adb shell input keyevent KEYCODE_BACK
+  fi
   exit_player || { echo "PLAYER_EXIT_BUTTON_NOT_VISIBLE mode=$mode"; exit 1; }
   for ((n=0;n<45;n++)); do
     pid=$(adb shell pidof "$package:kenji" | tr -d '\r' || true)
