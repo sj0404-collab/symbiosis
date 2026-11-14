@@ -238,6 +238,8 @@ class KenjiPlayerActivity : Activity(), SurfaceHolder.Callback {
                 })
         }
         addAction("Продолжить") { }
+        // Keep exit reachable without scrolling in landscape as well.
+        addAction("Выйти из игры") { confirmLeave() }
         addAction(if (showPlayerFps) "Скрыть FPS" else "Показать FPS") {
             showPlayerFps = !showPlayerFps
             if (!showPlayerFps) status.text = status.text.toString().substringBefore(" · ")
@@ -256,7 +258,6 @@ class KenjiPlayerActivity : Activity(), SurfaceHolder.Callback {
                 .setMessage("В установленном ядре нет подтверждённой функции сохранения состояния. Используйте обычное сохранение внутри игры.")
                 .setPositiveButton("Понятно", null).show()
         }
-        addAction("Выйти из игры") { confirmLeave() }
         val scroll = ScrollView(this).apply { addView(panel) }
         popup.contentView = scroll
         popup.width = minOf(dp(340), resources.displayMetrics.widthPixels - dp(24))

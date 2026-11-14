@@ -55,6 +55,14 @@ class PlayerLogPerformance(unittest.TestCase):
         self.assertIn('getHistoricalProcessExitReasons(context.packageName, expectedPid, 0)', code)
         self.assertIn('ProcessExitEvidence.matches(expectedPid, expectedStart', code)
 
+    def test_frame_callback_does_not_log_or_read_clock(self):
+        source = (ROOT / 'patch/android/kenjinx/KenjinxNative.kt').read_text()
+        callback = source.split('fun frameEnded()', 1)[1].split('@JvmStatic', 1)[0]
+        self.assertIn('frames.incrementAndGet()', callback)
+        self.assertNotIn('nanoTime', callback)
+        self.assertNotIn('Log.', callback)
+        self.assertNotIn('File(', callback)
+
     def test_pending_report_waits_for_session_lease_off_main_thread(self):
         report = (ROOT / 'patch/android/utils/KenjiReport.kt').read_text()
         body = report.split('fun showPendingIfAny(context: Context)', 1)[1].split('private fun show(', 1)[0]

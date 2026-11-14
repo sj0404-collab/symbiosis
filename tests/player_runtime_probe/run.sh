@@ -248,7 +248,8 @@ for e in root.iter('node'):
             x1,y1,x2,y2=map(int,m.groups());print((x1+x2)//2,(y1+y2)//2);break
 else: sys.exit(1)
 PY
-  )
+  ) || return 1
+  [ -n "$coords" ] || return 1
   adb shell input tap $coords
 }
 exit_player() {

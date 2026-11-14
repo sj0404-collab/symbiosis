@@ -29,9 +29,6 @@ object KenjinxNative {
     /** Сколько кадров ядро уже отрисовало. Растёт — значит цикл живой. */
     val frames = AtomicLong(0)
 
-    /** Когда был последний кадр, мс по monotonic-часам. */
-    @Volatile var lastFrameAt: Long = 0
-
     /** Сколько раз ядро спрашивало указатель на поверхность. */
     val surfaceAsked = AtomicLong(0)
 
@@ -53,7 +50,6 @@ object KenjinxNative {
     @JvmStatic
     fun frameEnded() {
         frames.incrementAndGet()
-        lastFrameAt = System.nanoTime() / 1_000_000
     }
 
     /**
@@ -116,7 +112,6 @@ object KenjinxNative {
         frames.set(0)
         surfaceAsked.set(0)
         windowAsked.set(0)
-        lastFrameAt = 0
         lastProgress = -1f
     }
 }
