@@ -121,7 +121,7 @@ class InputContract(unittest.TestCase):
         self.assertIn('if (!failed) checkGuestFailure(appContext)', ACTIVITY)
 
     def test_no_frame_callback_does_not_stop_game(self):
-        block = ACTIVITY.split('if (!noFramesWarned && frames == 0L', 1)[1].split('val tail = coreLogTail', 1)[0]
+        block = ACTIVITY.split('if (!noFramesWarned && frames == 0L', 1)[1].split('// Errors are still recorded', 1)[0]
         self.assertIn('noFramesWarned = true', block)
         self.assertNotIn('requestStop()', block)
         self.assertNotIn('setCoreFor', block)

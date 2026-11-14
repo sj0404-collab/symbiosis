@@ -40,9 +40,11 @@ class PlayerLogPerformance(unittest.TestCase):
         activity = (ROOT / 'patch/android/activities/KenjiPlayerActivity.kt').read_text()
         watch = activity.split('private fun startWatchdog(', 1)[1].split('private fun checkGuestFailure(', 1)[0]
         self.assertIn('rate * 1000.0 / intervalMs', watch)
-        self.assertIn('FPS ядра:', watch)
-        self.assertIn('callback/с:', watch)
-        self.assertIn('updateStatus(if (frames > 0 && showPlayerFps) fpsText', watch)
+        self.assertIn('callback/с:', watch)  # retained in details, not the compact strip
+        self.assertIn('updateStatus(if (showPlayerFps) "$elapsed · $fpsText" else elapsed, details)', watch)
+        self.assertIn('seconds / 60, seconds % 60', watch)
+        self.assertIn('else "FPS —"', watch)
+        self.assertIn('tickNumber == 1L || tickNumber % 5L == 0L', watch)
         self.assertIn('/proc/self/status', watch)
         self.assertIn('setNegativeButton("Выйти из игры")', activity)
         self.assertIn('root.addView(bar, LinearLayout.LayoutParams', activity)
@@ -52,6 +54,18 @@ class PlayerLogPerformance(unittest.TestCase):
         code = (ROOT / 'patch/android/utils/SysExit.kt').read_text()
         self.assertIn('getHistoricalProcessExitReasons(context.packageName, expectedPid, 0)', code)
         self.assertIn('ProcessExitEvidence.matches(expectedPid, expectedStart', code)
+
+    def test_pending_report_waits_for_session_lease_off_main_thread(self):
+        report = (ROOT / 'patch/android/utils/KenjiReport.kt').read_text()
+        body = report.split('fun showPendingIfAny(context: Context)', 1)[1].split('private fun show(', 1)[0]
+        self.assertIn('Thread({', body)
+        self.assertIn('GameSessionLock.tryAcquire', body)
+        self.assertIn('GameSessionLock.Result.Busy -> Thread.sleep(250)', body)
+        self.assertLess(body.index('GameSessionLock.tryAcquire'), body.index('pendingReason(app)'))
+        self.assertIn('finally { result.lease.close() }', body)
+        self.assertIn('android.os.Looper.getMainLooper()', body)
+        crash = (ROOT / 'patch/android/utils/KenjiCrash.kt').read_text()
+        self.assertIn('Это не доказывает вылет или нехватку памяти', crash)
 
     def test_verbose_is_opt_in_and_passed_across_processes(self):
         settings = (ROOT / 'patch/android/utils/KenjiLogSettings.kt').read_text()

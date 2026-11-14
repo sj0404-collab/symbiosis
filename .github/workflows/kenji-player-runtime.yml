@@ -283,6 +283,29 @@ jobs:
             -L"$LIBS" -lavcodec -lavutil -lswresample -ldl -llog \
             -Wl,-z,max-page-size=16384 -Wl,-soname,libffmpeg_ci_probe.so \
             -o eden/src/android/app/src/main/jniLibs/arm64-v8a/libffmpeg_ci_probe.so
+      - name: Prepare disposable FFmpeg A/B performance probe
+        if: inputs.compare_space
+        run: |
+          set -euo pipefail
+          mkdir -p "$PLAY_WORK/ffmpeg-perf/official" "$PLAY_WORK/ffmpeg-perf/current"
+          curl -fsSL --retry 3 -o /tmp/kenji-reference.apk https://git.ryujinx.app/Kenji-NX/Android/releases/download/2.1.0-pr.2/kenji-nx-v2.1.0-pr.2-standard.apk
+          echo 'e27133dbc11ab4e05cac5bf10b8bc9d5ffe490df9036ec42b969cc0f3a0e46b1  /tmp/kenji-reference.apk' | sha256sum -c -
+          for lib in avutil avcodec swresample swscale 'c++_shared'; do
+            unzip -p /tmp/kenji-reference.apk "lib/arm64-v8a/lib${lib}.so" > "$PLAY_WORK/ffmpeg-perf/official/lib${lib}.so"
+            test -s "$PLAY_WORK/ffmpeg-perf/official/lib${lib}.so"
+          done
+          for lib in avutil avcodec swresample swscale; do
+            cp "fork/patch/libs/arm64-v8a/lib${lib}.so" "$PLAY_WORK/ffmpeg-perf/current/"
+          done
+          ffmpeg -v error -f lavfi -i 'testsrc2=s=1280x720:r=1' -frames:v 1 -pix_fmt yuv420p \
+            -c:v libx264 -preset medium -threads 1 -x264-params keyint=1 -f h264 /tmp/ci_perf.h264
+          xxd -i -n ci_perf_h264 /tmp/ci_perf.h264 > /tmp/ci_perf_h264.h
+          TC="$ANDROID_HOME/ndk/28.2.13676358/toolchains/llvm/prebuilt/linux-x86_64/bin"
+          "$TC/aarch64-linux-android26-clang" -std=c11 -O2 -I/tmp -I/tmp/symbiosis-kenji-ffmpeg/ffmpeg-5.1.8 \
+            fork/tests/player_runtime_probe/ffmpeg_perf.c -L"$PLAY_WORK/ffmpeg-perf/current" \
+            -lavcodec -lavutil -Wl,-z,max-page-size=16384 -o "$PLAY_WORK/ffmpeg-perf/ffmpeg-perf"
+          rm /tmp/kenji-reference.apk
+          echo 'CI_ONLY_NO_GAME_NO_RELEASE_REFERENCE_FFMPEG'
       - name: Build disposable debug application, not a release
         working-directory: eden/src/android
         run: |
@@ -355,6 +378,7 @@ jobs:
             /tmp/player-runtime/core_sym.so
             /tmp/player-runtime/source-core-sha256.txt
             /tmp/player-runtime/core_space.so
+            /tmp/player-runtime/ffmpeg-perf/
             /tmp/player-runtime/swkbd.nro
             /tmp/player-runtime/graphics.nro
             /tmp/player-runtime/shader.nro

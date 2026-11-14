@@ -89,6 +89,24 @@ done
 abi=$(adb -s "$ANDROID_SERIAL" shell getprop ro.product.cpu.abilist | tr -d '\r')
 case ",$abi," in *,arm64-v8a,*) ;; *) echo 'ANDROID_ARM64_ABI_NOT_PRESENT' | tee -a "$W/redroid-status.txt"; exit 1 ;; esac
 (timeout 25s adb -s "$ANDROID_SERIAL" shell dumpsys SurfaceFlinger || true) > "$W/redroid-surfaceflinger.txt" 2>&1
+# Disposable A/B on the same Android ARM host, not a game or Mali test. The
+# reference binaries are 4 KiB aligned and must never be used on a 16K host.
+if [ "${PLAYER_COMPARE_SPACE:-0}" = 1 ] && [ -d "$W/ffmpeg-perf" ]; then
+  page=$(getconf PAGESIZE)
+  echo "FFMPEG_PERF_HOST_PAGE_SIZE=$page" | tee "$W/player-ffmpeg-perf.txt"
+  if [ "$page" = 4096 ]; then
+    adb push "$W/ffmpeg-perf" /data/local/tmp/ffmpeg-perf >/dev/null
+    adb shell chmod 755 /data/local/tmp/ffmpeg-perf/ffmpeg-perf
+    for variant in official current current official official current; do
+      printf 'FFMPEG_PERF_VARIANT=%s ' "$variant" | tee -a "$W/player-ffmpeg-perf.txt"
+      adb shell "LD_LIBRARY_PATH=/data/local/tmp/ffmpeg-perf/$variant /data/local/tmp/ffmpeg-perf/ffmpeg-perf" \
+        | tr -d '\r' | tee -a "$W/player-ffmpeg-perf.txt"
+    done
+    echo 'FFMPEG_PERF_NOT_A_GAME_OR_MALI_MEASUREMENT' | tee -a "$W/player-ffmpeg-perf.txt"
+  else
+    echo 'FFMPEG_PERF_REFERENCE_SKIPPED_NOT_4K_HOST' | tee -a "$W/player-ffmpeg-perf.txt"
+  fi
+fi
 # This APK was assembled in a disposable runner from actual patched app sources
 # with exactly one debug-only launcher added. It is never a release artifact.
 package=$(cat "$W/package.txt")
@@ -234,7 +252,7 @@ PY
   adb shell input tap $coords
 }
 exit_player() {
-  click_text 'Выйти' && click_text 'Выйти'
+  click_text 'Меню' && click_text 'Выйти из игры' && click_text 'Выйти'
 }
 # Locate the actual Plus hitbox printed by the debug-only geometry observer,
 # then inject a physical-style Android hold. Verify state transitions in the

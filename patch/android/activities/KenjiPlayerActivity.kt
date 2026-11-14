@@ -240,7 +240,7 @@ class KenjiPlayerActivity : Activity(), SurfaceHolder.Callback {
         addAction("Продолжить") { }
         addAction(if (showPlayerFps) "Скрыть FPS" else "Показать FPS") {
             showPlayerFps = !showPlayerFps
-            if (!showPlayerFps) status.text = "Второе ядро · подробнее"
+            if (!showPlayerFps) status.text = status.text.toString().substringBefore(" · ")
         }
         if (::overlay.isInitialized) {
             addAction(if (showTouchControls) "Скрыть управление" else "Показать управление") {
@@ -405,8 +405,6 @@ class KenjiPlayerActivity : Activity(), SurfaceHolder.Callback {
         statusDetails = "Подготовка: $title"
         bar.addView(status, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
         bar.addView(darkButton("Меню") { showPlayerMenu() },
-            LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(44)))
-        bar.addView(darkButton("Выйти") { confirmLeave() },
             LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(44)))
         root.addView(bar, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,
             ViewGroup.LayoutParams.WRAP_CONTENT))
@@ -714,6 +712,8 @@ class KenjiPlayerActivity : Activity(), SurfaceHolder.Callback {
         watchdogHandler = background
         val tick = object : Runnable {
             private var benchmarkInitialized = false
+            private var tickNumber = 0L
+            private var lastLogTail = ""
             private var lastRateAt = beganAt
             private var benchmarkFocusSeen = benchmarkFocusEpoch.get()
             private var benchmark: org.yuzu.yuzu_emu.utils.CoreBenchmark.Recorder? = null
@@ -723,6 +723,7 @@ class KenjiPlayerActivity : Activity(), SurfaceHolder.Callback {
             private fun tickOnce() {
                 if (startup.isCancelled() || isFinishing || isDestroyed || failed) return
                 val now = android.os.SystemClock.elapsedRealtime()
+                tickNumber++
                 val seconds = (now - beganAt) / 1000
                 val frames = org.kenjinx.android.KenjinxNative.frames.get()
                 val rate = frames - lastFrames
@@ -768,13 +769,14 @@ class KenjiPlayerActivity : Activity(), SurfaceHolder.Callback {
                     runCatching { KenjiReport.watch(appContext,
                         "30 с без callback кадров; это не доказывает отсутствие кадров") }
                 }
-                checkGuestFailure(appContext)
-                val tail = coreLogTail(appContext, 2)
-                // The log may have advanced between the first check and tail().
-                if (tail.contains("SvcBreak", ignoreCase = true) ||
-                    tail.contains("Unhandled exception in guest thread", ignoreCase = true)) {
+                // Errors are still recorded by the core. Reading/parsing its log
+                // is bounded, off the UI thread, and normally only every 15 s.
+                // No log is cleared and an old line never stops the game.
+                if (tickNumber == 1L || tickNumber % 5L == 0L) {
                     checkGuestFailure(appContext)
+                    lastLogTail = coreLogTail(appContext, 2)
                 }
+                val tail = lastLogTail
                 val coreFps = runCatching { KenjiBridge.gameFrameRate() }.getOrDefault(0.0)
                 if (!benchmarkInitialized) {
                     benchmarkInitialized = true
@@ -818,38 +820,27 @@ class KenjiPlayerActivity : Activity(), SurfaceHolder.Callback {
                             ?.let { line -> append("\nЧто ядро говорит про отрисовку:\n").append(line) }
                     }
                 }
-                val summary = when {
-                    logObservation.isNotEmpty() -> "Второе ядро · запись об ошибке · подробнее"
-                    noFramesWarned && frames == 0L -> "Второе ядро · нет callback · подробнее"
-                    else -> "Второе ядро · $seconds с · подробнее"
-                }
-                val fpsText = when {
-                    coreFps.isFinite() && coreFps > 0.0 && coreFps < 400.0 ->
-                        "FPS ядра: ${"%.1f".format(java.util.Locale.ROOT, coreFps)}"
-                    frames > 0 -> "callback/с: ${"%.1f".format(java.util.Locale.ROOT, callbackRate)}"
-                    else -> "FPS: —"
-                }
+                val fpsText = if (coreFps.isFinite() && coreFps > 0.0 && coreFps < 400.0)
+                    "${"%.1f".format(java.util.Locale.ROOT, coreFps)} FPS" else "FPS —"
+                val elapsed = "%02d:%02d".format(java.util.Locale.ROOT, seconds / 60, seconds % 60)
                 runOnUiThread {
                     if (!startup.isCancelled() && !isFinishing && !isDestroyed) {
-                        // Keep the strip outside the game area so it never
-                        // intercepts virtual controls or resizes the surface.
-                        // Once callbacks arrive, replace the status text with
-                        // the FPS/callback counter; tapping still opens details.
-                        updateStatus(if (frames > 0 && showPlayerFps) fpsText
-                            else if (frames > 0) "Второе ядро · подробнее" else summary, details)
+                        // Only elapsed session time and actual core FPS are in
+                        // the strip; callbacks and logs remain in details.
+                        updateStatus(if (showPlayerFps) "$elapsed · $fpsText" else elapsed, details)
                     }
                 }
                 // Тот же текст — в отчёт. Человеку некогда делать скриншот на
                 // чёрном экране, поэтому всё, что видно, записывается само.
-                runCatching {
-                    // Linux process RSS, not total device or GPU memory. Sample
-                    // infrequently on the background worker; no OOM inference.
-                    val memory = if (seconds / 3 % 5L == 0L) runCatching {
+                if (tickNumber == 1L || tickNumber % 5L == 0L) runCatching {
+                    // Sparse background samples: process RSS is not GPU or
+                    // free memory, and does not by itself establish an OOM.
+                    val memory = runCatching {
                         File("/proc/self/status").useLines { lines ->
                             lines.filter { it.startsWith("VmRSS:") || it.startsWith("VmSwap:") }
                                 .joinToString(" · ") { it.trim() }
                         }
-                    }.getOrDefault("") else ""
+                    }.getOrDefault("")
                     val fps = if (coreFps.isFinite() && coreFps > 0.0 && coreFps < 400.0)
                         " · FPS ядра ${"%.1f".format(java.util.Locale.ROOT, coreFps)}" else ""
                     KenjiReport.watch(appContext, "$seconds с · $verdict$fps" +

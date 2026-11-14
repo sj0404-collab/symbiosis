@@ -147,11 +147,43 @@ object KenjiReport {
         }
     }
 
-    /** Показать причину прошлого падения, если она есть. Тихо, если нет. */
+    private val reportWorkerActive = java.util.concurrent.atomic.AtomicBoolean(false)
+
+    /** Never read logs or conclude a session ended while its process owns the lease. */
     fun showPendingIfAny(context: Context) {
-        val text = runCatching { pendingReason(context) }.getOrNull() ?: return
-        if (text.isEmpty()) return
-        runCatching { show(context, text) }
+        if (!reportWorkerActive.compareAndSet(false, true)) return
+        val app = context.applicationContext
+        val activity = context as? android.app.Activity
+        Thread({
+            try {
+                // onResume can happen before the isolated player has finished
+                // teardown and written its clean marker. Wait off the UI thread.
+                repeat(120) {
+                    val start = runCatching { stateFile(app).readText() }.getOrDefault("")
+                    if (!start.startsWith(MARK_START)) return@Thread
+                    when (val result = GameSessionLock.tryAcquire(File(app.filesDir, GameSessionLock.FILE_NAME))) {
+                        is GameSessionLock.Result.Acquired -> {
+                            val text = try { pendingReason(app) } finally { result.lease.close() }
+                            if (!text.isNullOrEmpty()) {
+                                android.os.Handler(android.os.Looper.getMainLooper()).post {
+                                    if (activity == null || (!activity.isFinishing && !activity.isDestroyed)) {
+                                        runCatching { show(context, text) }
+                                    }
+                                }
+                            }
+                            return@Thread
+                        }
+                        is GameSessionLock.Result.Failed -> return@Thread
+                        GameSessionLock.Result.Busy -> Thread.sleep(250)
+                    }
+                }
+                // Unknown/still busy: leave the marker intact for a later resume.
+            } catch (_: InterruptedException) {
+                Thread.currentThread().interrupt()
+            } finally {
+                reportWorkerActive.set(false)
+            }
+        }, "kenji-report-reader").start()
     }
 
     private fun show(context: Context, text: String) {
@@ -164,7 +196,7 @@ object KenjiReport {
         }
         val scroll = ScrollView(context).apply { addView(body) }
         MaterialAlertDialogBuilder(context)
-            .setTitle("Второе ядро остановилось")
+            .setTitle("Состояние предыдущего сеанса")
             .setView(scroll)
             .setPositiveButton("Скопировать", null)
             .setNegativeButton("Закрыть", null)
