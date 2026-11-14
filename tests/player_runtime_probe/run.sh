@@ -957,7 +957,7 @@ adb exec-out screencap -p > "$W/player-frame-rotated-late.png"
 python3 tests/player_runtime_probe/check_frame.py "$W/player-frame-rotated-late.png" --landscape | tee -a "$W/redroid-status.txt" || { echo 'GRAPHICS_ROTATED_LATE_FRAME_FAILED'; exit 1; }
 echo 'GRAPHICS_ROTATED_FRAME_VISIBLE' | tee -a "$W/redroid-status.txt"
 press_plus landscape || { echo 'PLUS_LANDSCAPE_FAILED'; exit 1; }
-# Exit and the overlay must fit beside the actual system navigation strip.
+# The menu button and overlay must fit beside the actual system navigation strip.
 adb shell uiautomator dump /sdcard/player-ui.xml >/dev/null
 adb exec-out cat /sdcard/player-ui.xml > "$W/player-ui.xml"
 python3 tests/player_runtime_probe/check_exit_insets.py "$W/player-ui.xml" | tee -a "$W/redroid-status.txt"
